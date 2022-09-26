@@ -1,0 +1,9 @@
+name: crest
+
+channels:
+ - conda-forge
+ - defaults
+
+dependencies:
+  - tensorflow
+  - pytest
