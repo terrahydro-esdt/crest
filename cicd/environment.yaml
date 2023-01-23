@@ -7,3 +7,10 @@ channels:
 dependencies:
   - tensorflow
   - pytest
+  - networkx
+  - pyvis
+  - pydot
+  - graphviz
+  - networkx
+  - matplotlib
+  - ipykernel
