@@ -10,8 +10,6 @@ class ImproperModelError(Exception):
     """ Raised when an improper model is created """
     pass
 
-TypeModel = TypeVar("<class 'HierarchalGraphModel'>", bound="HierarchalGraphModel")
-
 class HierarchalGraphModel(GraphModel):
     """
 
@@ -117,6 +115,11 @@ class HierarchalGraphModel(GraphModel):
 
         yield from traverse_models(self.graph,())
 
+    def __getstate__(self):
+        return self.__dict__
+
+    def __setstate__(self,d):
+        self.__dict__ = d
 
     @staticmethod
     def get_name(obj) -> str:
@@ -199,7 +202,7 @@ class HierarchalGraphModel(GraphModel):
         return self.graph.is_empty
 
     @staticmethod
-    def identity(name: str) -> TypeModel:
+    def identity(name: str) -> 'HierarchalGraphModel':
         """
         Create an identity Model.
 
@@ -209,7 +212,7 @@ class HierarchalGraphModel(GraphModel):
         """
         return HierarchalGraphModel(lambda x:x,name)
 
-    def get_model(self, node: callable) -> TypeModel:
+    def get_model(self, node: callable) -> 'HierarchalGraphModel':
         """
         Wrap the given node in a Model, and add to our graph if necessary.
 
@@ -251,13 +254,13 @@ class HierarchalGraphModel(GraphModel):
 
         #if not a name (str) and not of type(Model)
         if not isinstance(node, HierarchalGraphModel):
-            
+
             #check if model with this name exist and if it has the same node value
             #if it does return it
             name = HierarchalGraphModel.get_name(node)
             if (name in self.graph) and (node is self[name].node):
                     return self[name]
-                
+
             #if it doesn't exist wrap it in a model
             node = HierarchalGraphModel(node)
 
@@ -346,7 +349,7 @@ class HierarchalGraphModel(GraphModel):
         return f'HierarchalGraphModel("{self.name}", id={id(self)}) '
 
 
-    def __getitem__(self, path: Union[str,tuple]) -> TypeModel:
+    def __getitem__(self, path: Union[str,tuple]) -> 'HierarchalGraphModel':
 
         """ Retrieve the model which has the given name from our graph
 
@@ -501,25 +504,25 @@ class HierarchalGraphModel(GraphModel):
             - If input and output nodes do not exists
 
         """
-        
+
         #apply feature map
         _X = self.feature_map(X,'input')
 
         #if not a basemodel
         if(self.node is self):
-            
+
             #check that i/o exist
             if not all([b in self.graph for b in ['input','output']]):
                 message = f'A model name must contain i/o nodes'
                 raise ImproperModelError(message)
-                
+
             #check that only i/o is a source/sink
             sources = list(filter(lambda x : x != 'input',self.sources))
             if sources:
                 message = f'Only input can be a source node in the graph. '
                 message += f'Found sources {[ self[i] for i in sources]}'
                 raise ImproperModelError(message)
-            
+
             sinks = list(filter(lambda x : x != 'output',self.sinks))
             if sinks:
                 message = f'Only output can be a sink in the graph. '
