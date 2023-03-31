@@ -212,7 +212,7 @@ class HierarchalGraphModel(GraphModel):
         """
         return HierarchalGraphModel(lambda x:x,name)
 
-    def get_model(self, node: callable) -> 'HierarchalGraphModel':
+    def get_model(self, node: Union[str,callable]) -> 'HierarchalGraphModel':
         """
         Wrap the given node in a Model, and add to our graph if necessary.
 
@@ -237,8 +237,12 @@ class HierarchalGraphModel(GraphModel):
             - If a node with the same name already exists in the graph, but is
             not the same Model object.
             - If a the same referenced model passed already exists in hierarchal model.
+            - If node is not callable, a string, or a HierarchalGraphModel
 
         """
+        if not (isinstance(node,str) or isinstance(node,HierarchalGraphModel) or callable(node)):
+            message = f'node must be either callable, a string, or a HierarchalGraphModel'
+            raise ImproperModelError(message)
 
         #fetch model by its name
         if isinstance(node, str):
@@ -255,13 +259,13 @@ class HierarchalGraphModel(GraphModel):
         #if not a name (str) and not of type(Model)
         if not isinstance(node, HierarchalGraphModel):
 
-            #check if model with this name exist and if it has the same node value
-            #if it does return it
+            #check if basemodel with this name exist and if it has the same node value.
+            #if it has the same node value then this refers to that basemodel.
             name = HierarchalGraphModel.get_name(node)
             if (name in self.graph) and (node is self[name].node):
                     return self[name]
 
-            #if it doesn't exist wrap it in a model
+            #if it doesn't exist we need to create a basemodel
             node = HierarchalGraphModel(node)
 
         #check if you passed a different model with the same name
@@ -295,7 +299,84 @@ class HierarchalGraphModel(GraphModel):
 
         return node
 
+    def add_node(self, node: Union[callable,'HierarchalGraphmodel']):
+        """ 
+        Add a node to the HierarchalGraphModel.
 
+        Parameters
+        ----------
+        node : callable, or HierarchalGraphModel
+            - If a callable is passed, it is wrapped into a Model and added to
+            the graph if it doesn't yet exist.
+            - If a Model is passed, it is added to the graph if it doesn't yet
+            exist.
+            
+        Raises
+        -------
+        
+        ImproperModelError
+            -if not callable or a HierarchalGraphModel
+        """
+        
+        if not (callable(node) or  isinstance(node,HierarchalGraphModel)):
+            message = f'A node must be either callable or a HierarchalGraphModel'
+            raise ImproperModelError(message)
+            
+        #we'll use get_model to add it to the graph. Get model will check if exist
+        #and only add it if does not. It also checks node meets various criteria before
+        #adding it to the graph.
+        self.get_model(node)
+        
+    def remove_node(self,node):
+        """ 
+        Removes a node from the HierarchalGraphModel
+        
+        """
+        
+        #remove node from string
+        if isinstance(node,str):
+            if node in self.models:
+                self.graph.remove_node(node)
+                return
+            else:
+                message=f'Node with name {node} not found'
+                raise ImproperModelError(message)
+                
+        #remove node from HierarchalGraphModel
+        if isinstance(node,HierarchalGraphModel):
+            if not node.name in self.models:
+                message=f'Node with name {node} not found'
+                raise ImproperModelError(message)
+                
+            if not self[node.name] is node:
+                message=f'Node with the name {node.name} exist but does match the one passed'
+                raise ImproperModelError(message)
+            
+            self.graph.remove_node(node.name)
+            return
+                
+        #remove node from basemodel function
+        #check if basemodel with this name exist and if it has the same node value.
+        #if it has the same node value then this refers to that basemodel.
+        if callable(node):
+            name = HierarchalGraphModel.get_name(node)
+            if not name in self.graph:
+                message=f'Node with name {node} not found'
+                raise ImproperModelError(message)
+           
+            if not node is self[name].node:
+                message=f'Node with the name {node.name} exist but does match the one passed'
+                raise ImproperModelError(message)  
+            
+            self.graph.remove_node(name)
+            return
+        
+        #if not one of the above, throw an exception
+        message=f'Unrecognized node type. Must be of type str, callable, or HierarchalGraphModel'
+        raise ImproperModelError(message) 
+        
+         
+        
     def add_edge(self, source: Union[str,callable], target: Union[str,callable], **attr):
         """
 
@@ -344,6 +425,20 @@ class HierarchalGraphModel(GraphModel):
             if not self.graph.is_directed_acyclic_graph:
                 message = f'Adding this edge created a cyclic graph'
                 raise ImproperModelError(message)
+                
+    def add_edges_from(self,ebunch: list):
+        """
+        Add multiple edges
+        
+        Parameters
+        ----------
+        
+        ebunch: a list of tuples (source,target)
+        
+        """
+        
+        for i in ebunch:
+            self.add_edge(*i)
 
     def __repr__(self):
         return f'HierarchalGraphModel("{self.name}", id={id(self)}) '
@@ -369,7 +464,7 @@ class HierarchalGraphModel(GraphModel):
         if not path:
             return self
         if(isinstance(path,str)):
-            if path == self.name: return self
+            #if path == self.name: return self
             #return i/o nodes
             if path in ['input'] and (path not in self.graph):
                 return HierarchalGraphModel.input_node(path)

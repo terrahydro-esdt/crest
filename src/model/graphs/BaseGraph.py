@@ -24,13 +24,33 @@ class BaseGraph(ABC):
     @abstractmethod
     def add_node(self,node,**attr):
         raise NotImplementedError
+        
+    @abstractmethod
+    def remove_node(self,node):
+        raise NotImplementedError
 
     @abstractmethod
     def add_edge(self,from_node,to_node,**attr):
         raise NotImplementedError
-
+        
+    @abstractmethod
+    def remove_edge(self,source,target):
+        raise NotImplementedError
+        
+    @abstractmethod
+    def add_edges_from(self,ebunch,**attr):
+        raise NotImplementedError
+        
+    @abstractmethod
+    def remove_edges_from(self,ebunch):
+        raise NotImplementedError
+        
     @abstractmethod
     def has_node(self,node):
+        raise NotImplementedError
+        
+    @abstractmethod
+    def has_edge(self,node):
         raise NotImplementedError
     
     @abstractmethod

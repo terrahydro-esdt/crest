@@ -22,15 +22,27 @@ class NetworkXGraph(BaseGraph):
 
     def add_node(self,node,**attr):
         self.graph.add_node(node,**attr)
+        
+    def remove_node(self,node):
+        self.graph.remove_node(node)
 
     def add_edge(self,from_node,to_node,**attr):
         self.graph.add_edge(from_node,to_node,**attr)
         
+    def remove_edge(self,source, target):
+        self.graph.remove_edge(source,target)
+        
     def add_edges_from(self,ebunch_to_add, **attr):
         self.graph.add_edges_from(ebunch_to_add, **attr)
+        
+    def remove_edges_from(self,ebunch):
+        self.graph.remove_edges_from(ebunch)
 
     def has_node(self,node):
         return self.graph.has_node(node)
+    
+    def has_edge(self,source,target):
+        return self.graph.has_edge(source,target)
     
     def in_edges(self, nbunch=None, data=False, default=None):
         return self.graph.in_edges(nbunch,data,default)
@@ -40,9 +52,6 @@ class NetworkXGraph(BaseGraph):
     
     def is_directed(self):
         return self.graph.is_directed()
-    
-    def remove_node(self,node):
-        return self.graph.remove_node(node)
     
     def copy(self):
         return copy.deepcopy(self)
