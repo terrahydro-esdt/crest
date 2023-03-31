@@ -1,1 +1,2 @@
 from .HierarchalGraphModel import HierarchalGraphModel,ImproperModelError
+from .graphs import NetworkXGraph

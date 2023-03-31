@@ -9,6 +9,70 @@ def test_basemodel():
     def mult(x): return x['scalar'] * x['x']
     m = HierarchalGraphModel(node=mult,name='mult')
     assert m({'scalar':2,'x':3}) == 6
+    
+def test_add_node():
+    #Adding a basemodel
+    def mult(x): return x['scalar'] * x['x']
+    m = HierarchalGraphModel(name='mult')
+    m.add_node(mult)
+    m.add_edge('input',mult)
+    m.add_edge(mult,'output')
+    assert m({'scalar':2,'x':3}) == {'mult' : 6}
+    
+    #Adding a HierarchalGraphModel
+    multiply = HierarchalGraphModel(node=mult,name='mult')
+    m = HierarchalGraphModel(name='mult')
+    m.add_node(multiply)
+    m.add_edge('input',multiply)
+    m.add_edge(multiply,'output')
+    assert m({'scalar':2,'x':3}) == {'mult' : 6}
+    
+def test_add_edges():
+    #Adding a basemodel
+    def mult(x): return x['scalar'] * x['x']
+    m = HierarchalGraphModel(name='mult')
+    edges = [('input',mult),(mult,'output')]
+    m.add_edges_from(edges)
+    assert m({'scalar':2,'x':3}) == {'mult' : 6}
+    
+    #Adding a HierarchalGraphModel
+    multiply = HierarchalGraphModel(node=mult,name='mult')
+    m = HierarchalGraphModel(name='mult')
+    edges = [('input',multiply),(multiply,'output')]
+    m.add_edges_from(edges)
+    assert m({'scalar':2,'x':3}) == {'mult' : 6}
+    
+def test_remove_nodes():    
+    def a(X):
+        return 'a'
+    
+    def b(X):
+        return 'b'
+    
+    m = HierarchalGraphModel(name='test')
+    edges = [('input',a),('input',b),(a,'output'),(b,'output')]
+    m.add_edges_from(edges)
+    assert m({'a': 'a', 'b': 'b'}) == {'a': 'a', 'b': 'b'}
+    
+    m.remove_node(b)
+    assert m({'a': 'a', 'b': 'b'}) == {'a': 'a'}
+    
+    m = HierarchalGraphModel(name='test')
+    edges = [('input',a),('input',b),(a,'output'),(b,'output')]
+    m.add_edges_from(edges)
+
+    m.remove_node('b')
+    assert m({'a': 'a', 'b': 'b'}) == {'a': 'a'}
+    
+    ha = HierarchalGraphModel(a)
+    hb = HierarchalGraphModel(b)
+    
+    m = HierarchalGraphModel(name='test')
+    edges = [('input',ha),('input',hb),(ha,'output'),(hb,'output')]
+    m.add_edges_from(edges)
+    
+    m.remove_node(hb)
+    assert m({'a': 'a', 'b': 'b'}) == {'a': 'a'}
 
 def test_simple_coupled_model():
     m = AddMult()
