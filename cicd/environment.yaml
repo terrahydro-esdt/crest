@@ -1,3 +1,4 @@
+# CREST GPU environment
 name: crest
 
 channels:
@@ -5,12 +6,13 @@ channels:
  - defaults
 
 dependencies:
-  - tensorflow
-  - pytest
-  - networkx
+  - python=3.9.15
+  - tensorflow-gpu=2.7.0
+  - pytest=7.2.0
+  - networkx=2.8.8
+  - matplotlib=3.6.2
+  - ipykernel=6.19
+  - cloudpickle=2.2.1
   - pyvis
   - pydot
   - graphviz
-  - networkx
-  - matplotlib
-  - ipykernel
