@@ -2,8 +2,12 @@ image: continuumio/miniconda3:latest
 
 test:
   script:
-    - apt-get update -q -y
-    - apt-get install -y build-essential
+    # Switch to using libmamba solver: 
+    #   https://www.anaconda.com/blog/conda-is-fast-now
+    - conda install -n base conda-libmamba-solver
+    - conda config --set solver libmamba
+
+    # Set up python environment and run tests
     - conda env create -f cicd/environment_cpu.yaml
     - source activate crest_cpu
     - pytest
