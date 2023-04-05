@@ -55,6 +55,10 @@ class BaseSet(BaseAbstract):
         self.container = objs
 
 
+    def __str__(self) -> str:
+        return repr(self)
+
+
     def __repr__(self) -> str:
         """ String representation: BaseSet[container] """
         return f"{super().__str__()}{getattr(self, 'container', '')}"
