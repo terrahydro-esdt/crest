@@ -1,6 +1,7 @@
 from itertools import product
 from typing import _type_repr, Dict, List, Union, Optional, TypeVar, Iterator
 from copy import deepcopy
+from abc import abstractmethod 
 
 import pytest
 import re
@@ -240,3 +241,14 @@ def test_return():
         valid   = {'return': [{'a': (R, 1), 2: (R, 3)}, {'b': (R, 1.)}]},
         invalid = {'return': [{'a': (R, 1), 2: (R, 3.)}, {'b': (R,)},
                               { 2.: (R, 1)}, {1: (R, [1]), 'b': (R, 1)}]})
+
+
+def test_abstractmethod():
+    """ Verify abstractmethods are enforced on inheriting classes """
+    class Parent(BaseAbstract):
+        @abstractmethod
+        def test(self): pass
+
+    class Child(Parent): pass
+    with pytest.raises(TypeError):
+        Child()

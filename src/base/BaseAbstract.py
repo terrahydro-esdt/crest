@@ -110,9 +110,10 @@ class BaseMeta(ABCMeta):
     def __str__(self):  return f"<class '{self.__name__}'>"
     def __repr__(self): return f"<class '{self.__name__}'>"
 
+
     def __new__(cls, *args, **kwargs):
         """ Wrap __init__ with type checking """
-        cls = type.__new__(cls, *args, **kwargs)
+        cls = super().__new__(cls, *args, **kwargs)
         cls.__init__ = ensure_types(cls, cls.__init__)
         return cls
 
