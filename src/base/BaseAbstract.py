@@ -90,6 +90,9 @@ def ensure_types(cls, f):
         keywords = inspect.getcallargs(f, *args, **kwargs)
 
         def check_type(key, value):
+            # Skip checking iterator return types to avoid deepcopy
+            if isinstance(value, Iterator): return value
+
             if key in f_types and not istype(value, f_types[key]):
                 require = type_repr(T=f_types[key])
                 actual  = type_repr(value)
