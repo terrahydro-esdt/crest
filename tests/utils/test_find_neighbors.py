@@ -46,7 +46,6 @@ def test_1d():
 
 
 def test_1d_resolutions():
-    
     coords = [
         [1, 2, 3],
         [4, 5, 6],

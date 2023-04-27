@@ -166,4 +166,18 @@ configs = {
             },
         ],
     },
+
+    # --------------------------------------------------------------
+    'single' : {
+
+        # Data definitions
+        'data_kwargs' : [
+            {'dimensions' : {'x' : 8}, 'chunks': {'x': 3}}, # 1st data object 
+        ],
+
+        # Window depths
+        'depth' : [
+            {'x': 1}, 
+        ],
+    },
 }

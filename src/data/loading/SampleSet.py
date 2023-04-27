@@ -3,8 +3,8 @@ import xarray as xr
 import numpy as np 
 
 from crest.src.base  import BaseSet
-from crest.src.data  import Sample
 from crest.src.utils import partial_product
+from crest.src.data.loading import Sample
 
 
 class SampleSet(BaseSet):

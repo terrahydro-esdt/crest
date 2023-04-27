@@ -5,12 +5,13 @@ from contextlib import nullcontext
 from functools import partial
 from pathlib import Path 
 
+import cloudpickle as pkl
 import numpy as np 
 import dask.array as da
 import dask
 
 from crest.src.base import BaseSet
-from crest.src.data import Datafile, Blockset
+from crest.src.data.loading import Datafile, Blockset
 
 
 class Dataset(BaseSet):
@@ -39,7 +40,8 @@ class Dataset(BaseSet):
 
 
     def generate_samples(self, 
-        numblocks : list[int] | None = None,
+        numblocks : list[int]  | None = None,
+        save_path : str | Path | None = None,
         verbose   : bool = True,
     ) -> da.Array:
         """Generate the dask array containing all valid samples.
@@ -70,6 +72,8 @@ class Dataset(BaseSet):
             cannot be divided into 3 blocks because that would lead to 
             [[1,2],[3],[4]]. By default, the number of blocks is determined 
             automatically based on data chunking - but this can be suboptimal.
+        save_path : str | Path | None
+            Save the generated sample array to a pickle file at the given path.
         verbose   : bool
             Whether or not logs should be shown when generating samples.
 
@@ -79,7 +83,12 @@ class Dataset(BaseSet):
             Lazy array which contains all valid windows which were found. 
 
         """
-        if verbose: print('Preparing data...')
+        if verbose: 
+            print('Current data:')
+            for c in self.container:
+                print(c)
+                print(c.data, '\n')
+            print('\nPreparing data...')
 
         # Ensure all Datafiles are aware of all dimensions
         self.ensure_dims( set.union(*map(set, self.dims)) )
@@ -121,4 +130,51 @@ class Dataset(BaseSet):
             samples = da.hstack(results)
         
         if verbose: print(f'\nFound {len(samples):,} samples')
+        if save_path is not None:
+            Dataset.save(samples, save_path)
         return samples 
+
+
+
+    @classmethod
+    def save(cls, samples: da.Array, filename: str | Path):
+        """Save the given samples array as a pickle file at the requested path.
+        
+        Note
+        ----
+        The sample array is pickled and stored in the lazy dask representation
+        that is given. Thus, if the lazy array is e.g. 5GB in memory but 18TB
+        fully expanded, a 5GB file will be stored and the full samples can be
+        expanded into their full representation when loaded later. 
+        
+        Parameters
+        ----------
+        samples  : dask.Array
+            Dask array that is created using generate_samples.
+        filename : str | Path
+            Location to save the given samples to. 
+
+        """
+        with Path(filename).open('wb') as f:
+            pkl.dump(samples, f)
+
+
+
+    @classmethod
+    def load(cls, filename: str | Path) -> da.Array:
+        """Load a dask array from a previously saved pickle file.
+
+        Parameters
+        ----------
+        filename : str | Path
+            Location to load the dask array from.
+
+        Returns
+        -------
+        dask.Array
+            The dask array stored at the given location.
+
+        """ 
+        assert(Path(filename).exists()), f'{filename} does not exist'
+        with Path(filename).open('rb') as f:
+            return pkl.load(f)

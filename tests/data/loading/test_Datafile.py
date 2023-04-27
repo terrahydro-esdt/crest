@@ -2,7 +2,7 @@ import pytest
 import xarray as xr 
 import numpy as np 
 
-from crest.src.data import Datafile
+from crest.src.data.loading import Datafile
 
 
 example_data = xr.Dataset(
