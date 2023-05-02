@@ -127,8 +127,13 @@ class Block(BaseAbstract):
             invalid = reduce(moving_sum, keys, invalid) > maximum
 
         # Offset the final mask indices in order to center the window
-        offset = np.array([[self.window_depth[dim][0]] for dim in self.dims])
-        return np.array(np.where((~invalid).all(-1))) + offset
+        offset  = np.array([[self.window_depth[dim][0]] for dim in self.dims])
+        indices = np.array(np.where((~invalid).all(-1))) + offset
+
+        # Remove indices outside of coordinate bounds (except virtual)
+        inbound = np.isfinite( self.coords[tuple(indices)] )
+        inbound|= np.isnan(self.coords).all(tuple(range(self.coords.ndim - 1)))
+        return indices[:, inbound.all(1)]
 
 
     @cached_property
