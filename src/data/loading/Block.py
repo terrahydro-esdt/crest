@@ -6,6 +6,7 @@ from numbers import Number, Integral as Int
 import dask.array as da 
 import bottleneck as bn
 import xarray as xr
+import pandas as pd
 import numpy as np 
 
 from crest.src.base import BaseAbstract 
@@ -58,7 +59,7 @@ class Block(BaseAbstract):
         resolution    : Collection[Number],
         window_depth  : dict[str, np.ndarray[Int]] = {},
         valid_percent : dict[tuple[str], Number]   = {},
-        invalid_value : Collection[Number]         = [],
+        invalid_value : Collection[object]         = [],
     ):
         self._data   = data
         self._coords = coords
@@ -118,13 +119,14 @@ class Block(BaseAbstract):
             return invalid[tuple(offsets)]
 
         # Create a boolean mask indicating invalid elements
-        invalid = np.isnan(self.data) | np.isin(self.data, self.invalid_value)
+        invalid = pd.isna(self.data) | np.isin(self.data, self.invalid_value)
 
         # Calculate the running invalid mask by iterating over valid percents
-        for keys, percent in self.valid_percent.items():            
-            n_total = np.prod([self.window_total[k] for k in keys])
-            maximum = int((1-self.valid_percent[keys]) * n_total)
-            invalid = reduce(moving_sum, keys, invalid) > maximum
+        for keys, percent in self.valid_percent.items():   
+            if (~invalid).any():         
+                n_total = np.prod([self.window_total[k] for k in keys])
+                maximum = int((1-self.valid_percent[keys]) * n_total)
+                invalid = reduce(moving_sum, keys, invalid) > maximum
 
         # Offset the final mask indices in order to center the window
         offset  = np.array([[self.window_depth[dim][0]] for dim in self.dims])
@@ -148,6 +150,13 @@ class Block(BaseAbstract):
         return self.data[tuple(self.valid_windows)]
 
 
+    @property
+    def fast_invalid_check(self):
+        """ Quick check to verify there exists any valid data """
+        data = self._data[..., 0].compute()
+        return (pd.isna(data) | np.isin(data, self.invalid_value)).all()
+
+    
     def extract(self, indices: np.ndarray) -> list[xr.Dataset]:
         """Extract a list of windows from data, wrapping each with xarray.
 

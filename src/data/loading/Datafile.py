@@ -14,7 +14,7 @@ import zarr
 import math 
 
 from crest.src.base import BaseAbstract 
-from crest.src.data import Block, Blockset
+from crest.src.data.loading import Block, Blockset
 
 # Bool type which allows numpy bools as well
 Bool = bool | np.bool_
@@ -93,10 +93,10 @@ class Datafile(BaseAbstract):
     def __init__(self,
         location      : Path | str | FSMap | xr.Dataset,
         features      : list[str]                        = [],
-        extent        : dict[str, Collection[Number]]    = {},
+        extent        : dict[str, Collection]            = {},
         window_depth  : dict[str, Int | Collection[Int]] = {},
         valid_percent : dict[str | tuple[str], Number]   = {},
-        invalid_value : Number | Collection[Number]      = [],
+        invalid_value : object                           = [],
         **kwargs
     ):
         self.location = location
@@ -119,7 +119,7 @@ class Datafile(BaseAbstract):
         if attr not in ['__getstate__', '__setstate__']:
             if hasattr(self.data, attr): return getattr(self.data, attr)
             if hasattr(self.dask, attr): return getattr(self.dask, attr)
-        raise AttributeError(f"'Datafile' object has no attribute '{attr}'")
+        return self.__getattribute__(attr)
 
 
     @cached_property
@@ -132,7 +132,12 @@ class Datafile(BaseAbstract):
 
         # Select only relevant coordinates
         data = data.sel({k: slice(*ext) for k, ext in self.extent.items()})
-        
+
+        # Cast datetimes to float
+        for key in data.coords:
+            if np.issubdtype(data[key].dtype, np.datetime64):
+                data = data.assign_coords({key: data[key].astype(float)})
+
         # Convert to a DataArray and rechunk along the new axis
         data = data.to_array('features').chunk({'features': -1})
 
@@ -193,10 +198,10 @@ class Datafile(BaseAbstract):
     def coord_array(self) -> da.Array:
         """ Coordinate meshgrid wrapped with dask """
         coords = [self.data[dim].values for dim in self.dims]
-        coords = np.meshgrid(*coords, indexing='ij')
-        coords = np.stack(coords, axis=-1)
-        chunks = self.chunksize[:-1] + (-1,)
-        return xr.DataArray(coords).chunk(chunks).data
+        coords = da.meshgrid(*coords, indexing='ij')
+        coords = da.stack(coords, axis=-1)
+        coords = coords.rechunk(self.chunksize[:-1] + (-1,))
+        return coords
 
 
     @property
@@ -372,7 +377,7 @@ class Datafile(BaseAbstract):
         repeats = [self._virtual_dims.get(d, 1) for d in self.dims]
 
         # Clip block extents to avoid duplication
-        extents = [min(c)+o*2 for c,o in zip(self.chunks, overlaps.values())]
+        extents = [max(c)+o*2 for c,o in zip(self.chunks, overlaps.values())]
 
         # Create overlapping blocks, tiling and clipping dims as necessary
         overlap = lambda a: dask_overlap(a, **kwargs)
@@ -414,6 +419,10 @@ class Datafile(BaseAbstract):
             if not Path(self.location).exists():
                 raise FileNotFoundError(f'File not found: {self.location}')
             self.location = zarr.DirectoryStore(self.location)
+        
+        elif isinstance(self.location, FSMap):
+            if not self.location.fs.exists(self.location.root):
+                raise FileNotFoundError(f'Database not found: {self.location}')
 
         for key, extent in self.extent.items():
             if len(extent) != 2:

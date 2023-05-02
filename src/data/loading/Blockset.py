@@ -12,8 +12,8 @@ import pandas as pd
 import numpy as np 
 
 from crest.src.base  import BaseSet
-from crest.src.data  import Block, SampleSet
 from crest.src.utils import find_neighbors
+from crest.src.data.loading import Block, SampleSet
 
 
 
@@ -41,6 +41,12 @@ class Blockset(BaseSet):
         dtype = np.dtype([(f'Data_{i}', T) for i, T in enumerate(self.dtype)])
         meta  = np.empty((0,), dtype=dtype)
 
+        # Fast return when locations for this block are invalid
+        for block in self.container:
+            if block.fast_invalid_check:
+                print('skip')
+                return da.from_array(meta)
+
         # Sort blocks by the number of valid windows, so that the Block with
         # the fewest windows is used as the BallTree query reference. This
         # is a proxy for the overall coarsest resolution Block, as coarsest
@@ -49,14 +55,15 @@ class Blockset(BaseSet):
         self.sort(lambda block: block.valid_coords.size)
 
         # Return if any data have no valid windows
-        if not all(c.size for c in self.valid_coords): return meta
+        if not all(c.size for c in self.valid_coords): 
+            return da.from_array(meta)
 
         # Find neighbors for the valid window locations within 1/2 the
         # resolution of the reference, using Chebyshev distance (L-inf)
         matches = find_neighbors(self.valid_coords, self.resolution, p=np.inf)
 
         # Return if there aren't any matches
-        if not len(matches): return meta
+        if not len(matches): return da.from_array(meta)
 
         # Count total number of matches
         counts = np.prod([list(map(len, m)) for m in matches], axis=1)

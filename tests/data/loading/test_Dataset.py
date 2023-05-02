@@ -3,7 +3,7 @@ import pytest
 import xarray as xr 
 import numpy as np 
 
-from crest.src.data  import Dataset, Datafile
+from crest.src.data.loading import Dataset, Datafile
 from crest.src.utils import synthetic_data
 from .Dataset_config import configs 
 
@@ -92,3 +92,9 @@ def test_static():
         [[2, 1, 1],[na, 3, 1]], [[2, 1, 1],[na, 3, 2]], [[2, 1, 1],[na, 3, 3]],
     ]
     check_outputs(configs['static'], expected)
+
+
+def test_single():
+    # 0, 1, 2, ..., 6, 7 -> resolution=1, window=1
+    expected = [ [[1]], [[2]], [[3]], [[4]], [[5]], [[6]] ]
+    check_outputs(configs['single'], expected)
