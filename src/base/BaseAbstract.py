@@ -79,33 +79,41 @@ def ensure_types(cls, f):
             types = list(map(handle_generic, first, types))
             return all(all(map(istype, v, types)) for v in elems)
 
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        """ Wrap the function with an explicit type checker """
-        if not hasattr(f, '__code__'): return f(*args, **kwargs)
 
-        # Extract the function parameters and respective annotations
-        f_name   = f.__code__.co_name
-        f_params = f.__code__.co_varnames 
-        f_types  = f.__annotations__
-        keywords = inspect.getcallargs(f, *args, **kwargs)
+    class Wrapper:
+        """ Class to allow access to the underlying object attributes """
 
-        def check_type(key, value):
-            # Skip checking iterator return types to avoid deepcopy
-            if isinstance(value, Iterator): return value
+        def __call__(_,*args, **kwargs):
+            """ Wrap the function with an explicit type checker """
+            if not hasattr(f, '__code__'): return f(*args, **kwargs)
 
-            if key in f_types and not istype(value, f_types[key]):
-                require = type_repr(T=f_types[key])
-                actual  = type_repr(value)
-                message = f'{cls}.{f_name} parameter "{key}" must be'
-                message+= f' of type {require}, but found type {actual}'
-                raise TypeError(message)
-            return value
+            # Extract the function parameters and respective annotations
+            f_name   = f.__code__.co_name
+            f_params = f.__code__.co_varnames 
+            f_types  = f.__annotations__
+            keywords = inspect.getcallargs(f, *args, **kwargs)
 
-        # Iterate over all of the function parameters and check types
-        list(starmap(check_type, keywords.items()))
-        return check_type('return', f(*args, **kwargs))
-    return wrapper
+            def check_type(key, value):
+                # Skip checking iterator return types to avoid deepcopy
+                if isinstance(value, Iterator): return value
+
+                if key in f_types and not istype(value, f_types[key]):
+                    require = type_repr(T=f_types[key])
+                    actual  = type_repr(value)
+                    message = f'{cls}.{f_name} parameter "{key}" must be'
+                    message+= f' of type {require}, but found type {actual}'
+                    raise TypeError(message)
+                return value
+
+            # Iterate over all of the function parameters and check types
+            list(starmap(check_type, keywords.items()))
+            return check_type('return', f(*args, **kwargs))
+
+        def __getattr__(self, attr):
+            if attr == '__call__':
+                return self 
+            return getattr(f, attr)
+    return Wrapper()
 
 
 
@@ -118,7 +126,11 @@ class BaseMeta(ABCMeta):
     def __new__(cls, *args, **kwargs):
         """ Wrap __init__ with type checking """
         cls = super().__new__(cls, *args, **kwargs)
-        cls.__init__ = ensure_types(cls, cls.__init__)
+        ini = cls.__init__
+
+        def __init__(self, *args, **kwargs):
+            ensure_types(cls, ini)(self, *args, **kwargs)
+        setattr(cls, '__init__', __init__)
         return cls
 
 

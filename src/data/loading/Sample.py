@@ -60,9 +60,8 @@ class Sample(BaseAbstract):
         return sum(d.nbytes for d in self.data)
 
 
-    def extract(self, features: list[str]) -> dict:
+    def to_dict(self, features: list[str] | None = None) -> dict:
         """ Extract the requested features from the container """
-        data = {f: d[f] for d in self for f in features if f in d.variables}
-        assert(len(data) == len(features)), 'Duplicate features in data'
+        data = {f: d[f].to_numpy() for d in self for f in (features or d) if f in d.variables}
+        assert(len(data) == len(features or data)), 'Duplicate features in data'
         return data 
-        
