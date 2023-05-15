@@ -159,8 +159,8 @@ class Batcher(BaseAbstract):
         if isinstance(features[0], list):
             parse = partial(self._parse, batch=batch)
             return list(map(parse, features))
-        return np.array([sample.extract(features) for sample in batch])
-
+        batch = [sample.extract(features) for sample in batch]
+        return {k: np.array([sample[k] for sample in batch]) for k in features}
 
 
 

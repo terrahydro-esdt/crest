@@ -60,10 +60,9 @@ class Sample(BaseAbstract):
         return sum(d.nbytes for d in self.data)
 
 
-    def extract(self, features: list[str]) -> np.ndarray:
+    def extract(self, features: list[str]) -> dict:
         """ Extract the requested features from the container """
-        data = [d[f] for d in self for f in features if f in d.variables]
+        data = {f: d[f] for d in self for f in features if f in d.variables}
         assert(len(data) == len(features)), 'Duplicate features in data'
-        num  = len(data[0])
-        data = np.squeeze(np.stack(data, axis=-1))
-        return data.reshape((num,)+data.shape[1:-1]+(len(features),))
+        return data 
+        
