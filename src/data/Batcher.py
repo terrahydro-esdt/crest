@@ -63,6 +63,13 @@ class Batcher(BaseAbstract):
             self.samples = dataset.generate_samples(compute=False)
 
 
+    def __enter__(self): return self
+    def __exit__(self, *args, **kwargs):
+        if getattr(self, '__block_tasks', None) is not None:
+            self.__block_tasks.quit()
+            self.__batch_tasks.quit()
+
+
     def __iter__(self):
         """ Yield batches of samples """
         _Tasks.EXIT = 0
@@ -80,8 +87,8 @@ class Batcher(BaseAbstract):
         
         # Create task executors for generating blocks and batches
         create_task = partial(_Tasks, workers=self.workers)
-        batch_tasks = self._batch_tasks = create_task(self._batcher, capacity=50)
-        block_tasks = self._block_tasks = create_task(self._combine, subsets)
+        batch_tasks = self.__batch_tasks = create_task(self._batcher, capacity=50)
+        block_tasks = self.__block_tasks = create_task(self._combine, subsets)
 
         try:
             # Keep executing until all blocks and batches are processed
@@ -124,11 +131,11 @@ class Batcher(BaseAbstract):
         extract = lambda i: order[i::n_block]
         chunks  = map(list, zip(*map(extract, range(n_block))))
         # log(f'Adding {samples.blocks.size//n_block} batch tasks')
-        list(map(self._batch_tasks, map(samples.blocks.__getitem__, chunks)))
+        list(map(self.__batch_tasks, map(samples.blocks.__getitem__, chunks)))
 
         # Ensureany remaining blocks are also processed
         remain = len(order) % n_block
-        if remain: self._batch_tasks(samples.blocks[order[-remain:]])
+        if remain: self.__batch_tasks(samples.blocks[order[-remain:]])
 
 
     def _batcher(self, samples, log=print):
