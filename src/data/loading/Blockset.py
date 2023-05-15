@@ -41,26 +41,21 @@ class Blockset(BaseSet):
         dtype = np.dtype([(f'Data_{i}', T) for i, T in enumerate(self.dtype)])
         meta  = np.empty((0,), dtype=dtype)
 
-        # Fast return when locations for this block are invalid
-        for block in self.container:
-            if block.fast_invalid_check:
-                print('skip')
-                return da.from_array(meta)
+        # Fast return when there are no valid locations for this block
+        if any(self.fast_invalid_check):     return da.from_array(meta)
+        if not all(self.valid_windows.size): return da.from_array(meta)
 
         # Sort blocks by the number of valid windows, so that the Block with
         # the fewest windows is used as the BallTree query reference. This
         # is a proxy for the overall coarsest resolution Block, as coarsest
         # resolution could be found in different Blocks when there are multiple
         # dimensions (e.g. Block_1 has coarsest dim_1, and Block_2 with dim_2)
-        self.sort(lambda block: block.valid_coords.size)
-
-        # Return if any data have no valid windows
-        if not all(c.size for c in self.valid_coords): 
-            return da.from_array(meta)
+        self.sort(lambda block: block.valid_windows.size)
 
         # Find neighbors for the valid window locations within 1/2 the
         # resolution of the reference, using Chebyshev distance (L-inf)
         matches = find_neighbors(self.valid_coords, self.resolution, p=np.inf)
+        self.cleanup()
 
         # Return if there aren't any matches
         if not len(matches): return da.from_array(meta)

@@ -109,3 +109,61 @@ def test_extract():
     )
     for out, exp in zip(output, [exp_1, exp_2]):
         assert((out == exp).all())
+
+
+
+import sparse
+
+# 3 x, 3 y, 1 features
+example_data_sparse = sparse.COO.from_numpy( 
+    np.rollaxis( np.array([
+     [[nan, nan, nan],
+      [10., 20., 30.],
+      [40., 50., 60.]]
+]), 0, 3) )
+
+# 3 x, 3 y
+example_coords_sparse = sparse.COO.from_numpy( 
+    np.rollaxis( np.array([
+     [[nan, nan, nan],
+      [2.,  2.,  2. ],
+      [3.,  3.,  3. ]],
+
+     [[nan, nan, nan],
+      [0.1, 0.2, 0.3],
+      [0.1, 0.2, 0.3]]
+]), 0, 3) )
+
+
+example_block_sparse = Block(**{
+    'data'          : da.from_array(example_data_sparse),
+    'coords'        : da.from_array(example_coords_sparse),
+    'dims'          : ['x', 'y'],
+    'original_dims' : (['x','y','features'], ['var_1']),
+    'resolution'    : [1., 0.1],
+    'window_depth'  : {'x': np.array([0,1]), 'y': np.array([1,0])},
+    'valid_percent' : {('x','y'): 1.},
+})
+
+
+def test_sparse():
+    assert(not example_block.sparse)
+    assert(example_block_sparse.sparse)
+
+
+def test_valid_windows_sparse():
+    output = example_block_sparse.valid_windows
+    expect = np.array([[1,1], [1,2]])
+    assert((output == expect).all())
+
+
+def test_valid_coords_sparse():
+    output = example_block_sparse.valid_coords
+    expect = np.array([[2, 0.2], [2, 0.3]])
+    assert((output == expect).all())
+
+
+def test_valid_data_sparse():
+    output = example_block_sparse.valid_data 
+    expect = np.array([[20.], [30.]])
+    assert((output == expect).all())

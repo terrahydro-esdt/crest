@@ -42,8 +42,9 @@ class Dataset(BaseSet):
     def generate_samples(self, 
         numblocks : list[int]  | None = None,
         save_path : str | Path | None = None,
+        compute   : bool = True,
         verbose   : bool = True,
-    ) -> da.Array:
+    ):# -> da.Array:
         """Generate the dask array containing all valid samples.
 
         Notes
@@ -126,7 +127,14 @@ class Dataset(BaseSet):
         with nullcontext() if not verbose else ProgressBar():
             if verbose: print('\nFinding all valid samples...')
             delayed = lambda blockset: dask.delayed(blockset.find_matches)()
-            results = da.compute( *map(delayed, blocksets) )
+            if not compute:
+                # import dask.bag as db 
+                # import pandas as pd
+                # return db.from_delayed(list(map(delayed, blocksets))).to_dataframe(meta=pd.DataFrame({'Sample':np.empty((0,), dtype=object)}))
+                # for row in samples.iterrows():
+                #     print(row)
+                return list(map(delayed, blocksets))
+            results = da.compute( *map(delayed, blocksets) ) 
             samples = da.hstack(results)
         
         if verbose: print(f'\nFound {len(samples):,} samples')

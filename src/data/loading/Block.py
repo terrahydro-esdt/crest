@@ -8,6 +8,7 @@ import bottleneck as bn
 import xarray as xr
 import pandas as pd
 import numpy as np 
+import sparse 
 
 from crest.src.base import BaseAbstract 
 
@@ -86,7 +87,7 @@ class Block(BaseAbstract):
     @cached_property
     def dtype(self) -> np.dtype:
         """ Create a composite datatype based on shapes of the data windows """
-        sizes = {'features': self.data.shape[-1]} | self.window_total
+        sizes = {'features': self._data.shape[-1]} | self.window_total
         return np.dtype(
             [('values', np.float32, tuple(sizes.values()))] + 
             [('coords', np.dtype(
@@ -107,25 +108,70 @@ class Block(BaseAbstract):
 
 
     @cached_property
+    def valid_windows_sparse(self):
+        """ Determine valid sample window indices for sparse data """
+        # Note that the sparse API isn't fully solidified - there are a few
+        # different ways to handle extracting the valid windows (e.g. using
+        # the sparse vectors explicitly; or using the COO interface into the
+        # sparse array, similar to the dense calculation). Need to perform
+        # some timing tests to see if using an API equivalent to dense (as 
+        # is currently implemented) results in any slowdown / memory issues. 
+
+        def window_count(valid: np.ndarray, keys_pct: tuple): 
+            """ Calculate the number of elements in the N-d rolling window """
+            keys, percent = keys_pct
+            
+            # Get the required number of elements for a valid window
+            n_total = np.prod([self.window_total[k] for k in keys])
+            windows = [slice(-s, e+1) for e, s in self.window_depth.values()]
+
+            # Expand the indices to be broadcastable with the N-d window
+            idxs = self.data.coords[[self.axes[k] for k in keys]][:, valid]
+            view = np.expand_dims(idxs, tuple(-(1+np.arange(len(windows)))))
+            view = view + np.mgrid[tuple(windows)][:, None] # Broadcast window
+            view = view.reshape(len(view), -1)              # (dims, samples)
+
+            # Count the number of times an index appears and return valid ones
+            view, counts = np.unique(view, axis=1, return_counts=True)
+            valid_window = view[:, counts >= (percent * n_total)][:, None]
+            valid[valid] = (idxs[..., None] == valid_window).all(0).any(-1)
+            return valid 
+            # return idxs[ counts >= (percent * n_total) ]
+
+        # Create a mask indicating valid elements, and extract indices 
+        data  = self.data.data 
+        valid = ~self.invalid(data)
+        valid = reduce(window_count, self.valid_percent.items(), valid)
+
+        # Remove indices outside of coordinate bounds (except virtual)
+        inbound = np.isfinite(self.coords)
+        inbound|= np.isnan(self.coords).all(tuple(range(self.coords.ndim - 1)))
+        return self.data.coords[:, valid & inbound.all(-1).flatten()][:-1].T
+        # return valid & inbound.all(-1).flatten()
+
+
+    @cached_property
     def valid_windows(self) -> np.ndarray[Int]:
         """ Determine indices for all valid sample windows in the block """
-        
+        if self.sparse: return self.valid_windows_sparse
+
         def moving_sum(invalid: np.ndarray, key: str) -> np.ndarray:
             """ Fast moving sum using bottleneck """
             axis = self.axes[key]
             size = self.window_total[key]
             offsets = [slice(None)] * axis + [slice(size - 1, None)]
+            # invalid = invalid.astype('int32') # Bottleneck has fast impl w/ int
             invalid = bn.move.move_sum(invalid, size, axis=axis)
             return invalid[tuple(offsets)]
 
         # Create a boolean mask indicating invalid elements
-        invalid = pd.isna(self.data) | np.isin(self.data, self.invalid_value)
+        invalid = self.invalid()
 
         # Calculate the running invalid mask by iterating over valid percents
         for keys, percent in self.valid_percent.items():   
             if (~invalid).any():         
                 n_total = np.prod([self.window_total[k] for k in keys])
-                maximum = int((1-self.valid_percent[keys]) * n_total)
+                maximum = int((1-percent) * n_total)
                 invalid = reduce(moving_sum, keys, invalid) > maximum
 
         # Offset the final mask indices in order to center the window
@@ -141,20 +187,57 @@ class Block(BaseAbstract):
     @cached_property
     def valid_coords(self) -> np.ndarray:
         """ Retrieve the coordinate values for the valid locations """
+        # if self.sparse:
+            # return self.coords.data.reshape(-1, self.coords.shape[-1])[self.valid_windows]
         return self.coords[tuple(self.valid_windows)]
 
 
     @cached_property
     def valid_data(self) -> np.ndarray:
         """ Retrieve the center data values for the valid locations """
+        # if self.sparse:
+        #     return self.data.data.reshape(-1, self.data.shape[-1])[self.valid_windows]
         return self.data[tuple(self.valid_windows)]
 
 
-    @property
+    @cached_property
     def fast_invalid_check(self):
         """ Quick check to verify there exists any valid data """
-        data = self._data[..., 0].compute()
-        return (pd.isna(data) | np.isin(data, self.invalid_value)).all()
+        return self.invalid( self._data[..., 0].compute() ).all()
+
+
+    @property
+    def sparse(self):
+        """ Return True if data is a sparse object """
+        return hasattr(type(self._data._meta), 'todense')
+
+
+    def invalid(self, data: np.ndarray | None = None):
+        """Element-wise mask of invalid values in the given array.
+
+        Parameters
+        ----------
+        data : np.ndarray | None
+            The array to create a mask for. If no parameter is given, 
+            self.data is used (the full block data).
+
+        Returns
+        -------
+        np.ndarray
+            Boolean mask which indicates where there are invalid values.
+
+        """
+        # Need to use type(object) to ensure np.isin performs check correctly
+        data = (data if data is not None else self.data).astype(object)
+        return pd.isna(data) | np.isin(data, self.invalid_value)
+
+
+    def cleanup(self):
+        """ Delete cached objects to free memory; uncertain whether
+            this is actually necessary, and may cause minor slowdowns """
+        # for key in ['valid_coords', 'valid_windows', 'data', 'coords']:
+        #     if key in self.__dict__:
+        #         del self.__dict__[key]
 
     
     def extract(self, indices: np.ndarray) -> list[xr.Dataset]:

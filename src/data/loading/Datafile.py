@@ -347,7 +347,18 @@ class Datafile(BaseAbstract):
         cannot be performed by the overlap operation. Current tests seem to 
         indicate bypassing the dask.overlap.overlap restriction on minimum
         chunk size will still generate correct results, but this may not be 
-        the case in general - needs further testing.
+        the case in general - needs further testing. It appears the failure mode
+        is when there needs to be more than one chunk included in the overlap,
+        on the interior of the array:
+            [[1,2], [3,4], [5,6], [7,8]] with an overlap of 3 would generate:
+            [[nan, nan, nan, 1, 2, 3, 4], [1,2,3,4,5,6], [3,4,5,6,7,8], ...]
+        instead of the expected:
+            [[nan, nan, nan, 1, 2, 3, 4, 5], [nan, 1, 2, 3, 4, 5, 6, 7], ...]
+        because the third element requires an additional chunk. 
+        A common case where this does not fail is when the last chunk is too 
+        small, as the nan filling will correctly include the required number 
+        of additional elements. The issue only appears when internal chunks
+        are too small. 
 
         Returns
         -------

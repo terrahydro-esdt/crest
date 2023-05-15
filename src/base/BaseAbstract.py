@@ -20,7 +20,8 @@ def ensure_types(cls, f):
 
         # Recurse on T if it's iterable (and not a str)
         if hasattr(val, '__iter__') and not isinstance(val, str):
-            ele_types = ', '.join(set(map(type_repr, val)))
+            try:    ele_types = type_repr(next(iter(val)))
+            except: ele_types = '?'
             container = f'{container}[{ele_types}]'
         return container
 

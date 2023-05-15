@@ -29,7 +29,15 @@ class Sample(BaseAbstract):
     """
     def __init__(self, data: Collection[xr.Dataset]):  
         self.data = data 
+        self.dtype = object
 
+    def astype(self, T):
+        return self 
+
+    def __array__(self, *args, **kwargs): 
+        a = np.empty(1, dtype=object)
+        a[0] = self
+        return a
 
     def __getitem__(self, idx) -> xr.Dataset | Collection[xr.Dataset]:
         """ Retrieve a subset of the full collection """
@@ -50,3 +58,12 @@ class Sample(BaseAbstract):
     def nbytes(self) -> int:
         """ Get the total number of bytes used by the data """
         return sum(d.nbytes for d in self.data)
+
+
+    def extract(self, features: list[str]) -> np.ndarray:
+        """ Extract the requested features from the container """
+        data = [d[f] for d in self for f in features if f in d.variables]
+        assert(len(data) == len(features)), 'Duplicate features in data'
+        num  = len(data[0])
+        data = np.squeeze(np.stack(data, axis=-1))
+        return data.reshape((num,)+data.shape[1:-1]+(len(features),))
