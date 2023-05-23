@@ -50,7 +50,7 @@ class Blockset(BaseSet):
         # is a proxy for the overall coarsest resolution Block, as coarsest
         # resolution could be found in different Blocks when there are multiple
         # dimensions (e.g. Block_1 has coarsest dim_1, and Block_2 with dim_2)
-        self.sort(lambda block: block.valid_windows.size)
+        self.sort(lambda block: -block.valid_windows.size)
 
         # Find neighbors for the valid window locations within 1/2 the
         # resolution of the reference, using Chebyshev distance (L-inf)
@@ -76,7 +76,7 @@ class Blockset(BaseSet):
         }).to_dask_array(lengths=list(counts), meta=meta)
 
 
-    def _parse(self, match: tuple[np.ndarray], singleton: bool) -> SampleSet:
+    def _parse(self, match: Collection[np.ndarray], singleton: bool) -> SampleSet:
         """ Parse a match into the relevant SampleSet of data """
         windows = self.extract(_map=[match])   # Extract data windows
         ordered = self.sort(container=windows) # Return to original ordering
