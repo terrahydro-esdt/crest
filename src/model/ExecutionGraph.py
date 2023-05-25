@@ -1,2 +1,0 @@
-class ExecutionGraph:
-    pass

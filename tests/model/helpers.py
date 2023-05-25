@@ -1,7 +1,7 @@
-from ...src import HierarchalExecutionGraph
+from ...src import HierarchalGraphModel
 from math import exp
 
-class AddMult(HierarchalExecutionGraph):
+class AddMult(HierarchalGraphModel):
     """
     Crest Model to add and multiply a number
 
@@ -51,20 +51,20 @@ class AddMult(HierarchalExecutionGraph):
         self.input_features = ['x_1','x_2','scalar']
         self.output_features = {'product' : 'res_add_mult'}
 
-class AddMultExp(HierarchalExecutionGraph):
-
+class AddMultExp(HierarchalGraphModel):
+    
     def __init__(self):
         super().__init__(name='add_mult_exp')
-
+        
         def exponentiator(X):
             """ exp(X)
-
+            
             input keys = x
             output keys = 'exp'
-
+    
             """
             return {'exp' : exp(X['x'])}
-
+        
         #define model
         self.add_edge('input',AddMult())
         self.add_edge('add_mult',exponentiator)
