@@ -102,25 +102,51 @@ class Datafile(BaseAbstract):
         self.location = location
         self.features = features
         self.extent   = extent.copy()
+        self._kwargs  = kwargs
         self._window_depth  = window_depth.copy()
         self._valid_percent = valid_percent.copy()
         self._invalid_value = invalid_value
-        self._raw_data      = self.location
         self._virtual_dims  = {}
         self._validate_parameters()
 
-        # If the given location isn't already an xr.Dataset, open it
-        if not isinstance(self.location, xr.Dataset): 
-            self._raw_data = xr.open_zarr(self.location, **kwargs)
-    
-    
+
     def __getattr__(self, attr: str):
         """ Allow calls to be passed to the underlying xarray/dask object """
+        # Prevent recursive loop when there is an AttributeError in data/dask
+        if attr in ['data', 'dask']: return self.__getattribute__(attr)
+
+        # Prevent recursive loop when pickling objects
         if attr not in ['__getstate__', '__setstate__']:
             if hasattr(self.data, attr): return getattr(self.data, attr)
             if hasattr(self.dask, attr): return getattr(self.dask, attr)
         return self.__getattribute__(attr)
 
+
+    def __getstate__(self):
+        return {
+            'location' : self.location,
+            'features' : self.features,
+            'extent'   : self.extent,
+            '_kwargs'  : self._kwargs,
+            '_window_depth'  : self._window_depth,
+            '_valid_percent' : self._valid_percent,
+            '_invalid_value' : self._invalid_value,
+            '_virtual_dims'  : {},
+        }
+
+
+    def __setstate(self, d):
+        self.__dict__.update(d)
+
+
+    @cached_property
+    def _raw_data(self):
+        """ Only read the zarr once necessary """
+        # If the given location isn't already an xr.Dataset, open it
+        if isinstance(self.location, xr.Dataset): 
+            return self.location
+        return xr.open_zarr(self.location, **self._kwargs)
+    
 
     @cached_property
     def data(self) -> xr.DataArray:
@@ -138,11 +164,17 @@ class Datafile(BaseAbstract):
             if np.issubdtype(data[key].dtype, np.datetime64):
                 data = data.assign_coords({key: data[key].astype(float)})
 
-        # Convert to a DataArray and rechunk along the new axis
-        data = data.to_array('features').chunk({'features': -1})
+        # Cast int/uint/etc. to float in order to allow NaN values
+        for key in data:
+            if np.issubdtype(data[key].dtype, np.number):
+                if not np.issubdtype(data[key].dtype, np.floating):
+                    data[key] = data[key].astype('float32')
+
+        # Convert to a DataArray and ensure data is backed by dask
+        data = data.to_array('features').chunk({})
 
         # Save the original coordinates for later return values
-        self.original_dims = (data.coords.keys(), data.features)
+        self.original_dims = (list(data.coords.keys()), data.features.to_numpy())
 
         # Transpose dimensions so they are in the correct order, and return
         return data.transpose(*self.dims, ...)
@@ -197,7 +229,7 @@ class Datafile(BaseAbstract):
     @property
     def coord_array(self) -> da.Array:
         """ Coordinate meshgrid wrapped with dask """
-        coords = [self.data[dim].values for dim in self.dims]
+        coords = [da.from_array(self.data[dim].values, chunks=100) for dim in self.dims]
         coords = da.meshgrid(*coords, indexing='ij')
         coords = da.stack(coords, axis=-1)
         coords = coords.rechunk(self.chunksize[:-1] + (-1,))
@@ -313,7 +345,10 @@ class Datafile(BaseAbstract):
 
         # Calculate and apply the new chunks
         newchunks = [math.ceil(shape / block) for block, shape in block_shape]
-        self.data = self.chunk(newchunks)
+
+        if self.numblocks[:-1] != tuple(numblocks):
+            print('\tRechunked using:', newchunks)
+            self.data = self.chunk(newchunks)
 
         # Ensure the new block numbers are equal to what was requested
         if any(block != db for block, db in zip(numblocks, self.numblocks)):
@@ -393,11 +428,17 @@ class Datafile(BaseAbstract):
         # Create overlapping blocks, tiling and clipping dims as necessary
         overlap = lambda a: dask_overlap(a, **kwargs)
         tile    = lambda a: da.tile(a, repeats+[1]).blocks.ravel()
-        clip    = lambda a: a[tuple(map(slice, extents))]
+        clip    = lambda a: a#a[tuple(map(slice, extents))]
         create  = lambda a: list(map(clip, tile( overlap(a) )))
 
         d_blocks = create(self.dask)
         c_blocks = create(self.coord_array)
+
+        # Combine feature blocks into one
+        features = self.dask.numblocks[-1]
+        combine  = lambda i: da.concatenate(d_blocks[i:i+features], axis=-1)
+        d_blocks = list(map(combine, range(0, len(d_blocks), features)))
+
         assert(len(d_blocks) == len(c_blocks)), [len(d_blocks), len(c_blocks)]
 
         kwargs = {
@@ -431,9 +472,9 @@ class Datafile(BaseAbstract):
                 raise FileNotFoundError(f'File not found: {self.location}')
             self.location = zarr.DirectoryStore(self.location)
         
-        elif isinstance(self.location, FSMap):
-            if not self.location.fs.exists(self.location.root):
-                raise FileNotFoundError(f'Database not found: {self.location}')
+        # elif isinstance(self.location, FSMap):
+        #     if not self.location.fs.exists(self.location.root):
+        #         raise FileNotFoundError(f'Database not found: {self.location}')
 
         for key, extent in self.extent.items():
             if len(extent) != 2:

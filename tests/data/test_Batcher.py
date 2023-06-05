@@ -12,7 +12,7 @@ from crest.src.data import Batcher
 def test_batcher(batch_size, shuffle):
     data    = np.arange(1000)
     samples = list(da.from_array(data.copy(), chunks=50).to_delayed())
-    batcher = Batcher(samples, batch_size, shuffle=shuffle)
+    batcher = Batcher(samples, batch_size, shuffle=shuffle, workers=0)
     batches = [b for batch in batcher for b in list(batch)]
 
     if shuffle: batches = sorted(batches)
@@ -31,7 +31,7 @@ def test_speed(batch_size, sleep, size):
 
     # Create a dataset with 5 blocks that has 100 samples / chunk
     dataset = list(map(generate, range(20)))
-    batcher = Batcher(dataset, batch_size, shuffle=True)
+    batcher = Batcher(dataset, batch_size, shuffle=True, workers=0)
 
     # Calculate the theoretical maximum number of batches / second
     t_max = ((batcher.workers * size) / batch_size) / sleep

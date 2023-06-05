@@ -1,20 +1,15 @@
-from sklearn.neighbors import BallTree
-from scipy.spatial import KDTree
 from collections.abc import Collection
-from itertools import zip_longest, product, starmap
-from numbers import Number, Integral as Int
+from functools import cached_property
 
 import dask.dataframe as dd
 import dask.array as da 
-import dask 
-import xarray as xr 
-import pandas as pd
 import numpy as np 
 
 from crest.src.base  import BaseSet
 from crest.src.utils import find_neighbors
 from crest.src.data.loading import Block, SampleSet
 
+from crest.src.utils import Stopwatch
 
 
 class Blockset(BaseSet):
@@ -34,12 +29,16 @@ class Blockset(BaseSet):
         self.container = blocks 
 
 
+    @cached_property
+    def dtype(self):
+        """ dtype for the dask sample array, and for each Sample element """
+        return np.dtype([(f'Data_{i}', b.dtype) for i,b in enumerate(self)])
+
+
     def find_matches(self) -> da.Array:
         """ Build the BallTree and find all valid samples """
-
         # Create meta/dtype information for dask
-        dtype = np.dtype([(f'Data_{i}', T) for i, T in enumerate(self.dtype)])
-        meta  = np.empty((0,), dtype=dtype)
+        meta  = np.empty(0, dtype=self.dtype)
 
         # Fast return when there are no valid locations for this block
         if any(self.fast_invalid_check):     return da.from_array(meta)
@@ -50,35 +49,62 @@ class Blockset(BaseSet):
         # is a proxy for the overall coarsest resolution Block, as coarsest
         # resolution could be found in different Blocks when there are multiple
         # dimensions (e.g. Block_1 has coarsest dim_1, and Block_2 with dim_2)
-        self.sort(lambda block: -block.valid_windows.size)
+        self.sort(lambda block: block.valid_windows.size)
 
         # Find neighbors for the valid window locations within 1/2 the
         # resolution of the reference, using Chebyshev distance (L-inf)
-        matches = find_neighbors(self.valid_coords, self.resolution, p=np.inf)
+        matches, counts = find_neighbors(self.valid_coords, self.resolution, p=np.inf)
+
+        # Clean up memory resources that aren't needed beyond this point
+        # Not currently used, since the objects in memory will be used
+        # shortly after this while batching the samples
         self.cleanup()
 
         # Return if there aren't any matches
-        if not len(matches): return da.from_array(meta)
+        if counts.size < 1: return da.from_array(meta)
 
-        # Count total number of matches
-        counts = np.prod([list(map(len, m)) for m in matches], axis=1)
+        # Number of samples in the cartesian product for dataframe divisions
+        cartesian = np.prod(counts, axis=0)
+        divisions = np.cumsum(cartesian, dtype='int64')
 
-        # Create dataframe divisions
-        divisions = [0] + list(np.cumsum(counts))
+        # Combine multiple match sets together into a single SampleSet for 
+        # faster processing, with up to 10MB of data per SampleSet
+        maxim = 5e5 / self.dtype.itemsize # Can have up to 2x numerator
+        total = divisions[-1]
+        first = divisions[0]
+        n_ele = min(maxim, total)
 
-        # Create dask dataframe and convert to da.Array
+        # Check that groups actually need combining to reach size threshold
+        if n_ele > cartesian.min():
+
+            # Determine unique indices of the boundaries where matches should split
+            boundaries = np.arange(max(first+1, n_ele), total, n_ele)
+            partitions = np.searchsorted(divisions, boundaries)
+            unique_idx = np.flatnonzero(np.diff(partitions, prepend=-1))
+
+            # Create combined match sets and recompute dataframe divisions
+            matches   = np.split(matches, partitions[unique_idx], axis=1)
+            hist_bins = np.r_[0, boundaries[unique_idx], total]
+            cartesian = np.histogram(divisions, hist_bins, weights=cartesian)[0]
+            divisions = np.cumsum(cartesian.copy(), dtype='int64')
+
+        # Otherwise just reshape to mimic having 1 set of matches per SampleSet
+        else: matches = matches.T[..., None]
+
+        # Create a dask dataframe first, then transform into a dask
+        # array, in order to satisfy dask's built in assumptions 
         return dd.from_map(self._parse, matches, **{
-            'meta'             : (0, int), 
-            'token'            : f'product{id(matches)}',
-            'divisions'        : divisions, 
-            'enforce_metadata' : False,
-            'singleton'        : len(counts) == 1,
-        }).to_dask_array(lengths=list(counts), meta=meta)
+                'meta'             : (0, int), 
+                'token'            : f'product{id(matches)}',
+                'divisions'        : [0] + divisions.tolist(), 
+                'enforce_metadata' : False,
+                'singleton'        : len(cartesian) == 1,
+            }).to_dask_array(lengths=list(cartesian), meta=meta)
 
 
-    def _parse(self, match: Collection[np.ndarray], singleton: bool) -> SampleSet:
+    def _parse(self, matches, singleton: bool = False) -> SampleSet:
         """ Parse a match into the relevant SampleSet of data """
-        windows = self.extract(_map=[match])   # Extract data windows
+        windows = self.extract(_map=[matches]) # Extract data windows
         ordered = self.sort(container=windows) # Return to original ordering
-        return SampleSet(ordered, singleton)
+        return SampleSet(list(zip(*ordered)), singleton, self.dtype)
         

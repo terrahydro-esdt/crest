@@ -11,16 +11,16 @@ import inspect, copy
 def ensure_types(cls, f):
     """ Ensure type annotations are followed, raising TypeError if not """
 
-    def type_repr(val=None, T=None):
+    def type_repr(val=None, T=None, _maxdepth=4):
         """ Recursive type representation """
-        if isinstance(val, Iterator): val = copy.deepcopy(val)
         if isinstance(T, str):        return T
         if T is not None:             return _type_repr(T)
+        if isinstance(val, Iterator): val = copy.deepcopy(val)
         container = _type_repr(type(val)).split('.')[-1]
 
-        # Recurse on T if it's iterable (and not a str)
-        if hasattr(val, '__iter__') and not isinstance(val, str):
-            try:    ele_types = type_repr(next(iter(val)))
+        # Recurse on val if it's iterable (and not a str)
+        if hasattr(val, '__iter__') and not isinstance(val, str) and _maxdepth:
+            try:    ele_types = type_repr(next(iter(val)), T, _maxdepth-1)
             except: ele_types = '?'
             container = f'{container}[{ele_types}]'
         return container

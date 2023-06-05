@@ -93,12 +93,19 @@ class Dataset(BaseSet):
 
         # Ensure all Datafiles are aware of all dimensions
         self.ensure_dims( set.union(*map(set, self.dims)) )
-
+        
         # With one value per dimension:
         max_res = np.nanmax(self.resolution, axis=0) 
         idx_res = np.nanargmax(self.resolution, axis=0)
         tgt_blk = numblocks or np.gcd.reduce(self.numblocks, axis=0)
         skipdim = idx_res == np.arange(len(self))[:, None]
+
+        if (numblocks is None) and (max(tgt_blk) == 1) and (max(self.size) > 100):
+            tgt_blk = [1] * len(tgt_blk)
+            maxim   = np.max(self.shape, axis=0)
+            indices = np.argpartition(maxim, -2)[-2:]
+            tgt_blk[indices[0]] = min(10, maxim[indices[0]])
+            tgt_blk[indices[1]] = min(10, maxim[indices[1]])
 
         if verbose:
             print('\tcurrent blocks:', self.numblocks)
@@ -127,13 +134,7 @@ class Dataset(BaseSet):
         with nullcontext() if not verbose else ProgressBar():
             if verbose: print('\nFinding all valid samples...')
             delayed = lambda blockset: dask.delayed(blockset.find_matches)()
-            if not compute:
-                # import dask.bag as db 
-                # import pandas as pd
-                # return db.from_delayed(list(map(delayed, blocksets))).to_dataframe(meta=pd.DataFrame({'Sample':np.empty((0,), dtype=object)}))
-                # for row in samples.iterrows():
-                #     print(row)
-                return list(map(delayed, blocksets))
+            if not compute: return list(map(delayed, blocksets))
             results = da.compute( *map(delayed, blocksets) ) 
             samples = da.hstack(results)
         
