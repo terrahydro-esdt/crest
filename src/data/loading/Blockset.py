@@ -2,22 +2,12 @@ from collections.abc import Collection
 from functools import cached_property
 
 import dask.dataframe as dd
-<<<<<<< HEAD
 import dask.array as da 
 import numpy as np 
-=======
-import dask.array as da
-import dask
-import xarray as xr
-import pandas as pd
-import numpy as np
->>>>>>> origin
 
 from crest.src.base  import BaseSet
-from crest.src.utils import find_neighbors
+from crest.src.utils import find_neighbors, Stopwatch
 from crest.src.data.loading import Block, SampleSet
-
-from crest.src.utils import Stopwatch
 
 
 class Blockset(BaseSet):
