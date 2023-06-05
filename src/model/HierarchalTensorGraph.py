@@ -1,7 +1,7 @@
 from functools import cache
 import networkx as nx
 from types import MethodType
-from .GraphModel import GraphModel
+from .TensorGraph import TensorGraph
 import matplotlib.pyplot as plt
 from .graphs import NetworkXGraph
 from typing import TypeVar,Union
@@ -10,7 +10,7 @@ class ImproperModelError(Exception):
     """ Raised when an improper model is created """
     pass
 
-class HierarchalGraphModel(GraphModel):
+class HierarchalTensorGraph(TensorGraph):
     """
 
     CREST Hierarchal Model (CHM):
@@ -86,7 +86,7 @@ class HierarchalGraphModel(GraphModel):
 
     def __init__(self, node: callable=None, name: str=None):
 
-        self.name  = name or HierarchalGraphModel.get_name(node)
+        self.name  = name or HierarchalTensorGraph.get_name(node)
         self.node  = node  or self
         self.graph  = NetworkXGraph()
         self.output = []
@@ -140,7 +140,7 @@ class HierarchalGraphModel(GraphModel):
             for attr in ['name', '__name__', '__qualname__']:
                 value = value or getattr(obj, attr, None)
             return value or str(obj)
-        return HierarchalGraphModel.get_name(value)
+        return HierarchalTensorGraph.get_name(value)
 
     def search(self, name: str, partial: bool=False) -> dict:
         """
@@ -202,7 +202,7 @@ class HierarchalGraphModel(GraphModel):
         return self.graph.is_empty
 
     @staticmethod
-    def identity(name: str) -> 'HierarchalGraphModel':
+    def identity(name: str) -> 'HierarchalTensorGraph':
         """
         Create an identity Model.
 
@@ -210,9 +210,9 @@ class HierarchalGraphModel(GraphModel):
              The name given to the identity Model created
 
         """
-        return HierarchalGraphModel(lambda x:x,name)
+        return HierarchalTensorGraph(lambda x:x,name)
 
-    def get_model(self, node: Union[str,callable]) -> 'HierarchalGraphModel':
+    def get_model(self, node: Union[str,callable]) -> 'HierarchalTensorGraph':
         """
         Wrap the given node in a Model, and add to our graph if necessary.
 
@@ -228,7 +228,7 @@ class HierarchalGraphModel(GraphModel):
 
         Returns
         -------
-        HierarchalGraphModel
+        HierarchalTensorGraph
             Model which represents the given node in the graph.
 
         Raises
@@ -237,18 +237,18 @@ class HierarchalGraphModel(GraphModel):
             - If a node with the same name already exists in the graph, but is
             not the same Model object.
             - If a the same referenced model passed already exists in hierarchal model.
-            - If node is not callable, a string, or a HierarchalGraphModel
+            - If node is not callable, a string, or a HierarchalTensorGraph
 
         """
-        if not (isinstance(node,str) or isinstance(node,HierarchalGraphModel) or callable(node)):
-            message = f'node must be either callable, a string, or a HierarchalGraphModel'
+        if not (isinstance(node,str) or isinstance(node,HierarchalTensorGraph) or callable(node)):
+            message = f'node must be either callable, a string, or a HierarchalTensorGraph'
             raise ImproperModelError(message)
 
         #fetch model by its name
         if isinstance(node, str):
             #add io node if first time called
             if (node in ['input','output']) and (node not in self):
-                io =  HierarchalGraphModel.identity(node)
+                io =  HierarchalTensorGraph.identity(node)
                 self.graph.add_node(io.name, model=io)
                 return io
 
@@ -257,16 +257,16 @@ class HierarchalGraphModel(GraphModel):
             return self[node]
 
         #if not a name (str) and not of type(Model)
-        if not isinstance(node, HierarchalGraphModel):
+        if not isinstance(node, HierarchalTensorGraph):
 
             #check if basemodel with this name exist and if it has the same node value.
             #if it has the same node value then this refers to that basemodel.
-            name = HierarchalGraphModel.get_name(node)
+            name = HierarchalTensorGraph.get_name(node)
             if (name in self.graph) and (node is self[name].node):
                     return self[name]
 
             #if it doesn't exist we need to create a basemodel
-            node = HierarchalGraphModel(node)
+            node = HierarchalTensorGraph(node)
 
         #check if you passed a different model with the same name
         if (node.name in self.graph) and (node is not self.models[node.name]):
@@ -300,39 +300,39 @@ class HierarchalGraphModel(GraphModel):
         return node
 
     def add_node(self, node: Union[callable,'HierarchalGraphmodel']):
-        """ 
-        Add a node to the HierarchalGraphModel.
+        """
+        Add a node to the HierarchalTensorGraph.
 
         Parameters
         ----------
-        node : callable, or HierarchalGraphModel
+        node : callable, or HierarchalTensorGraph
             - If a callable is passed, it is wrapped into a Model and added to
             the graph if it doesn't yet exist.
             - If a Model is passed, it is added to the graph if it doesn't yet
             exist.
-            
+
         Raises
         -------
-        
+
         ImproperModelError
-            -if not callable or a HierarchalGraphModel
+            -if not callable or a HierarchalTensorGraph
         """
-        
-        if not (callable(node) or  isinstance(node,HierarchalGraphModel)):
-            message = f'A node must be either callable or a HierarchalGraphModel'
+
+        if not (callable(node) or  isinstance(node,HierarchalTensorGraph)):
+            message = f'A node must be either callable or a HierarchalTensorGraph'
             raise ImproperModelError(message)
-            
+
         #we'll use get_model to add it to the graph. Get model will check if exist
         #and only add it if does not. It also checks node meets various criteria before
         #adding it to the graph.
         self.get_model(node)
-        
+
     def remove_node(self,node):
-        """ 
-        Removes a node from the HierarchalGraphModel
-        
         """
-        
+        Removes a node from the HierarchalTensorGraph
+
+        """
+
         #remove node from string
         if isinstance(node,str):
             if node in self.models:
@@ -341,42 +341,42 @@ class HierarchalGraphModel(GraphModel):
             else:
                 message=f'Node with name {node} not found'
                 raise ImproperModelError(message)
-                
-        #remove node from HierarchalGraphModel
-        if isinstance(node,HierarchalGraphModel):
+
+        #remove node from HierarchalTensorGraph
+        if isinstance(node,HierarchalTensorGraph):
             if not node.name in self.models:
                 message=f'Node with name {node} not found'
                 raise ImproperModelError(message)
-                
+
             if not self[node.name] is node:
                 message=f'Node with the name {node.name} exist but does match the one passed'
                 raise ImproperModelError(message)
-            
+
             self.graph.remove_node(node.name)
             return
-                
+
         #remove node from basemodel function
         #check if basemodel with this name exist and if it has the same node value.
         #if it has the same node value then this refers to that basemodel.
         if callable(node):
-            name = HierarchalGraphModel.get_name(node)
+            name = HierarchalTensorGraph.get_name(node)
             if not name in self.graph:
                 message=f'Node with name {node} not found'
                 raise ImproperModelError(message)
-           
+
             if not node is self[name].node:
                 message=f'Node with the name {node.name} exist but does match the one passed'
-                raise ImproperModelError(message)  
-            
+                raise ImproperModelError(message)
+
             self.graph.remove_node(name)
             return
-        
+
         #if not one of the above, throw an exception
-        message=f'Unrecognized node type. Must be of type str, callable, or HierarchalGraphModel'
-        raise ImproperModelError(message) 
-        
-         
-        
+        message=f'Unrecognized node type. Must be of type str, callable, or HierarchalTensorGraph'
+        raise ImproperModelError(message)
+
+
+
     def add_edge(self, source: Union[str,callable], target: Union[str,callable], **attr):
         """
 
@@ -425,26 +425,26 @@ class HierarchalGraphModel(GraphModel):
             if not self.graph.is_directed_acyclic_graph:
                 message = f'Adding this edge created a cyclic graph'
                 raise ImproperModelError(message)
-                
+
     def add_edges_from(self,ebunch: list):
         """
         Add multiple edges
-        
+
         Parameters
         ----------
-        
+
         ebunch: a list of tuples (source,target)
-        
+
         """
-        
+
         for i in ebunch:
             self.add_edge(*i)
 
     def __repr__(self):
-        return f'HierarchalGraphModel("{self.name}", id={id(self)}) '
+        return f'HierarchalTensorGraph("{self.name}", id={id(self)}) '
 
 
-    def __getitem__(self, path: Union[str,tuple]) -> 'HierarchalGraphModel':
+    def __getitem__(self, path: Union[str,tuple]) -> 'HierarchalTensorGraph':
 
         """ Retrieve the model which has the given name from our graph
 
@@ -467,10 +467,10 @@ class HierarchalGraphModel(GraphModel):
             #if path == self.name: return self
             #return i/o nodes
             if path in ['input'] and (path not in self.graph):
-                return HierarchalGraphModel.input_node(path)
+                return HierarchalTensorGraph.input_node(path)
 
             if path in ['output'] and (path not in self.graph):
-                return HierarchalGraphModel.output_node(path)
+                return HierarchalTensorGraph.output_node(path)
 
             return self.graph.nodes[path]['model']
         return self[path[0]][path[1:]]

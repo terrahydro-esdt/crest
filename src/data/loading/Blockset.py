@@ -2,8 +2,16 @@ from collections.abc import Collection
 from functools import cached_property
 
 import dask.dataframe as dd
+<<<<<<< HEAD
 import dask.array as da 
 import numpy as np 
+=======
+import dask.array as da
+import dask
+import xarray as xr
+import pandas as pd
+import numpy as np
+>>>>>>> origin
 
 from crest.src.base  import BaseSet
 from crest.src.utils import find_neighbors
@@ -19,14 +27,14 @@ class Blockset(BaseSet):
     ----------
     blocks : Collection[Block]
         The set of Blocks which form this Blockset. Because
-        this inherits from BaseSet, functions existing in the 
-        Block class can be called by this object in order to 
+        this inherits from BaseSet, functions existing in the
+        Block class can be called by this object in order to
         apply the function across all Blocks in this set. See
         crest.src.base.BaseSet for more details.
 
     """
     def __init__(self, blocks: Collection[Block]):
-        self.container = blocks 
+        self.container = blocks
 
 
     @cached_property
@@ -94,12 +102,12 @@ class Blockset(BaseSet):
         # Create a dask dataframe first, then transform into a dask
         # array, in order to satisfy dask's built in assumptions 
         return dd.from_map(self._parse, matches, **{
-                'meta'             : (0, int), 
-                'token'            : f'product{id(matches)}',
-                'divisions'        : [0] + divisions.tolist(), 
-                'enforce_metadata' : False,
-                'singleton'        : len(cartesian) == 1,
-            }).to_dask_array(lengths=list(cartesian), meta=meta)
+            'meta'             : (0, int), 
+            'token'            : f'product{id(matches)}',
+            'divisions'        : [0] + divisions.tolist(), 
+            'enforce_metadata' : False,
+            'singleton'        : len(cartesian) == 1,
+        }).to_dask_array(lengths=list(cartesian), meta=meta)
 
 
     def _parse(self, matches, singleton: bool = False) -> SampleSet:
