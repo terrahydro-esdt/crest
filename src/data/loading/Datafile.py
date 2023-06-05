@@ -85,8 +85,8 @@ class Datafile(BaseAbstract):
     # Full window must be valid for undefined dimensions
     DEFAULT_VALID_PERCENT = 1 
 
-    # Ensure we include integer representation of NaN (-2147483648)
-    DEFAULT_INVALID_VALUES = [-2147483648]
+    # Ensure we include int(32/64) representations of NaN
+    DEFAULT_INVALID_VALUES = [-2147483648, -9223372036854775808]
 
 
 

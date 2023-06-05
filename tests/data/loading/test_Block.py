@@ -34,7 +34,7 @@ example_block = Block(**{
     'resolution'    : [1., 0.1],
     'window_depth'  : {'x': np.array([0,1]), 'y': np.array([1,0])},
     'valid_percent' : {('x','y'): 1.},
-    'invalid_value' : [12345, 54321., -2147483648, 'a'],
+    'invalid_value' : [12345, 54321., -2147483648, -9223372036854775808, 'a'],
 })
 
 
