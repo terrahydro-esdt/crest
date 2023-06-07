@@ -66,6 +66,14 @@ class Stopwatch:
         keyword arguments for formatting the respective metrics with. Valid 
         keyword arguments are 'units' and 'divisor'; see Stopwatch.readable for
         docstring.
+    samples : int
+        Number of times to repeatedly call metric functions, in order to obtain
+        an averaged value over time. Should be used in combination with the 
+        `delay` parameter in order to add a time delay between function calls.
+    delay   : Number
+        Amount of time (in seconds) to wait between function calls when taking
+        multiple samples. If `samples` <= 1, this parameter has no effect.  
+
 
     Examples
     --------
@@ -179,7 +187,7 @@ class Stopwatch:
 
             if (decimals == -1) and (len(units) > 1):
                 return fmt(value/divisor, units[1:])
-                
+
             value = f'{value:.{max(0, decimals)}f}'
             if '.' not in value: value += '.'
             return add_unit(value.rstrip('0').rstrip('.'))
