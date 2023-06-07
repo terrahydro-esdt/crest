@@ -136,9 +136,10 @@ class ThreadedFunction(set):
     def _execute(self, *args, **kwargs):
         """ Log any errors which result when calling the function """
         try: 
-            with Stopwatch(f'\tCompleted {self.name} in', log=self.logger.info):
+            with Stopwatch(f'\tCompleted {self.name}', self.logger.info):
                 return self.function(*args, **kwargs)
 
+        except StopIteration: self.close()
         except Exception as e:
             if 'new futures after shutdown' not in str(e):
                 msg = f'Exception in {self.name}: {e}\n{traceback.format_exc()}'

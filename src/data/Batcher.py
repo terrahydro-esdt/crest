@@ -51,7 +51,7 @@ class Batcher:#(BaseAbstract):
         Number of threads to use to create batches in parallel. Note that twice
         this number of threads are actually used, as one set is used for 
         loading dataset blocks and the other set is used for loading samples 
-        from the chunks within a block. Must >= 1. 
+        from the chunks within a block. Must be >= 1. 
     shuffle    : bool 
         Whether samples should be shuffled to generate batches, or returned in 
         the original order of the sample array. When shuffle=False, multiple 
@@ -69,8 +69,23 @@ class Batcher:#(BaseAbstract):
         workers that can be active - as without duplication, the number of 
         workers is limited to the number of blocks in the dataset (one block
         per worker). 
+    max_queue  : int
+        Number of batches to generate in advance when using multiprocessing.
+        When `workers` <= 0, has no effect.
+    task_bytes : float
+        Maximum number of bytes that should comprise a _batcher task. This 
+        value controls the tradeoff between memory usage and batch throughput,
+        with a higher number of bytes per task leading to more batches created
+        in a single task. Having a value too large can cause long periods 
+        without batches however, even if the average throughput is marginally
+        greater. In general, larger individual samples (those with large 
+        windows in multiple dimensions, for instance) will require larger 
+        bytes per task in order to achieve optimal throughput. 
     logfile    : bool
         File that logs should be written to.
+    loglevel   : int 
+        Level that log file will display. Should be a level defined by the
+        logging module, i.e. logging.INFO, logging.DEBUG, etc.
     seed       : int | None
         Seed for reproducible randomness. 
     
@@ -78,43 +93,49 @@ class Batcher:#(BaseAbstract):
     def __init__(self, 
         dataset    : Dataset | StructuredDataset,
         batch_size : int,
-        features   : list = [],
-        workers    : int  = 2,
-        threads    : int  = 3,
-        shuffle    : bool = True,
-        repeat     : bool = False,
-        duplicate  : bool = False,
-        max_queue  : int  = 100,
-        logfile    : str  = 'Batcher.log',
+        features   : list  = [],
+        workers    : int   = 2,
+        threads    : int   = 1,
+        shuffle    : bool  = True,
+        repeat     : bool  = False,
+        duplicate  : bool  = False,
+        max_queue  : int   = 100,
+        task_bytes : float = 5e7,
+        logfile    : str   = 'Batcher.log',
+        loglevel   : int   = logging.INFO,
         seed       : int | None = None,
     ):
-        self.dataset   = dataset
-        self.n_batch   = batch_size 
-        self.features  = features
-        self.workers   = workers if shuffle else 0
-        self.threads   = threads if shuffle else 1
-        self.shuffle   = shuffle
-        self.repeat    = repeat
-        self.duplicate = duplicate
-        self.max_queue = max_queue
-        self.logfile   = logfile
-        self.random    = np.random.default_rng(seed)
+        self.dataset    = dataset
+        self.n_batch    = batch_size 
+        self.features   = features
+        self.workers    = workers if shuffle else 0
+        self.threads    = threads if shuffle else 1
+        self.shuffle    = shuffle
+        self.repeat     = repeat
+        self.duplicate  = duplicate
+        self.max_queue  = max_queue
+        self.task_bytes = task_bytes
+        self.logfile    = logfile
+        self.loglevel   = loglevel
+        self.random     = np.random.default_rng(seed)
 
 
     def __getstate__(self):
         """ Ensure unpickle-able objects are not included """
         return {
-            'dataset'   : self.dataset,
-            'n_batch'   : self.n_batch,
-            'features'  : self.features,
-            'workers'   : self.workers,
-            'threads'   : self.threads,
-            'shuffle'   : self.shuffle,
-            'repeat'    : self.repeat,
-            'duplicate' : self.duplicate,
-            'max_queue' : self.max_queue,
-            'logfile'   : self.logfile,
-            'random'    : self.random,
+            'dataset'    : self.dataset,
+            'n_batch'    : self.n_batch,
+            'features'   : self.features,
+            'workers'    : self.workers,
+            'threads'    : self.threads,
+            'shuffle'    : self.shuffle,
+            'repeat'     : self.repeat,
+            'duplicate'  : self.duplicate,
+            'max_queue'  : self.max_queue,
+            'task_bytes' : self.task_bytes,
+            'logfile'    : self.logfile,
+            'loglevel'   : self.loglevel,
+            'random'     : self.random,
         }
 
 
@@ -146,6 +167,7 @@ class Batcher:#(BaseAbstract):
                 while any(job.is_alive() for job in self._processes):
                     try:          yield self._queue.get(timeout=0.1)
                     except Empty: pass
+                    except KeyboardInterrupt: break
                     except Exception as e: 
                         self.logger.error(f'Exception: {e}')
                         break 
@@ -209,7 +231,7 @@ class Batcher:#(BaseAbstract):
     @cached_property
     def logger(self):
         """ Create the logging object which writes logs to a file """
-        message = '%(asctime)s | %(process)6d | %(threadName)s | %(levelname)5s | %(message)s'
+        message = '%(asctime)s | %(process)6d | %(threadName)s | %(levelname)7s | %(message)s'
         handler = logging.FileHandler(self.logfile)
         handler.setFormatter( logging.Formatter(message) )
         if not mp.current_process().daemon: Path(self.logfile).write_text('')
@@ -218,7 +240,7 @@ class Batcher:#(BaseAbstract):
         if logger.hasHandlers():
             logger.handlers.clear()
 
-        logger.setLevel(logging.INFO)
+        logger.setLevel(self.loglevel)
         logger.addHandler(handler)
         return logger
 
@@ -227,6 +249,8 @@ class Batcher:#(BaseAbstract):
     def _generator(self):
         """ Perform the initial setup of batch creation, and return the generator """
         try:
+            self.logger.info('Starting Batcher._generator')
+
             # Ensure the lock and flags are created before starting threads
             self._remainder_lock
             self._first_done.clear()
@@ -243,7 +267,7 @@ class Batcher:#(BaseAbstract):
             # Create task executors for generating blocks and batches
             kwargs = {
                 'threads'  : min(len(samples), self.threads),
-                'capacity' : min(len(samples), self.threads) * 3,
+                'capacity' : min(len(samples), self.threads) * 2,
                 'exitflag' : self._exit_flag,
                 'logger'   : self.logger,
             }
@@ -252,7 +276,7 @@ class Batcher:#(BaseAbstract):
 
             # If requested, yield samples indefinitely
             while not self._exit_flag.is_set():
-                with Stopwatch('\n\t-------------------\n\tCompleted epoch in', log=self.logger.info):
+                with Stopwatch('\n\t-------------------\n\tCompleted epoch', self.logger.info):
                     if self.shuffle: self.random.shuffle(samples)   
 
                     # If multiprocessing, use only a subset of the overall samples                 
@@ -287,7 +311,6 @@ class Batcher:#(BaseAbstract):
             Timer(3, lambda: os._exit(0)).start() 
 
 
-
     def _iter_batches(self, subsets):
         """ Yield batches of samples """
         block_tasks = self._block_tasks
@@ -308,7 +331,8 @@ class Batcher:#(BaseAbstract):
                 yield from task.result()
 
             # Clear any completed block tasks
-            list(block_tasks)
+            # list(block_tasks)
+            [b.result() for b in block_tasks]
 
             # Brief sleep to release GIL while waiting for threads
             time.sleep(0.01)
@@ -318,8 +342,7 @@ class Batcher:#(BaseAbstract):
             yield self._to_dict(self._remainder) 
 
 
-
-    def _combine(self, blocks: Collection, max_bytes: Number = 1e7) -> None:
+    def _combine(self, blocks: Collection) -> None:
         """ Combine the given dataset blocks into a single dask Array,
             which is then shuffled and subdivided, and then sent on to
             the _batcher threads for final processing.
@@ -329,18 +352,17 @@ class Batcher:#(BaseAbstract):
         blocks    : Collection
             The collection of dask.delayed dataset blocks that should
             be computed to gather the dask.Array[Sample] objects.
-        max_bytes : Number
-            Maximum number of bytes that should comprise a _batcher
-            task. The dask.Array that is computed from the given blocks
-            will be divided into smaller / combined into larger chunks
-            (when possible) before being passed on to the _batcher. 
 
         """
         # Combine multiple blocks into a single array
-        self.logger.debug(f'Starting compute of {len(blocks)} block(s)... {blocks}')
-        with Stopwatch(f'computed {len(blocks)} block(s)', log=self.logger.debug):
+        self.logger.debug(f'Starting compute of {len(blocks)} block(s)...')
+        with Stopwatch(f'Computed {len(blocks)} block(s)', self.logger.debug):
             samples = da.hstack( da.compute(*blocks) )
-            self.logger.debug(f'computed samples shape {samples.shape} from block(s) {blocks}')
+            message = f'Computed samples from block(s) (shape='
+            message+= Stopwatch.readable(samples.size, units='size')
+            message+= f'  bytes={Stopwatch.readable(samples.nbytes)}'
+            message+= f'  chunks={samples.chunksize})'
+            self.logger.debug(message)
 
         # Chunk to more reasonable sizes if current sizes are too small
         if samples.chunksize[0] < 10:
@@ -358,20 +380,19 @@ class Batcher:#(BaseAbstract):
         # Process up to 100MB at once to increase throughput,
         # and improve randomness by shuffling across blocks
         n_bytes = samples.nbytes / samples.numblocks[0]
-        n_block = int(min(samples.numblocks[0], max(1, max_bytes // n_bytes)))
+        n_block = int(min(samples.numblocks[0], max(1, self.task_bytes // n_bytes)))
         extract = lambda i: order[i::n_block]
         chunks  = map(list, zip(*map(extract, range(n_block))))
 
         message = f'Adding {samples.blocks.size//n_block} batch tasks, '
-        message+= f'with {n_block} blocks/task @ ~{n_bytes:.0f} bytes/block' 
-        message+= f' ({n_block*n_bytes/1e6:,.1f} MB)'
+        message+= f'with {n_block} blocks/task, ~{Stopwatch.readable(n_bytes)}'
+        message+= f'/block ({Stopwatch.readable(n_block*n_bytes)})'
         self.logger.info(message)
         list(map(self._batch_tasks, map(samples.blocks.__getitem__, chunks)))
 
         # Ensure any remaining blocks are also processed
         remain = len(order) % n_block
         if remain: self._batch_tasks(samples.blocks[order[-remain:]])
-
 
 
     def _batcher(self, samples: da.Array) -> list:
@@ -389,12 +410,13 @@ class Batcher:#(BaseAbstract):
                 List of batches, where each batch is either a list of 
                 Sample objects (when no features are requested); or a
                 (possibly nested) list of feature dictionaries. 
+
         """
         # Compute the current samples and extract features if requested
-        with Stopwatch(f'compute+feature extraction {len(samples)} samples', log=self.logger.debug):
+        with Stopwatch(f'Compute+feature extraction {len(samples)} samples', self.logger.debug):
             samples = self._extract_features( samples.compute() )
 
-        with Stopwatch(f'generated {len(samples)//self.n_batch} batches in', log=self.logger.debug):
+        with Stopwatch(f'Generated {len(samples)//self.n_batch} batches', self.logger.debug):
             if self.shuffle: self.random.shuffle(samples)
 
             # Use a lock to ensure _remainder is handled by only one thread

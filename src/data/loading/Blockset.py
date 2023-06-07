@@ -66,8 +66,8 @@ class Blockset(BaseSet):
         divisions = np.cumsum(cartesian, dtype='int64')
 
         # Combine multiple match sets together into a single SampleSet for 
-        # faster processing, with up to 10MB of data per SampleSet
-        maxim = 5e5 / self.dtype.itemsize # Can have up to 2x numerator
+        # faster processing, with up to 8MB of data per SampleSet
+        maxim = 4e6 / self.dtype.itemsize # Can have up to 2x numerator
         total = divisions[-1]
         first = divisions[0]
         n_ele = min(maxim, total)
