@@ -259,7 +259,7 @@ class Batcher:#(BaseAbstract):
             # Samples is a list of dask.Delayed objects or a crest Dataset
             samples = self.dataset
             if not isinstance(samples, list):
-                samples = self.dataset.generate_samples(compute=False, verbose=False)
+                samples = self.dataset.generate_samples([], compute=False, verbose=False)
 
             if (len(samples) < self.workers) and (not self.duplicate):
                 self.logger.warning(f'Not enough sample blocks for workers! Set duplicate=True.')
