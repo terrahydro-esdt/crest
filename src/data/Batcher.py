@@ -40,7 +40,13 @@ class Batcher:#(BaseAbstract):
         features=[['a', 'b'], ['c']] would result in batches that look like
         [{'a':<batch of 'a' values>, 'b': <batch of 'b' values>}, 
          {'c': <batch of 'c' values>}]. If any features are missing in the
-        dataset, an exception is raised.
+        dataset, an exception is raised. If an empty list is given, it is
+        equivalent to selecting all available features. Note that any nested
+        list in features must contain homogeneous types; i.e. all strings, or
+        all lists:
+            - [['a'], ['b', 'c'], [['d', 'e'], ['f']]] is valid
+            - [['a'], 'b'] is not valid
+            - [['a'], ['b', ['c', 'd']]] is not valid 
     workers    : int
         Number of processes to use to create batches in parallel. Note that
         workers <= 0 means that only threads will be used to generate batches;
@@ -93,7 +99,7 @@ class Batcher:#(BaseAbstract):
     def __init__(self, 
         dataset    : Dataset | StructuredDataset,
         batch_size : int,
-        features   : list  = [],
+        features   : list | None = None,
         workers    : int   = 2,
         threads    : int   = 1,
         shuffle    : bool  = True,
@@ -259,10 +265,12 @@ class Batcher:#(BaseAbstract):
             # Samples is a list of dask.Delayed objects or a crest Dataset
             samples = self.dataset
             if not isinstance(samples, list):
-                samples = self.dataset.generate_samples([], compute=False, verbose=False)
+                samples = self.dataset.generate_samples(compute=False, verbose=False)
 
             if (len(samples) < self.workers) and (not self.duplicate):
-                self.logger.warning(f'Not enough sample blocks for workers! Set duplicate=True.')
+                self.logger.warning('Not enough sample blocks for workers! Set duplicate=True.')
+                print('Not enough sample blocks for workers! Set duplicate=True.')
+                if getattr(self, 'i', 0) > len(samples): return
 
             # Create task executors for generating blocks and batches
             kwargs = {
@@ -446,21 +454,25 @@ class Batcher:#(BaseAbstract):
         """ Extract the requested features from the Sample objects """
         def _extract(features, sample):
             """ Nest the data in the same manner as features """
-            if isinstance(features[0], list):
+            if len(features) and isinstance(features[0], list):
                 return list(map(partial(_extract, sample=sample), features))
             return sample.to_list(features)
+
+        # If an empty list was passed in, set as all available features
+        if (self.features is not None) and (len(self.features) == 0):
+            self.features = samples[0].features
         np_extract = np.frompyfunc(partial(_extract, self.features), nin=1, nout=1)
-        return np_extract(samples) if len(self.features) else samples[:]
+        return np_extract(samples) if self.features is not None else samples[:]
 
 
     def _to_dict(self, batch: np.ndarray) -> dict[str, np.ndarray] | np.ndarray:
         """ Transform the batch array into the final feature dictionary """
         def _parse(features, batch):
             """ Follow the nesting structure given by the features """
-            if isinstance(features[0], list):
+            if len(features) and isinstance(features[0], list):
                 return list(map(_parse, features, zip(*batch)))
             return dict(zip(features, np.array(list(zip(*batch)))))
-        return _parse(self.features, batch) if len(self.features) else batch
+        return _parse(self.features, batch) if self.features is not None else batch
 
 
     def _put(self, queue, i):

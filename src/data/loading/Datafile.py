@@ -306,7 +306,7 @@ class Datafile(BaseAbstract):
         return dict(map(calculate, *args))
 
 
-    def update_chunks(self, numblocks: Collection[Int]) -> 'Datafile':
+    def update_chunks(self, numblocks: Collection[Int]) -> list:
         """Rechunk data to have the requested number of blocks per dimension.
 
         Parameters
@@ -318,11 +318,12 @@ class Datafile(BaseAbstract):
             If the length of the passed block size collection is less than
             the total number of axes, the requested sizes are only applied
             to the first N axes (where N is the number of sizes given).
-
+        
         Returns
         -------
-        Datafile
-            Returns the current Datafile object (self). 
+        list
+            Returns the list used to rechunk the data, if it was rechunked
+            (and an empty list if it wasn't rechunked).
 
         Raises
         ------
@@ -347,13 +348,13 @@ class Datafile(BaseAbstract):
         newchunks = [math.ceil(shape / block) for block, shape in block_shape]
 
         if self.numblocks[:-1] != tuple(numblocks):
-            print('\tRechunked using:', newchunks)
             self.data = self.chunk(newchunks)
+        else: newchunks = []
 
         # Ensure the new block numbers are equal to what was requested
         if any(block != db for block, db in zip(numblocks, self.numblocks)):
             raise ValueError(f'blocks={numblocks}, created {self.numblocks}')
-        return self 
+        return newchunks 
 
 
     def apply_overlap(self, 

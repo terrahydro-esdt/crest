@@ -87,7 +87,13 @@ class Sample:#(BaseAbstract):
         return sum(d.nbytes for d in self)
 
 
-    def to_list(self, features: list[str] | None = None) -> list:
+    @property
+    def features(self) -> list:
+        """ All available features """
+        return [f for d in self._dict for f in d]
+    
+
+    def to_list(self, features: list | None = None) -> list:
         """ Extract the requested features into a list """
         data = [d[f] for d in self._dict for f in (features or d) if f in d]
         assert(len(data) == len(features or data)), \
@@ -95,12 +101,12 @@ class Sample:#(BaseAbstract):
         return data 
 
 
-    def to_array(self, features: list[str] | None = None) -> np.ndarray:
+    def to_array(self, features: list | None = None) -> np.ndarray:
         """ Extract the requested features into an array """
         return np.array(self.to_list(features))
 
 
-    def to_dict(self, features: list[str] | None = None) -> dict:
+    def to_dict(self, features: list | None = None) -> dict:
         """ Extract the requested features into a dictionary """
         if features is None: features = [k for d in self._dict for k in d]
         return dict(zip(features, self.to_list(features)))
