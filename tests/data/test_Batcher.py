@@ -23,6 +23,7 @@ def test_batcher(batch_size, shuffle):
     assert(batches == list(data))
 
 
+@pytest.mark.speed
 @pytest.mark.parametrize('batch_size', (16,))
 @pytest.mark.parametrize('sleep', (0.5,))
 @pytest.mark.parametrize('size',  (100,))

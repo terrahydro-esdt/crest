@@ -101,6 +101,7 @@ class Dataset(BaseSet):
         skipdim = idx_res == np.arange(len(self))[:, None]
 
         # Attempt to automatically determine a target block size
+        # TODO: fix issue when window_depth > elements per block
         if (numblocks is None) and (max(tgt_blk) == 1) and (max(self.size) > 100):
             tgt_blk = [1] * len(tgt_blk)
             n_dim   = min(len(tgt_blk), 2)
