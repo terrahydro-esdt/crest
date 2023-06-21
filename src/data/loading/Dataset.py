@@ -134,7 +134,7 @@ class Dataset(BaseSet):
         # Update Datafile chunks to create the required number of blocks
         chunks = self.update_chunks(tgt_blk)
         if verbose: 
-            if chunks: print('\trechunked with:', chunks)
+            if any(chunks): print('\trechunked with:', chunks)
             print('\t result blocks:', self.numblocks[0])
 
         # Apply the required overlaps to each Datafile

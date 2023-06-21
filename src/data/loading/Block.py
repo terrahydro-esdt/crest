@@ -24,6 +24,9 @@ class Block(BaseAbstract):
         Dask Array object containing the data within the block.
     coords        : da.Array
         Dask Array object containing the coordinates which define the block.
+    mask          : da.Array
+        Dask Array object indicating which elements are part of an overlapped
+        chunks (True), vs part of the original center chunk (False).
     dims          : Collection[str]
         Dimension names, ordered the same as the `data` axes.
     original_dims : Collection
@@ -56,21 +59,25 @@ class Block(BaseAbstract):
     def __init__(self, 
         data          : da.Array,
         coords        : da.Array,
+        mask          : da.Array,
         dims          : Collection[str],
         original_dims : Collection,
         resolution    : Collection[Number],
         window_depth  : dict[str, np.ndarray[Int]] = {},
         valid_percent : dict[tuple[str], Number]   = {},
         invalid_value : Collection[object]         = [],
+        block_count   : int                        = 1,
     ):
         self._data   = data
         self._coords = coords
+        self._mask   = mask
         self.dims    = dims
         self.original_dims = original_dims
         self.resolution    = resolution
         self.window_depth  = window_depth
         self.valid_percent = valid_percent
         self.invalid_value = invalid_value
+        self.block_count   = block_count
 
 
     @cached_property
@@ -83,6 +90,12 @@ class Block(BaseAbstract):
     def coords(self) -> np.ndarray:
         """ Only compute dask coords array upon first use """
         return self._coords.compute()
+
+
+    @cached_property
+    def mask(self) -> np.ndarray:
+        """ Only compute dask mask array upon first use """
+        return self._mask.compute()
 
 
     @cached_property
@@ -158,11 +171,24 @@ class Block(BaseAbstract):
 
         def moving_sum(invalid: np.ndarray, key: str) -> np.ndarray:
             """ Fast moving sum using bottleneck """
+            if np.issubdtype(invalid.dtype, bool): moving_sum.expon = 0
+            else:                                  moving_sum.expon+= 1
+
             axis = self.axes[key]
             size = self.window_total[key]
+            exp  = moving_sum.expon
+
+            # Calculate window offets and padding
             offsets = [slice(None)] * axis + [slice(size - 1, None)]
-            invalid = invalid.astype('int32') # Bottleneck has fast impl w/ int
+            padding = [(0,0)] * invalid.ndim 
+            padding[axis] = self.window_depth[key]
+
+            # Pad the invalid mask in order to center the window
+            invalid = invalid.astype('int32') # Bottleneck is faster w/ int
+            invalid = np.pad(invalid, padding, constant_values=size ** exp)
             invalid = bn.move.move_sum(invalid, size, axis=axis)
+
+            # Offset the new invalid elements so that the window is centered
             return invalid[tuple(offsets)]
 
         # Create a boolean mask indicating invalid elements
@@ -175,9 +201,28 @@ class Block(BaseAbstract):
                 maximum = int((1-percent) * n_total)
                 invalid = reduce(moving_sum, keys, invalid) > maximum
 
+        # Allowing overlapped elements to be window centers is complicated:
+        # in some cases, it's necessary in order to get all valid matchups;
+        # in other cases, it causes duplicates. It's unclear whether there's
+        # a universal way to avoid duplicates but still grab all valid samples.
+        # The current attempt to address this issue is to allow overlap centers
+        # when there are multiple blocks to match up, but disallow when there
+        # is only a single block. Uncertain at the moment whether this solves 
+        # the root issue. 
+        # Two motivating examples:
+        # [1, 2, 3, 4] | [5] -> window of (2,0) -> allowing overlap centers
+        #    creates duplicate of [3, 4, 5] 
+        # [0] | [5] | [10]; [1, 2, 3] | [4, 5, 6] | [7, 8, 9] -> window of (2,0)
+        #    disallowing overlap centers misses matchups like [5]+[5,6,7] 
+
+        # Mask out overlapped elements, as they cannot be window centers
+        if self.block_count == 1: invalid |= self.mask
+
         # Offset the final mask indices in order to center the window
-        offset  = np.array([[self.window_depth[dim][0]] for dim in self.dims], dtype='int32')
-        indices = np.array(np.where((~invalid).all(-1)), dtype='int32') + offset
+        # offset  = np.array([[self.window_depth[dim][0]] for dim in self.dims], dtype='int32')
+
+        # Mask indices are already centered
+        indices = np.array(np.where((~invalid).all(-1)), dtype='int32')
 
         # Remove indices outside of coordinate bounds (except virtual)
         inbound = np.isfinite( self.coords[tuple(indices)] )

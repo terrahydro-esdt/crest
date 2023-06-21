@@ -26,6 +26,10 @@ class Blockset(BaseSet):
     def __init__(self, blocks: Collection[Block]):
         self.container = blocks
 
+        # Set block count for all blocks
+        for block in self.container:
+            block.block_count = len(self.container)
+
 
     @cached_property
     def dtype(self):
@@ -47,7 +51,7 @@ class Blockset(BaseSet):
         # is a proxy for the overall coarsest resolution Block, as coarsest
         # resolution could be found in different Blocks when there are multiple
         # dimensions (e.g. Block_1 has coarsest dim_1, and Block_2 with dim_2)
-        self.sort(lambda block: block.valid_windows.size)
+        self.sort(lambda block: -max(block.resolution))
 
         # Find neighbors for the valid window locations within 1/2 the
         # resolution of the reference, using Chebyshev distance (L-inf)

@@ -29,6 +29,7 @@ example_coords = np.array([
 example_block = Block(**{
     'data'          : da.from_array(np.rollaxis(example_data, 0, 3)),
     'coords'        : da.from_array(np.rollaxis(example_coords, 0, 3)),
+    'mask'          : da.from_array(np.rollaxis(np.zeros_like(example_data, dtype=bool), 0, 3)),
     'dims'          : ['x', 'y'],
     'original_dims' : (['x','y','features'], ['var_1']),
     'resolution'    : [1., 0.1],
@@ -176,9 +177,20 @@ example_coords_sparse = sparse.COO.from_numpy(
 ]), 0, 3) )
 
 
+"""
+da.from_array with sparse data raises the warning:
+    | DeprecationWarning: coords should be an ndarray. 
+    | This will raise a ValueError in the future.
+This is coming from the following operation:
+    sparse_array[0:0]
+which for some reason sparse decides to throw a warning 
+about. Appears to be fixed on github, and so it should
+be resolved whenever the next version is released.
+"""
 example_block_sparse = Block(**{
     'data'          : da.from_array(example_data_sparse),
     'coords'        : da.from_array(example_coords_sparse),
+    'mask'          : da.from_array(np.rollaxis(np.zeros_like(example_data, dtype=bool), 0, 3)),
     'dims'          : ['x', 'y'],
     'original_dims' : (['x','y','features'], ['var_1']),
     'resolution'    : [1., 0.1],

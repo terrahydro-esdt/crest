@@ -153,22 +153,24 @@ class Datafile(BaseAbstract):
         """ Loaded xarray object """
         data = self._raw_data
 
-        # Select only relevant features
+        # Select only requested features
         data = data[self.features or data.keys()]
 
-        # Select only relevant coordinates
+        # Select only requested coordinates
         data = data.sel({k: slice(*ext) for k, ext in self.extent.items()})
 
         # Cast datetimes to float
         for key in data.coords:
             if np.issubdtype(data[key].dtype, np.datetime64):
-                data = data.assign_coords({key: data[key].astype(float)})
+                data = data.assign_coords({key: data[key].astype('float64')})
 
         # Cast int/uint/etc. to float in order to allow NaN values
         for key in data:
-            if np.issubdtype(data[key].dtype, np.number):
-                if not np.issubdtype(data[key].dtype, np.floating):
-                    data[key] = data[key].astype('float32')
+            dtype = data[key].dtype
+            if np.issubdtype(dtype, np.number):
+                if not np.issubdtype(dtype, np.floating):
+                    min_dtype = np.promote_types(dtype, np.float16)
+                    data[key] = data[key].astype(min_dtype)
 
         # Convert to a DataArray and ensure data is backed by dask
         data = data.to_array('features').chunk({})
@@ -229,10 +231,11 @@ class Datafile(BaseAbstract):
     @property
     def coord_array(self) -> da.Array:
         """ Coordinate meshgrid wrapped with dask """
-        coords = [da.from_array(self.data[dim].values, chunks=100) for dim in self.dims]
+        coords = [self.data[dim].values for dim in self.dims]
+        coords = map(da.from_array, coords, self.dask.chunks)
         coords = da.meshgrid(*coords, indexing='ij')
         coords = da.stack(coords, axis=-1)
-        coords = coords.rechunk(self.chunksize[:-1] + (-1,))
+        coords = coords.rechunk({-1:-1})
         return coords
 
 
@@ -420,20 +423,34 @@ class Datafile(BaseAbstract):
             'allow_rechunk' : False,
         }
 
+        def set_id(x, block_id):
+            block_id = np.ravel_multi_index(block_id, self.dask.numblocks[:-1]+(1,))
+            return np.zeros_like(x, dtype='int32') + block_id
+        
+        def id_equal(x, block_id):
+            block_id = np.ravel_multi_index(block_id, self.dask.numblocks[:-1]+(1,))
+            return x != block_id
+        
+        # Create mask indicating overlapped elements in each block
+        mask = np.zeros(self.dask.shape[:-1] + (1,), dtype=bool)
+        mask = da.from_array(mask, chunks=self.dask.chunks[:-1] + ((1,),))
+        mask = mask.map_blocks(set_id, dtype='int32')
+        
         # Tile on dimensions which are virtual 
-        repeats = [self._virtual_dims.get(d, 1) for d in self.dims]
+        repeats = [self._virtual_dims.get(d, 1) for d in self.dims] + [1]
 
         # Clip block extents to avoid duplication
         extents = [max(c)+o*2 for c,o in zip(self.chunks, overlaps.values())]
 
         # Create overlapping blocks, tiling and clipping dims as necessary
         overlap = lambda a: dask_overlap(a, **kwargs)
-        tile    = lambda a: da.tile(a, repeats+[1]).blocks.ravel()
+        tile    = lambda a: da.tile(a, repeats).blocks.ravel()
         clip    = lambda a: a#a[tuple(map(slice, extents))]
         create  = lambda a: list(map(clip, tile( overlap(a) )))
 
         d_blocks = create(self.dask)
         c_blocks = create(self.coord_array)
+        m_blocks = tile(overlap(mask).map_blocks(id_equal, dtype=bool))
 
         # Combine feature blocks into one
         features = self.dask.numblocks[-1]
@@ -441,6 +458,7 @@ class Datafile(BaseAbstract):
         d_blocks = list(map(combine, range(0, len(d_blocks), features)))
 
         assert(len(d_blocks) == len(c_blocks)), [len(d_blocks), len(c_blocks)]
+        assert(len(d_blocks) == len(m_blocks)), [len(d_blocks), len(m_blocks)]
 
         kwargs = {
             'dims'          : self.dims,
@@ -450,8 +468,8 @@ class Datafile(BaseAbstract):
             'valid_percent' : self.valid_percent,
             'invalid_value' : self.invalid_value, 
         }
-        gen_blocks = lambda data, coords: Block(data, coords, **kwargs)
-        block_objs = map(gen_blocks, d_blocks, c_blocks)
+        gen_blocks = lambda *args: Block(*args, **kwargs)
+        block_objs = map(gen_blocks, d_blocks, c_blocks, m_blocks)
         return Blockset(list(block_objs))
 
 
