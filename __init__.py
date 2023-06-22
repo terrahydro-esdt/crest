@@ -1,1 +1,1 @@
-from .src import HierarchalTensorGraph,ImproperModelError,NetworkXGraph
+from .src import HierarchalTensorGraph,NetworkXGraph

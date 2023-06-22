@@ -1,1 +1,1 @@
-from .model import HierarchalTensorGraph,ImproperModelError,NetworkXGraph
+from .model import HierarchalTensorGraph,Model,KerasModel,NetworkXGraph
