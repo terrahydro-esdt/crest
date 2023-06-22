@@ -1,4 +1,5 @@
 from collections.abc import Collection
+from numbers import Integral as Int
 import xarray as xr 
 import numpy as np 
 
@@ -52,11 +53,14 @@ class SampleSet(BaseSet):
 
     """
     def __init__(self, 
-        windows   : Collection[Collection[xr.Dataset]], 
+        windows   : Collection[Collection],
         singleton : bool = False,
+        dtype = object,
     ):
         self.container = windows
         self.singleton = singleton
+        self.ele_dtype = dtype
+        self.n_samples = [np.prod(list(map(len, w))) for w in windows]
 
 
     @property
@@ -81,7 +85,7 @@ class SampleSet(BaseSet):
 
     def __len__(self):
         """ Length of the cartesian product """
-        return np.prod(list(map(len, self.container)))
+        return np.sum(self.n_samples)
 
     
     def __getitem__(self, idx) -> Sample | np.ndarray[Sample]:
@@ -106,8 +110,7 @@ class SampleSet(BaseSet):
         if not multi: index = slice(index, index+1)
         
         # Calculate the partial cartesian product and wrap each set with Sample
-        matches = partial_product(self.container, index)
-        samples = list(map(Sample, matches))
+        samples = [Sample(m, self.ele_dtype) for m in self._matches(index)]
 
         # Return multiple Samples in a numpy array to appease dask
         if multi or isinstance(index.start, (list, np.ndarray)):
@@ -117,3 +120,19 @@ class SampleSet(BaseSet):
 
         # Otherwise just return the single retrieved Sample object
         return samples[0]
+
+
+    def _matches(self, idx):
+        """ Extract matches from the nested container """
+        start, stop, step = idx.start, idx.stop, idx.step 
+        start = start or 0
+        stop  = stop  or len(self)
+
+        for size, match in zip(self.n_samples, self.container):
+            if start < size:
+                yield from partial_product(match, start, stop, step)
+
+            start = max(0, start-size)
+            stop -= size
+
+            if stop < 0: break

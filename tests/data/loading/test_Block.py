@@ -29,11 +29,13 @@ example_coords = np.array([
 example_block = Block(**{
     'data'          : da.from_array(np.rollaxis(example_data, 0, 3)),
     'coords'        : da.from_array(np.rollaxis(example_coords, 0, 3)),
+    'mask'          : da.from_array(np.rollaxis(np.zeros_like(example_data, dtype=bool), 0, 3)),
     'dims'          : ['x', 'y'],
     'original_dims' : (['x','y','features'], ['var_1']),
     'resolution'    : [1., 0.1],
     'window_depth'  : {'x': np.array([0,1]), 'y': np.array([1,0])},
     'valid_percent' : {('x','y'): 1.},
+    'invalid_value' : [12345, 54321., -2147483648, -9223372036854775808, 'a'],
 })
 
 
@@ -51,10 +53,12 @@ def test_coords():
 
 def test_dtype():
     output = example_block.dtype 
-    expect = np.dtype([('values', np.float32, (1,2,2)), ('coords', [
-        ('features', np.float32, (1,)),
-        ('x', np.float32, (2,)),
-        ('y', np.float32, (2,)),
+    expect = np.dtype([
+      ('values', example_data.dtype, (1,2,2)), 
+      ('coords', [
+        ('features', example_coords.dtype, (1,)),
+        ('x',        example_coords.dtype, (2,)),
+        ('y',        example_coords.dtype, (2,)),
     ])])
     assert(output == expect)
 
@@ -83,6 +87,44 @@ def test_valid_data():
     output = example_block.valid_data 
     expect = np.array([[20.], [30.]])
     assert((output == expect).all())
+
+
+def test_invalid():
+    data = np.array([
+      [1, 'a', 'b', 54321., 54321,  np.inf],
+      [0, 0.1, nan, 12345, 12345., -np.inf],
+    ], dtype=object)
+    data = da.overlap.overlap(da.from_array(data, chunks=-1), {1:1}, {1:np.nan}).compute()
+    output = example_block.invalid(data)
+    expect = np.array([
+      [True, False, True, False, True, True, True, True],
+      [True, False, False, True, True, True, True, True]
+    ])
+    assert((output == expect).all()), output.tolist()
+
+    data = np.array([
+      [1, -2., 54321., 54321,  np.inf],
+      [0, nan, 12345, 12345., -np.inf],
+    ], dtype=float)
+    data = da.overlap.overlap(da.from_array(data), {1:1}, {1:np.nan}).compute()
+    output = example_block.invalid(data)
+    expect = np.array([
+      [True, False, False, True, True, True, True],
+      [True, False, True,  True, True, True, True]
+    ])
+    assert((output == expect).all()), output.tolist()
+
+    data = np.array([
+      [1, -2., 54321., 54321],
+      [0,   0, 12345, 12345.],
+    ], dtype=int)
+    data = da.overlap.overlap(da.from_array(data), {1:1}, {1:np.nan}).compute()
+    output = example_block.invalid(data)
+    expect = np.array([
+      [True, False, False, True, True, True],
+      [True, False, False, True, True, True]
+    ])
+    assert((output == expect).all()), [data, output.tolist()]
 
 
 def test_extract():
@@ -135,9 +177,20 @@ example_coords_sparse = sparse.COO.from_numpy(
 ]), 0, 3) )
 
 
+"""
+da.from_array with sparse data raises the warning:
+    | DeprecationWarning: coords should be an ndarray. 
+    | This will raise a ValueError in the future.
+This is coming from the following operation:
+    sparse_array[0:0]
+which for some reason sparse decides to throw a warning 
+about. Appears to be fixed on github, and so it should
+be resolved whenever the next version is released.
+"""
 example_block_sparse = Block(**{
     'data'          : da.from_array(example_data_sparse),
     'coords'        : da.from_array(example_coords_sparse),
+    'mask'          : da.from_array(np.rollaxis(np.zeros_like(example_data, dtype=bool), 0, 3)),
     'dims'          : ['x', 'y'],
     'original_dims' : (['x','y','features'], ['var_1']),
     'resolution'    : [1., 0.1],

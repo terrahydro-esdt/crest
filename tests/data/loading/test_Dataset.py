@@ -8,6 +8,7 @@ from crest.src.utils import synthetic_data
 from .Dataset_config import configs 
 
 
+
 def check_outputs(config, expected, update_data=lambda x: x):
     """ Run the given config, and check if outputs match expectations """
     config = config.copy()
@@ -18,11 +19,18 @@ def check_outputs(config, expected, update_data=lambda x: x):
 
     dataset = Dataset(dfs)
     outputs = dataset.generate_samples()
+    
+    try: 
+        for output in outputs.compute():
+            print([list(o.x.to_numpy()) for o in output])
+    except: pass
 
     for output, expect in zip(outputs.compute(), expected):
-        for out, exp in zip(output, map(tuple, expect)):
-            get_mid = lambda v: v[len(v) // 2].values.item()
-            get_out = lambda d: round(get_mid(out[d]) / out.resolution[d], 6)
+        assert(len(depths) == len(output))
+
+        for out, exp, depth in zip(output, map(tuple, expect), depths):
+            get_mid = lambda v, d: (v[d[0]] if isinstance(d, tuple) else v[len(v) // 2]).values.item()
+            get_out = lambda d: round(get_mid(out[d], depth.get(d, 0)) / out.resolution[d], 6)
             center  = tuple(map(get_out, out.dims))
             equals  = partial(np.array_equal, equal_nan=True)
             assert(equals(center, exp)), [center, exp]
@@ -98,3 +106,60 @@ def test_single():
     # 0, 1, 2, ..., 6, 7 -> resolution=1, window=1
     expected = [ [[1]], [[2]], [[3]], [[4]], [[5]], [[6]] ]
     check_outputs(configs['single'], expected)
+
+
+def test_two_blocks():
+    """ Data chunked into two blocks """
+    config = {
+        'data_kwargs' : [{'dimensions': {'x': 5}, 'chunks': {'x': 4}}],
+        'depth' : [{'x': (3,0)}],
+    }
+    # 0, 1, 2, 3, 4 -> [(0, 1, 2, 3), (1, 2, 3, 4)]
+    expected = [ [[3]], [[4]] ]
+    check_outputs(config, expected)
+
+    config = {
+        'data_kwargs' : [{'dimensions': {'x': 5}, 'chunks': {'x': 4}}],
+        'depth' : [{'x': (0,3)}],
+    }
+    # 0, 1, 2, 3, 4 -> [(0, 1, 2, 3), (1, 2, 3, 4)]
+    expected = [ [[0]], [[1]] ]
+    check_outputs(config, expected)
+
+    config = {
+        'data_kwargs' : [{'dimensions': {'x': 5}, 'chunks': {'x': 4}}],
+        'depth' : [{'x': (1,2)}],
+    }
+    # 0, 1, 2, 3, 4 -> [(0, 1, 2, 3), (1, 2, 3, 4)]
+    expected = [ [[1]], [[2]] ]
+    check_outputs(config, expected)
+
+    config = {
+        'data_kwargs' : [{'dimensions': {'x': 5}, 'chunks': {'x': 4}}],
+        'depth' : [{'x': (2,1)}],
+    }
+    # 0, 1, 2, 3, 4 -> [(0, 1, 2, 3), (1, 2, 3, 4)]
+    expected = [ [[2]], [[3]] ]
+    check_outputs(config, expected)
+
+
+
+""" Unclear how to prevent duplicate matchups in situations like this test,
+    without missing some matchups in other situations (like test_1d). 
+
+    It's potentially something along the lines of masking overlapped elements
+    conditional upon the window depth (e.g. depth of (0,2) would mask the 
+    left and right sides differently) - but uncertain at the moment.
+"""
+# def test_two_blocks_double():
+#     """ Data chunked into two blocks for two datasets """
+#     config = {
+#         'data_kwargs' : [
+#             {'dimensions': {'x': 6}, 'chunks': {'x': 2}},
+#             {'dimensions': {'x': 3}, 'chunks': {'x': 1}},
+#         ],
+#         'depth' : [{'x': (2,0)}, {'x': (1,0)}],
+#     }
+#     # 0, 1, 2, 3, 4 -> [(0, 1, 2, 3), (1, 2, 3, 4)]
+#     expected = [ [[2],[1]], [[3],[1]], [[3],[2]], [[4],[2]], [[5],[2]] ]
+#     check_outputs(config, expected)
