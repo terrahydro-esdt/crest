@@ -105,7 +105,7 @@ configs = {
             },
 
             { # Second - 4 x 3 window
-                'latitude'  : (1, 2), 
+                'latitude'  : (2, 1), 
                 'longitude' : 1, 
             },
         ],

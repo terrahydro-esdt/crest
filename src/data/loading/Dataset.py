@@ -93,12 +93,34 @@ class Dataset(BaseSet):
 
         # Ensure all Datafiles are aware of all dimensions
         self.ensure_dims( set.union(*map(set, self.dims)) )
-
+        
         # With one value per dimension:
         max_res = np.nanmax(self.resolution, axis=0) 
         idx_res = np.nanargmax(self.resolution, axis=0)
-        tgt_blk = numblocks or np.gcd.reduce(self.numblocks, axis=0)
+        tgt_blk = numblocks or np.gcd.reduce(self.numblocks, axis=0)[:-1]
         skipdim = idx_res == np.arange(len(self))[:, None]
+
+        # Attempt to automatically determine a target block size
+        # TODO: fix issue when window_depth > elements per block
+        if (numblocks is None) and (max(tgt_blk) == 1) and (max(self.size) > 100):
+            tgt_blk = [1] * len(tgt_blk)
+            n_dim   = min(len(tgt_blk), 2)
+            maxim   = np.min(self.shape, axis=0)[:-1]
+            indices = np.argpartition(maxim, -n_dim)[-n_dim:]
+
+            def max_block(shapes, start=None):
+                """ Return the maximum valid block size for all shapes """
+                check = lambda n: np.ceil(shapes / np.ceil(shapes / n)) == n
+                if start is None:
+                    start = int(shapes.min())
+                    if check(start).all(): return start
+                start = start or (np.ceil(shapes/2)).min()
+                while (start > 1) and not check(start).all(): start -= 1
+                return int(start)
+
+            for i in range(n_dim):
+                shapes = np.array([shp[indices[i]] for shp in self.shape])
+                tgt_blk[indices[i]] = max_block(shapes, 10)
 
         if verbose:
             print('\tcurrent blocks:', self.numblocks)
@@ -110,8 +132,10 @@ class Dataset(BaseSet):
         if verbose: print('\tblock overlaps:', overlap)
 
         # Update Datafile chunks to create the required number of blocks
-        self.update_chunks(tgt_blk)
-        if verbose: print('\t result blocks:', self.numblocks[0])
+        chunks = self.update_chunks(tgt_blk)
+        if verbose: 
+            if any(chunks): print('\trechunked with:', chunks)
+            print('\t result blocks:', self.numblocks[0])
 
         # Apply the required overlaps to each Datafile
         prepped = self.apply_overlap(_map=[overlap])
@@ -127,13 +151,7 @@ class Dataset(BaseSet):
         with nullcontext() if not verbose else ProgressBar():
             if verbose: print('\nFinding all valid samples...')
             delayed = lambda blockset: dask.delayed(blockset.find_matches)()
-            if not compute:
-                # import dask.bag as db 
-                # import pandas as pd
-                # return db.from_delayed(list(map(delayed, blocksets))).to_dataframe(meta=pd.DataFrame({'Sample':np.empty((0,), dtype=object)}))
-                # for row in samples.iterrows():
-                #     print(row)
-                return list(map(delayed, blocksets))
+            if not compute: return list(map(delayed, blocksets))
             results = da.compute( *map(delayed, blocksets) ) 
             samples = da.hstack(results)
         
