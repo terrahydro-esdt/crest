@@ -1,7 +1,7 @@
 from collections.abc import Collection
 from collections import defaultdict as dd
 from fsspec.mapping import FSMap 
-from functools import cached_property
+from functools import cached_property, partial
 from itertools import starmap
 from numbers import Number, Integral as Int
 from pathlib import Path 
@@ -85,8 +85,8 @@ class Datafile(BaseAbstract):
     # Full window must be valid for undefined dimensions
     DEFAULT_VALID_PERCENT = 1 
 
-    # Ensure we include integer representation of NaN (-2147483648)
-    DEFAULT_INVALID_VALUES = [-2147483648]
+    # Ensure we include int(32/64) representations of NaN
+    DEFAULT_INVALID_VALUES = [-2147483648, -9223372036854775808]
 
 
 
@@ -102,47 +102,81 @@ class Datafile(BaseAbstract):
         self.location = location
         self.features = features
         self.extent   = extent.copy()
+        self._kwargs  = kwargs
         self._window_depth  = window_depth.copy()
         self._valid_percent = valid_percent.copy()
         self._invalid_value = invalid_value
-        self._raw_data      = self.location
         self._virtual_dims  = {}
         self._validate_parameters()
 
-        # If the given location isn't already an xr.Dataset, open it
-        if not isinstance(self.location, xr.Dataset): 
-            self._raw_data = xr.open_zarr(self.location, **kwargs)
-    
-    
+
     def __getattr__(self, attr: str):
         """ Allow calls to be passed to the underlying xarray/dask object """
+        # Prevent recursive loop when there is an AttributeError in data/dask
+        if attr in ['data', 'dask']: return self.__getattribute__(attr)
+
+        # Prevent recursive loop when pickling objects
         if attr not in ['__getstate__', '__setstate__']:
             if hasattr(self.data, attr): return getattr(self.data, attr)
             if hasattr(self.dask, attr): return getattr(self.dask, attr)
         return self.__getattribute__(attr)
 
 
+    def __getstate__(self):
+        return {
+            'location' : self.location,
+            'features' : self.features,
+            'extent'   : self.extent,
+            '_kwargs'  : self._kwargs,
+            '_window_depth'  : self._window_depth,
+            '_valid_percent' : self._valid_percent,
+            '_invalid_value' : self._invalid_value,
+            '_virtual_dims'  : {},
+        }
+
+
+    def __setstate(self, d):
+        self.__dict__.update(d)
+
+
+    @cached_property
+    def _raw_data(self):
+        """ Only read the zarr once necessary """
+        # If the given location isn't already an xr.Dataset, open it
+        if isinstance(self.location, xr.Dataset): 
+            return self.location
+        return xr.open_zarr(self.location, **self._kwargs)
+    
+
     @cached_property
     def data(self) -> xr.DataArray:
         """ Loaded xarray object """
         data = self._raw_data
 
-        # Select only relevant features
+        # Select only requested features
         data = data[self.features or data.keys()]
 
-        # Select only relevant coordinates
+        # Select only requested coordinates
         data = data.sel({k: slice(*ext) for k, ext in self.extent.items()})
 
         # Cast datetimes to float
         for key in data.coords:
             if np.issubdtype(data[key].dtype, np.datetime64):
-                data = data.assign_coords({key: data[key].astype(float)})
+                data = data.assign_coords({key: data[key].astype('float64')})
 
-        # Convert to a DataArray and rechunk along the new axis
-        data = data.to_array('features').chunk({'features': -1})
+        # Cast int/uint/etc. to float in order to allow NaN values
+        for key in data:
+            dtype = data[key].dtype
+            if np.issubdtype(dtype, np.number):
+                if not np.issubdtype(dtype, np.floating):
+                    min_dtype = np.promote_types(dtype, np.float16)
+                    data[key] = data[key].astype(min_dtype)
+
+        # Convert to a DataArray and ensure data is backed by dask
+        data = data.to_array('features').chunk({})
 
         # Save the original coordinates for later return values
-        self.original_dims = (data.coords.keys(), data.features)
+        self.original_dims = (list(data.coords.keys()), data.features.to_numpy())
 
         # Transpose dimensions so they are in the correct order, and return
         return data.transpose(*self.dims, ...)
@@ -198,9 +232,11 @@ class Datafile(BaseAbstract):
     def coord_array(self) -> da.Array:
         """ Coordinate meshgrid wrapped with dask """
         coords = [self.data[dim].values for dim in self.dims]
+        array  = partial(da.from_array, name=False)
+        coords = map(array, coords, self.dask.chunks)
         coords = da.meshgrid(*coords, indexing='ij')
         coords = da.stack(coords, axis=-1)
-        coords = coords.rechunk(self.chunksize[:-1] + (-1,))
+        coords = coords.rechunk({-1:-1})
         return coords
 
 
@@ -274,7 +310,7 @@ class Datafile(BaseAbstract):
         return dict(map(calculate, *args))
 
 
-    def update_chunks(self, numblocks: Collection[Int]) -> 'Datafile':
+    def update_chunks(self, numblocks: Collection[Int]) -> list:
         """Rechunk data to have the requested number of blocks per dimension.
 
         Parameters
@@ -286,11 +322,12 @@ class Datafile(BaseAbstract):
             If the length of the passed block size collection is less than
             the total number of axes, the requested sizes are only applied
             to the first N axes (where N is the number of sizes given).
-
+        
         Returns
         -------
-        Datafile
-            Returns the current Datafile object (self). 
+        list
+            Returns the list used to rechunk the data, if it was rechunked
+            (and an empty list if it wasn't rechunked).
 
         Raises
         ------
@@ -313,12 +350,15 @@ class Datafile(BaseAbstract):
 
         # Calculate and apply the new chunks
         newchunks = [math.ceil(shape / block) for block, shape in block_shape]
-        self.data = self.chunk(newchunks)
+
+        if self.numblocks[:-1] != tuple(numblocks):
+            self.data = self.chunk(newchunks)
+        else: newchunks = []
 
         # Ensure the new block numbers are equal to what was requested
         if any(block != db for block, db in zip(numblocks, self.numblocks)):
             raise ValueError(f'blocks={numblocks}, created {self.numblocks}')
-        return self 
+        return newchunks 
 
 
     def apply_overlap(self, 
@@ -384,21 +424,42 @@ class Datafile(BaseAbstract):
             'allow_rechunk' : False,
         }
 
+        def set_id(x, block_id):
+            block_id = np.ravel_multi_index(block_id, self.dask.numblocks[:-1]+(1,))
+            return np.zeros_like(x, dtype='int32') + block_id
+        
+        def id_equal(x, block_id):
+            block_id = np.ravel_multi_index(block_id, self.dask.numblocks[:-1]+(1,))
+            return x != block_id
+        
+        # Create mask indicating overlapped elements in each block
+        mask = np.zeros(self.dask.shape[:-1] + (1,), dtype=bool)
+        mask = da.from_array(mask, chunks=self.dask.chunks[:-1] + ((1,),), name=False)
+        mask = mask.map_blocks(set_id, dtype='int32')
+        
         # Tile on dimensions which are virtual 
-        repeats = [self._virtual_dims.get(d, 1) for d in self.dims]
+        repeats = [self._virtual_dims.get(d, 1) for d in self.dims] + [1]
 
         # Clip block extents to avoid duplication
         extents = [max(c)+o*2 for c,o in zip(self.chunks, overlaps.values())]
 
         # Create overlapping blocks, tiling and clipping dims as necessary
         overlap = lambda a: dask_overlap(a, **kwargs)
-        tile    = lambda a: da.tile(a, repeats+[1]).blocks.ravel()
-        clip    = lambda a: a[tuple(map(slice, extents))]
+        tile    = lambda a: da.tile(a, repeats).blocks.ravel()
+        clip    = lambda a: a#a[tuple(map(slice, extents))]
         create  = lambda a: list(map(clip, tile( overlap(a) )))
 
         d_blocks = create(self.dask)
         c_blocks = create(self.coord_array)
+        m_blocks = tile(overlap(mask).map_blocks(id_equal, dtype=bool))
+
+        # Combine feature blocks into one
+        features = self.dask.numblocks[-1]
+        combine  = lambda i: da.concatenate(d_blocks[i:i+features], axis=-1)
+        d_blocks = list(map(combine, range(0, len(d_blocks), features)))
+
         assert(len(d_blocks) == len(c_blocks)), [len(d_blocks), len(c_blocks)]
+        assert(len(d_blocks) == len(m_blocks)), [len(d_blocks), len(m_blocks)]
 
         kwargs = {
             'dims'          : self.dims,
@@ -408,8 +469,8 @@ class Datafile(BaseAbstract):
             'valid_percent' : self.valid_percent,
             'invalid_value' : self.invalid_value, 
         }
-        gen_blocks = lambda data, coords: Block(data, coords, **kwargs)
-        block_objs = map(gen_blocks, d_blocks, c_blocks)
+        gen_blocks = lambda *args: Block(*args, **kwargs)
+        block_objs = map(gen_blocks, d_blocks, c_blocks, m_blocks)
         return Blockset(list(block_objs))
 
 
@@ -431,9 +492,9 @@ class Datafile(BaseAbstract):
                 raise FileNotFoundError(f'File not found: {self.location}')
             self.location = zarr.DirectoryStore(self.location)
         
-        elif isinstance(self.location, FSMap):
-            if not self.location.fs.exists(self.location.root):
-                raise FileNotFoundError(f'Database not found: {self.location}')
+        # elif isinstance(self.location, FSMap):
+        #     if not self.location.fs.exists(self.location.root):
+        #         raise FileNotFoundError(f'Database not found: {self.location}')
 
         for key, extent in self.extent.items():
             if len(extent) != 2:

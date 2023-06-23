@@ -11,6 +11,7 @@ import numpy as np
 import sparse 
 
 from crest.src.base import BaseAbstract 
+from crest.src.utils import Stopwatch
 
 
 
@@ -23,6 +24,9 @@ class Block(BaseAbstract):
         Dask Array object containing the data within the block.
     coords        : da.Array
         Dask Array object containing the coordinates which define the block.
+    mask          : da.Array
+        Dask Array object indicating which elements are part of an overlapped
+        chunks (True), vs part of the original center chunk (False).
     dims          : Collection[str]
         Dimension names, ordered the same as the `data` axes.
     original_dims : Collection
@@ -55,21 +59,25 @@ class Block(BaseAbstract):
     def __init__(self, 
         data          : da.Array,
         coords        : da.Array,
+        mask          : da.Array,
         dims          : Collection[str],
         original_dims : Collection,
         resolution    : Collection[Number],
         window_depth  : dict[str, np.ndarray[Int]] = {},
         valid_percent : dict[tuple[str], Number]   = {},
         invalid_value : Collection[object]         = [],
+        block_count   : int                        = 1,
     ):
         self._data   = data
         self._coords = coords
+        self._mask   = mask
         self.dims    = dims
         self.original_dims = original_dims
         self.resolution    = resolution
         self.window_depth  = window_depth
         self.valid_percent = valid_percent
         self.invalid_value = invalid_value
+        self.block_count   = block_count
 
 
     @cached_property
@@ -85,13 +93,19 @@ class Block(BaseAbstract):
 
 
     @cached_property
+    def mask(self) -> np.ndarray:
+        """ Only compute dask mask array upon first use """
+        return self._mask.compute()
+
+
+    @cached_property
     def dtype(self) -> np.dtype:
         """ Create a composite datatype based on shapes of the data windows """
         sizes = {'features': self._data.shape[-1]} | self.window_total
         return np.dtype(
-            [('values', np.float32, tuple(sizes.values()))] + 
+            [('values', self._data.dtype, tuple(sizes.values()))] + 
             [('coords', np.dtype(
-                [(dim, np.float32, (size,)) for dim, size in sizes.items()])
+                [(dim, self._coords.dtype, (size,)) for dim, size in sizes.items()])
         )] )
 
 
@@ -157,11 +171,24 @@ class Block(BaseAbstract):
 
         def moving_sum(invalid: np.ndarray, key: str) -> np.ndarray:
             """ Fast moving sum using bottleneck """
+            if np.issubdtype(invalid.dtype, bool): moving_sum.expon = 0
+            else:                                  moving_sum.expon+= 1
+
             axis = self.axes[key]
             size = self.window_total[key]
+            exp  = moving_sum.expon
+
+            # Calculate window offets and padding
             offsets = [slice(None)] * axis + [slice(size - 1, None)]
-            # invalid = invalid.astype('int32') # Bottleneck has fast impl w/ int
+            padding = [(0,0)] * invalid.ndim 
+            padding[axis] = self.window_depth[key]
+
+            # Pad the invalid mask in order to center the window
+            invalid = invalid.astype('int32') # Bottleneck is faster w/ int
+            invalid = np.pad(invalid, padding, constant_values=size ** exp)
             invalid = bn.move.move_sum(invalid, size, axis=axis)
+
+            # Offset the new invalid elements so that the window is centered
             return invalid[tuple(offsets)]
 
         # Create a boolean mask indicating invalid elements
@@ -174,9 +201,28 @@ class Block(BaseAbstract):
                 maximum = int((1-percent) * n_total)
                 invalid = reduce(moving_sum, keys, invalid) > maximum
 
+        # Allowing overlapped elements to be window centers is complicated:
+        # in some cases, it's necessary in order to get all valid matchups;
+        # in other cases, it causes duplicates. It's unclear whether there's
+        # a universal way to avoid duplicates but still grab all valid samples.
+        # The current attempt to address this issue is to allow overlap centers
+        # when there are multiple blocks to match up, but disallow when there
+        # is only a single block. Uncertain at the moment whether this solves 
+        # the root issue. 
+        # Two motivating examples:
+        # [1, 2, 3, 4] | [5] -> window of (2,0) -> allowing overlap centers
+        #    creates duplicate of [3, 4, 5] 
+        # [0] | [5] | [10]; [1, 2, 3] | [4, 5, 6] | [7, 8, 9] -> window of (2,0)
+        #    disallowing overlap centers misses matchups like [5]+[5,6,7] 
+
+        # Mask out overlapped elements, as they cannot be window centers
+        if self.block_count == 1: invalid |= self.mask
+
         # Offset the final mask indices in order to center the window
-        offset  = np.array([[self.window_depth[dim][0]] for dim in self.dims])
-        indices = np.array(np.where((~invalid).all(-1))) + offset
+        # offset  = np.array([[self.window_depth[dim][0]] for dim in self.dims], dtype='int32')
+
+        # Mask indices are already centered
+        indices = np.array(np.where((~invalid).all(-1)), dtype='int32')
 
         # Remove indices outside of coordinate bounds (except virtual)
         inbound = np.isfinite( self.coords[tuple(indices)] )
@@ -227,9 +273,22 @@ class Block(BaseAbstract):
             Boolean mask which indicates where there are invalid values.
 
         """
-        # Need to use type(object) to ensure np.isin performs check correctly
-        data = (data if data is not None else self.data).astype(object)
-        return pd.isna(data) | np.isin(data, self.invalid_value)
+        data = (data if data is not None else self.data)
+
+        # Need to cast to object if either array is not numeric
+        if not np.issubdtype(data.dtype, np.number):
+            invalid = np.array(self.invalid_value, dtype=object)
+        else: invalid = np.array(self.invalid_value)
+
+        # Numpy also converts something like [1,'a'] to ['1','a']
+        # so we need to recast invalid as an object dtype in case
+        if not np.issubdtype(invalid.dtype, np.number):
+            invalid = np.array(self.invalid_value, dtype=object)
+            data = data.astype(object)
+
+        # np.isnan does not work on object dtype
+        with pd.option_context('use_inf_as_na', True):
+            return pd.isna(data) | np.isin(data, invalid)
 
 
     def cleanup(self):
@@ -240,12 +299,12 @@ class Block(BaseAbstract):
         #         del self.__dict__[key]
 
     
-    def extract(self, indices: np.ndarray) -> list[xr.Dataset]:
+    def extract(self, matches: np.ndarray):# -> dict[Int, xr.Dataset]:
         """Extract a list of windows from data, wrapping each with xarray.
 
         Parameters
         ----------
-        indices : np.ndarray
+        matches : np.ndarray
             Indices for valid_windows, which indicates which window locations
             are being used for this (eventually created) SampleSet. 
 
@@ -258,16 +317,27 @@ class Block(BaseAbstract):
             returned list equals the length of the input `indices`.
 
         """
+        indices = tuple(np.unique([j for i in matches for j in i.ravel()]))
+
         ndims = len(self.dims)
         lower = np.array([self.window_depth[k][0] for k in self.dims])
         total = np.array([self.window_total[k]    for k in self.dims])
 
         # Calculate the lower and upper bounds for each window dimension
-        center = np.array(self.valid_windows)[:, tuple(indices), None]
+        center = np.array(self.valid_windows)[:, indices, None]
         center-= lower[:, None, None]
         bounds = [left + np.arange(size) for left, size in zip(center, total)]
 
         original_dims, features = self.original_dims
+        original_dims = ['features'] + [d for d in original_dims if d != 'features']
+
+        full_dims = self.dims + ['features']
+        dim_order = np.array(list(map(full_dims.index, original_dims))) + 1
+        xr_kwargs = {
+            'dims'  : [d for d in original_dims if self.window_total.get(d, 2) > 1],
+            'attrs' : {'resolution': dict(zip(self.dims, self.resolution))},
+            'order' : original_dims,
+        }
 
         def expand(axis: int, bound: np.ndarray) -> np.ndarray:
             """ Add dimensions to each bound based on the dim it applies to """
@@ -279,20 +349,20 @@ class Block(BaseAbstract):
 
         def gen_coords(coords: np.ndarray) -> dict[str, np.ndarray]:
             """ Generate a coordinates vector dictionary for xarray """
-            return dict(zip(self.dims, starmap(collapse, enumerate(coords.T))))
+            return dict(zip(self.dims, starmap(collapse, enumerate(coords.T)))) | {'features': features}
 
-        def gen_dataset(data: np.ndarray, coords: np.ndarray) -> xr.Dataset:
+        def gen_dataset(data: np.ndarray, coords: np.ndarray):# -> xr.Dataset:
             """ Generate the xr.Dataset for the given data/coord windows """
-            attributes = {'resolution': dict(zip(self.dims, self.resolution))}
-            return xr.DataArray(data, **{
-                'coords' : gen_coords(coords) | {'features': features}, 
-                'dims'   : self.dims + ['features'],
-                'attrs'  : attributes,
-            }).transpose(*original_dims).to_dataset('features')
+            return xr_kwargs | {'data': data, 'coords': coords}
+            # return xr.DataArray(data, coords, **xr_kwargs).to_dataset('features')
 
         # Expand the bounds so they can be broadcast over the full data/coords
         windows = tuple(starmap(expand, enumerate(bounds, 1)))
-        return list(map(gen_dataset, self.data[windows], self.coords[windows]))
+        assert(len(windows[0]) == len(indices)), [len(windows), len(indices)]
 
-
-
+        # Transpose data to be in the correct order, and extract final windows
+        data    = self.data[windows].transpose((0,)+tuple(dim_order))
+        data    = data.reshape(data.shape[:2] + tuple(s for s in data.shape[2:] if s > 1))
+        coords  = map(gen_coords, self.coords[windows])
+        windows = dict(zip(indices, map(gen_dataset, data, coords)))
+        return [[windows[i] for i in np.atleast_1d(match)] for match in matches]

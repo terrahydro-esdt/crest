@@ -91,7 +91,8 @@ class BaseSet(BaseAbstract):
 
     def _repr_html_(self) -> str:
         """ Format the set nicely for notebooks """
-        sub_html = ''.join([c._repr_html_() for c in self.container])
+        item_rep = lambda item: getattr(item, '_repr_html_', item.__repr__)()
+        sub_html = ''.join(map(item_rep, self.container))
         return f'<h3>{self}:</h3><div>{sub_html}</div>' 
 
 

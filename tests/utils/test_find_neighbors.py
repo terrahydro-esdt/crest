@@ -9,6 +9,12 @@ def make2d(arr):
     arr = np.array(arr)
     return arr.reshape(-1, 1) if arr.ndim < 2 else arr 
 
+def make_nested(arr):
+    """ Create a ragged object array that contains (variable length) arrays """ 
+    nested = np.empty(len(arr), dtype=object)
+    nested[:] = list(map(np.array, arr))
+    return nested 
+
 def equal(output, expect):
     """ Check if the output and expected are equal """
     np_eq = lambda a, b: np.array_equal(a.flatten(), b.flatten())    
@@ -18,9 +24,14 @@ def equal(output, expect):
 
 def readable(*args, fmt='{} != {}'):
     """ Change numpy arrays into list form to make them readable """
-    if len(args) > 1:             return fmt.format(*map(readable, args))
-    if isinstance(args[0], list): return        list(map(readable, args[0]))
-    return tuple(v.ravel().tolist() for v in args[0])
+    if len(args) > 1:             
+        return fmt.format(*map(readable, args))
+
+    if isinstance(args[0], (np.ndarray, tuple, list)):
+        if isinstance(args[0][0], (np.ndarray, tuple, list)):
+            return tuple(map(readable, args[0]))
+        return list(map(readable, args[0]))
+    return args[0]
 
 
 
@@ -37,27 +48,33 @@ def test_1d():
         [2, 3, 4],
         [3, 4, 5],
     ]
-    expect = [(2, 1, 0)]
+    expect = [[2], [1], [0]]
+    counts = [[1], [1], [1]]
 
     coords = list(map(make2d, coords))
-    expect = [tuple(map(make2d, e)) for e in expect]
-    output = find_neighbors(coords)
-    assert(equal(output, expect)), readable(output, expect)
+    expect = np.c_[list(map(make_nested, expect))]
+    counts = np.array(counts)
+    out, c = find_neighbors(coords)
+    assert(equal(out, expect)), readable(out, expect)
+    assert(equal(c,   counts)), readable(c,   counts)
 
 
 def test_1d_resolutions():
     coords = [
         [1, 2, 3],
         [4, 5, 6],
-        [2, 1, 0],
+        [3, 1, 0],
     ]
-    expect = [(2, 0, 0)]
+    expect = [[2], [0], [0]]
+    counts = [[1], [1], [1]]
 
     coords = list(map(make2d, coords))
-    expect = [tuple(map(make2d, e)) for e in expect]
-    output = find_neighbors(coords, resolutions=[2,2,2])
-    assert(equal(output, expect)), readable(output, expect)
-
+    expect = np.c_[list(map(make_nested, expect))]
+    counts = np.array(counts)
+    out, c = find_neighbors(coords, resolutions=[2,2,2])
+    assert(equal(out, expect)), readable(out, expect)
+    assert(equal(c,   counts)), readable(c,   counts)
+ 
 
 def test_1d_radius():
     coords = [
@@ -66,64 +83,65 @@ def test_1d_radius():
         [2, 1, 0],
     ]
     expect = [
-        (1,     0, [0,1,2]),
-        (2, [0,1],   [0,1]),
+        [[1],       [2]],
+        [[0],       [0, 1]],
+        [[0, 1, 2], [0, 1]],
+    ]
+    counts = [
+        [1, 1],
+        [1, 2],
+        [3, 2],
     ]
 
     coords = list(map(make2d, coords))
-    expect = [tuple(map(make2d, e)) for e in expect]
-    output = find_neighbors(coords, radius=2.)
-    assert(equal(output, expect)), readable(output, expect)
-
-
-def test_1d_empty():
-    coords = [
-        [1, 2, 3],
-        [2, 3, 4],
-        [3, 4, 5],
-    ]
-    expect = [
-        (0, [], []),
-        (1,  0, []),
-        (2,  1,  0),
-    ]
-
-    coords = list(map(make2d, coords))
-    expect = [tuple(map(make2d, e)) for e in expect]
-    output = find_neighbors(coords, allow_empty=True)
-    assert(equal(output, expect)), readable(output, expect)
-
+    expect = np.c_[list(map(make_nested, expect))]
+    counts = np.array(counts)
+    out, c = find_neighbors(coords, radius=2.)
+    assert(equal(out, expect)), readable(out, expect)
+    assert(equal(c,   counts)), readable(c,   counts)
+ 
 
 def test_1d_kwargs():
     coords = [
         [1, 2, 3],
         [4, 5, 6],
-        [2, 1, 0],
+        [3, 1, 0],
     ]
-    expect = [(2, 0, 0)]
+    expect = [[2], [0], [0]]
+    counts = [[1], [1], [1]]
 
     coords = list(map(make2d, coords))
-    expect = [tuple(map(make2d, e)) for e in expect]
-    output = find_neighbors(coords, w=[0.25])
-    assert(equal(output, expect)), readable(output, expect)
+    expect = np.c_[list(map(make_nested, expect))]
+    counts = np.array(counts)
+    out, c = find_neighbors(coords, w=[0.25])
+    assert(equal(out, expect)), readable(out, expect)
+    assert(equal(c,   counts)), readable(c,   counts)
  
 
 def test_2d():
     coords = [
         [[1,1], [1,2], [2,3]],
         [[2,1], [2,2], [3,3]],
-        [[3,1], [3,2], [1,3]],
+        [[3,1], [3,2], [1,2]],
     ]
     expect = [
-        (1,     1, 2),
-        (2, [1,2], 2),
+        [[0], [1]],
+        [[0], [1]],
+        [[2], [2]]
+    ]
+    counts = [
+        [1, 1],
+        [1, 1],
+        [1, 1]
     ]
 
     coords = list(map(make2d, coords))
-    expect = [tuple(map(make2d, e)) for e in expect]
-    output = find_neighbors(coords, radius=1)
-    assert(equal(output, expect)), readable(output, expect)
- 
+    expect = np.c_[list(map(make_nested, expect))]
+    counts = np.array(counts)
+    out, c = find_neighbors(coords, radius=1)
+    assert(equal(out, expect)), readable(out, expect)
+    assert(equal(c,   counts)), readable(c,   counts)
+
 
 def test_2d_chebyshev():
     coords = [
@@ -132,11 +150,19 @@ def test_2d_chebyshev():
         [[3,1], [3,2], [1,3]],
     ]
     expect = [
-        (1, [0,1],     2),
-        (2, [1,2], [1,2]),
+        [[1],    [2]],
+        [[0, 1], [1, 2]],
+        [[2],    [1, 2]],
+    ]
+    counts = [
+        [1, 1],
+        [2, 2],
+        [1, 2],
     ]
 
     coords = list(map(make2d, coords))
-    expect = [tuple(map(make2d, e)) for e in expect]
-    output = find_neighbors(coords, radius=1, p=np.inf)
-    assert(equal(output, expect)), readable(output, expect)
+    expect = np.c_[list(map(make_nested, expect))]
+    counts = np.array(counts)
+    out, c = find_neighbors(coords, radius=1, p=np.inf)
+    assert(equal(out, expect)), readable(out, expect)   
+    assert(equal(c,   counts)), readable(c,   counts)
