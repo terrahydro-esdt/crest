@@ -8,67 +8,39 @@ from typing import TypeVar,Union
 
 class HierarchalTensorGraph(TensorGraph):
     """
+    HierarchalTensorGraph (HTG): The HTG is the core object where the Earth System Model (ESM) 
+    is encoded and specified. The HTG provides the     information needed to build a CREST 
+    model using the Tensor Network backend. As the name suggest, HTG is a hierarchal graph object, 
+    and as such, nodes within a HTG are HTGs themselves.
 
-    CREST Hierarchal Model (CHM):
+    It has 2 modes:
 
-    This class creates the hierarchal model structure of CREST.
-    Its intention is to be inherited by other more specific models
-    such as a CREST Tensor model.
-
-    The CHM's main instance variable is a Directed Acyclic Graph (DAG).
-    The DAG nodes are distinguished by their names type(str). A node in
-    the DAG is itself a CHM and the reference to this model is contained
-    in the the graph as the 'model' attribute. We use the term node to
-    refer to models within a CHM.
-
-    The term basemodel is used to distinguish a CHM which has an empty
-    graph. Basemodels can be created from any callable function and act
-    as the lowest layer in a CHM. By definition, basemodels cannot have
-    any nodes or models within them. Therefore CHM models are built from
-    either basemodels (callable functions) or other CHMs.
-
-    A CHM itself is callable with a pre-defined __call__ that automatically
-    executes all the nodes within the CHM as specified by its graph.
-
-    With regard to names, all nodes or direct children of a parent CHM must
-    have unique names. However, they can be the same as the name of nodes within
-    its children. Within a CHM children are specified simply by their
-    names. Nodes deeper in the model are specified by their 'path' where the path
-    specifies the path to the CHM where the node is. Paths are specified as tuples.
-    If for example, the parent is CHM A and contains nodes 'a1' and 'a2'. They
-    can be accessed from A as A['a1'] and A['a2']. If within a1 there exist nodes
-    b1 and b2, they can be accessed from A as A[('a1','b1')] and A[('a1','b2')] or
-    accessed from 'a1' as a1['b1'] and a1['b2'].
-
-    With regard to input and output nodes. Every CHM must have an input and output
-    (except basemodels). I/O nodes are added to the CHM by specifying at least one
-    edge from 'input' to a model and one edge from a model to 'output'. CHM also
-    assume all I/O of models are dictionaries. Similarly input and output deeper
-    within a hierarchal model are specified by their path if one needs
-    to access them. In addition, CHM require specification of the input and output
-    keys by setting input_features and output_features instance variables type(list).
-    Generally, simply a list of key strings is sufficient. In cases where, inputs
-    to a model may come from multiple models which may have the same keys a tuple
-    specifying which input to use will be required. The framework will throw an
-    exception and list possible tuple options.
+    1.	A single node graph, referred to as a basenode, that represents a fundamental physical
+    process in an ESM. The basenode is the main object intended for specifying an actual model
+    of a physical process. As such, you must supply a callable function when instantiating a basenode.
+    
+    2.	A multi-node graph (nodes>1) used to represent ESM sub-systems. In this mode, HTG is not 
+    instantiated with callable function. Instead, nodes and edges are added to create a sub-system. 
+    Nodes can either be fundamental processes (basenode) or sub-systems (multi-node HTGs).
 
 
     Parameters
     ----------
+    
+    name : str
+       The name of the HTG which must be different than other nodes
+       in the graph. If name is None, it will default to 
+       ['name', '__name__', '__qualname__']. 
 
     node : callable, optional
-       A callable function to initalize a CHM. If set, this is not added to the graph;
-       The graph remains empty and a basemodel is created.
+       A callable function to initalize a HTG. If set, a
+       single node (basenode) HTG is created.
 
-    name : str
-       A UNIQUE name identifying the model. All models must be named and must be unique.
-       If a 'node' parameter is passed that __contains__ a name,
-       it will be used as the name of the model.
-       If not, a name must be provided or an exception will be thrown.
-
-    graph : BaseGraph
-       A Diagonal Acylic Graph which specifies the connections and nodes within the CHM.
-
+    inputs : dict, optional
+        A dictionary with the name (keys) and tensor specifications (values) for the
+        input expected input tensors and produced output produced tensors. Note:
+        these parameters are optional, however if not specified, in certain cases
+        building the Model will fail. It's best practice to specify them!
 
     """
 
@@ -80,12 +52,12 @@ class HierarchalTensorGraph(TensorGraph):
         self.output = []
         self.inputs = inputs
         self.outputs = outputs
-        self.inputs_map = []
-        self.outputs_map =  []
+        self._inputs_map = {}    #dictionary specifying input feature renaming       
+        self._outputs_map =  {}  #dictionary specifying input feature renaming
 
-        #check that the model has a name
+        #check that the HTG has a name
         if self.name == 'None':
-            message = f'A model name must be given, but a {self.name} was found'
+            message = f'A HierarchalTensorGraph name must be given, but a {self.name} was found'
             raise ImproperTensorGraphError(message)
 
         #check that if node is passed it is callable
@@ -94,16 +66,16 @@ class HierarchalTensorGraph(TensorGraph):
             raise ImproperTensorGraphError(message)
 
     def __iter__(self):
-        """ Iterate through all models within the hierarchal model """
+        """ Iterate through all nodes within the HTG """
 
-        def traverse_models(graph,path):
+        def traverse_nodes(graph,path):
             """ Recursive generator """
             for node in graph:
-                yield [path + (graph.nodes[node]['model'].name,), graph.nodes[node]['model']]
-                if not graph.nodes[node]['model'].is_empty:
-                    yield from traverse_models(graph.nodes[node]['model'].graph,path + (graph.nodes[node]['model'].name,))
+                yield [path + (graph.nodes[node]['htg'].name,), graph.nodes[node]['htg']]
+                if not graph.nodes[node]['htg'].is_empty:
+                    yield from traverse_nodes(graph.nodes[node]['htg'].graph,path + (graph.nodes[node]['htg'].name,))
 
-        yield from traverse_models(self.graph,())
+        yield from traverse_nodes(self.graph,())
         
     #for pickling
     def __getstate__(self):
@@ -121,7 +93,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         Parameters
         ----------
-        obj : callable, Model
+        obj : callable, HierarchalTensorGraph
              The object from which to get the name
 
         """
@@ -133,21 +105,20 @@ class HierarchalTensorGraph(TensorGraph):
             return value or str(obj)
         return HierarchalTensorGraph.get_name(value)
     
-    def rename_io(self, inputs_map : dict=None, outputs_map : dict=None, model : str | tuple=None):
+    def rename_io(self, inputs_map : dict=None, outputs_map : dict=None, node : str | tuple=None):
         """ 
-            Allows you to rename input/output keys 
+            Sets any renaming of input/output tensors needed.
             
             Parameters
             ----------
-            model : Specifies the model to apply the renaming. If None,
-            it applies it to self, else the name (str) or path (tuple) to
-            the model.
+            node : specifies which node to apply the renaming. If None,
+                    it applies it to itself.
             
-            inputs_map : dict a dictionary of key-value pairs = (old, new).
+            inputs_map : dict a dictionary of key-value pairs = (from name, to name).
             If str is used for keys, it will attempt a search for a unique match.
             If a tuple is used for keys, it will look for an exact match.
             
-            outputs_map : dict a dictionary of key-value pairs = (old, new).
+            outputs_map : dict a dictionary of key-value pairs = (from name, to name).
             If str is used for keys, it will attempt a search for a unique match.
             If a tuple is used for keys, it will look for an exact match.
             
@@ -156,20 +127,20 @@ class HierarchalTensorGraph(TensorGraph):
         if inputs_map:
             if not isinstance(inputs_map,dict):
                 raise ImproperTensorGraphError('inputs_map must be a dict')
-            self[model].inputs_map = inputs_map
+            self[node]._inputs_map = inputs_map
                 
         if outputs_map:
             if not isinstance(outputs_map,dict):
                 raise ImproperTensorGraphError('outputs_map must be a dict')
-            self[model].outputs_map = outputs_map
+            self[node]._outputs_map = outputs_map
                 
 
     def search(self, name: str, partial: bool=False) -> dict:
         """
 
-        Tries to find the model specified with the given name.
+        Tries to find the node with the given name.
         Returns match/matches as dict with key = tuple and
-        value = Model.
+        value = node.
 
         Parameters
         ----------
@@ -184,15 +155,15 @@ class HierarchalTensorGraph(TensorGraph):
         """
         #tuples must be exact matches.
         if isinstance(name,tuple):
-            return dict(filter(lambda t: name == t[0], self.all_models.items()))
+            return dict(filter(lambda t: name == t[0], self.all_nodes.items()))
 
         if(partial):
-            return dict(filter(lambda s : name in ''.join(s[0]), self.all_models.items()))
-        return dict(filter(lambda s : name in s[0], self.all_models.items()))
+            return dict(filter(lambda s : name in ''.join(s[0]), self.all_nodes.items()))
+        return dict(filter(lambda s : name in s[0], self.all_nodes.items()))
 
     @property
-    def all_models(self) -> dict:
-        """ Returns a dict of all child models within the parent """
+    def all_nodes(self) -> dict:
+        """ Returns a dict of all child nodes within the parent """
         return dict([i for i in self])
 
     @property
@@ -200,9 +171,9 @@ class HierarchalTensorGraph(TensorGraph):
         return self.graph.edges
 
     @property
-    def models(self) -> dict:
-        """ Returns a dict of models within the parent model """
-        return self.graph.get_node_attributes('model')
+    def nodes(self) -> dict:
+        """ Returns a dict of nodes within the parent HTG """
+        return self.graph.get_node_attributes('htg')
 
     @property
     def sources(self) -> list:
@@ -226,39 +197,39 @@ class HierarchalTensorGraph(TensorGraph):
     @staticmethod
     def identity(name: str) -> 'HierarchalTensorGraph':
         """
-        Create an identity Model.
+        Create an the idenitty HTG.
 
         name : string
-             The name given to the identity Model created
+             The name of the HTG
 
         """
         return HierarchalTensorGraph(lambda x:x,name)
 
-    def get_model(self, node: Union[str,callable]) -> 'HierarchalTensorGraph':
+    def get_node(self, node: Union[str,callable]) -> 'HierarchalTensorGraph':
         """
-        Wrap the given node in a Model, and add to our graph if necessary.
+        Wrap the given node in a HTG and add to its graph if necessary.
 
         Parameters
         ----------
-        node : str, callable, or Model
-            - If a callable is passed, it is wrapped into a Model and added to
+        node : str, callable, or HTG
+            - If a callable is passed, it is wrapped into a HTG and added to
             the graph if it doesn't yet exist.
-            - If a string is passed, the Model (which must already exist in
+            - If a string is passed, the HTG (which must already exist in
             the graph) is returned.
-            - If a Model is passed, it is added to the graph if it doesn't yet
+            - If a HTG is passed, it is added to the graph if it doesn't yet
             exist.
 
         Returns
         -------
         HierarchalTensorGraph
-            Model which represents the given node in the graph.
+            HTG which represents the given node in the graph.
 
         Raises
         ------
         ImproperTensorGraphError
             - If a node with the same name already exists in the graph, but is
-            not the same Model object.
-            - If a the same referenced model passed already exists in hierarchal model.
+            not the same HTG object.
+            - If a the same referenced HTG passed already exists in the HTG.
             - If node is not callable, a string, or a HierarchalTensorGraph
 
         """
@@ -266,71 +237,71 @@ class HierarchalTensorGraph(TensorGraph):
             message = f'node must be either callable, a string, or a HierarchalTensorGraph'
             raise ImproperTensorGraphError(message)
 
-        #fetch model by its name
+        #fetch node by its name
         if isinstance(node, str):
             #add io node if first time called
             if (node in ['input','output']) and (node not in self):
                 io =  HierarchalTensorGraph.identity(node)
-                self.graph.add_node(io.name, model=io)
+                self.graph.add_node(io.name, htg=io)
                 return io
 
             #otherwise if using a str() it must already be in the graph
             assert(node in self), f'Unknown name "{node}"'
             return self[node]
 
-        #if not a name (str) and not of type(Model)
+        #if not a name (str) and not of type(HierarchalTensorGraph)
         if not isinstance(node, HierarchalTensorGraph):
 
-            #check if basemodel with this name exist and if it has the same node value.
-            #if it has the same node value then this refers to that basemodel.
+            #check if basenode with this name exist and if it has the same node value.
+            #if it has the same node value then this refers to that basenode.
             name = HierarchalTensorGraph.get_name(node)
             if (name in self.graph) and (node is self[name].node):
                     return self[name]
 
-            #if it doesn't exist we need to create a basemodel
+            #if it doesn't exist we need to create a basenode
             node = HierarchalTensorGraph(node)
 
-        #check if you passed a different model with the same name
-        if (node.name in self.graph) and (node is not self.models[node.name]):
-            message = f'model ({node.name} = {node}) has the same name'
-            message += f'(and path) as existing model {self.models[node.name]}'
+        #check if you passed a different HTG with the same name
+        if (node.name in self.graph) and (node is not self.nodes[node.name]):
+            message = f'node ({node.name} = {node}) has the same name'
+            message += f'(and path) as existing node {self.nodes[node.name]}'
             raise ImproperTensorGraphError(message)
 
-        #if model is not in the graph add it
+        #if node is not in the graph add it
         if not node.name in self.graph:
 
-            #models before adding
-            before = self.all_models
+            #nodes before adding
+            before = self.all_nodes
 
-            #add model to graph
-            self.graph.add_node(node.name, model=node)
+            #add node to graph
+            self.graph.add_node(node.name,htg=node)
 
-            #check we didn't duplicate a model (same id) that exist deeper in the graph
+            #check we didn't duplicate a node (same id) that exist deeper in the graph
             seen = set()
             dupes = []
-            for path,model in self.all_models.items():
-                if model in seen:
-                    dupes.append([path,model])
+            for path,n in self.all_nodes.items():
+                if n in seen:
+                    dupes.append([path,n])
                 else:
-                    seen.add(model)
+                    seen.add(n)
 
             if dupes:
-                match = [[path,model] for path,model in before.items() if model in dupes[0]]
-                message = f'Duplicate models found {dupes[0][0]} and {match[0][0]}'
+                match = [[path,n] for path,n in before.items() if n in dupes[0]]
+                message = f'Duplicate nodes found {dupes[0][0]} and {match[0][0]}'
                 raise ImproperTensorGraphError(message)
 
         return node
 
-    def add_node(self, node: Union[callable,'HierarchalGraphmodel']):
+    def add_node(self, node: Union[callable,'HierarchalTensorGraph']):
         """
         Add a node to the HierarchalTensorGraph.
 
         Parameters
         ----------
         node : callable, or HierarchalTensorGraph
-            - If a callable is passed, it is wrapped into a Model and added to
+            - If a callable is passed, it is wrapped into an HTG and added to
             the graph if it doesn't yet exist.
-            - If a Model is passed, it is added to the graph if it doesn't yet
+            - If an HTG is passed, it is added to the graph if it doesn't yet
             exist.
 
         Raises
@@ -344,10 +315,10 @@ class HierarchalTensorGraph(TensorGraph):
             message = f'A node must be either callable or a HierarchalTensorGraph'
             raise ImproperTensorGraphError(message)
 
-        #we'll use get_model to add it to the graph. Get model will check if exist
+        #we'll use get_node to add it to the graph. get_node will check if exist
         #and only add it if does not. It also checks node meets various criteria before
         #adding it to the graph.
-        self.get_model(node)
+        self.get_node(node)
 
     def remove_node(self,node):
         """
@@ -357,7 +328,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         #remove node from string
         if isinstance(node,str):
-            if node in self.models:
+            if node in self.nodes:
                 self.graph.remove_node(node)
                 return
             else:
@@ -366,7 +337,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         #remove node from HierarchalTensorGraph
         if isinstance(node,HierarchalTensorGraph):
-            if not node.name in self.models:
+            if not node.name in self.nodes:
                 message=f'Node with name {node} not found'
                 raise ImproperTensorGraphError(message)
 
@@ -377,9 +348,9 @@ class HierarchalTensorGraph(TensorGraph):
             self.graph.remove_node(node.name)
             return
 
-        #remove node from basemodel function
-        #check if basemodel with this name exist and if it has the same node value.
-        #if it has the same node value then this refers to that basemodel.
+        #remove node from basenode function
+        #check if basenode with this name exist and if it has the same node value.
+        #if it has the same node value then this refers to that basenode.
         if callable(node):
             name = HierarchalTensorGraph.get_name(node)
             if not name in self.graph:
@@ -402,21 +373,21 @@ class HierarchalTensorGraph(TensorGraph):
     def add_edge(self, source: Union[str,callable], target: Union[str,callable], **attr):
         """
 
-        Add an edge between the source and target models.
+        Add an edge between the source and target nodess.
 
         Parameters
         ----------
 
-        source : str, callable, Model
+        source : str, callable, HierarchalTensorGraph
              The source from which to begin the edge
 
-        target : str, callable, Model
+        target : str, callable, HierarchalTensorGraph
              The sink from which to end the edge
 
         Raises
         ------
         ImproperTensorGraphError
-            - If an edges is added to a basemodel
+            - If an edges is added to a basenode
             - If 'input' is passed as a sink
             - If 'output' is passed as a source
             - If a cyclic graph is created by adding the edge
@@ -434,12 +405,12 @@ class HierarchalTensorGraph(TensorGraph):
                 raise ImproperTensorGraphError(message)
 
         if (self.node is not self):
-            message = f'It is not permitted to add edges to a basemodel,'
-            message += 'i.e. a Model initialized with a callable node'
+            message = f'It is not permitted to add edges to a basenode,'
+            message += 'i.e. an HTG initialized with a callable node'
             raise ImproperTensorGraphError(message)
 
-        source = self.get_model(source)
-        target = self.get_model(target)
+        source = self.get_node(source)
+        target = self.get_node(target)
 
 
         if (source is not None) and (target is not None):
@@ -468,14 +439,14 @@ class HierarchalTensorGraph(TensorGraph):
 
     def __getitem__(self, path: str | tuple ) -> 'HierarchalTensorGraph':
 
-        """ Retrieve the model which has the given name from our graph
+        """ Retrieve the node which has the given name from our graph
 
         Parameters
         ----------
         path : string, tuple, or HierarchalTensorGraph
-             In the case of a string, the name of the child model within the parent.
-             In the case of a path, the model with the given path relative to the parent.
-             In the case of a HierarchalTensorGraph, it checks for a match to all models
+             In the case of a string, the name of the child node within the parent HTG.
+             In the case of a path, the node with the given path relative to the parent HTG.
+             In the case of a HierarchalTensorGraph, it checks for a match to all nodes
              within the graph.
 
         Returns
@@ -492,10 +463,10 @@ class HierarchalTensorGraph(TensorGraph):
         """
         
         if(isinstance(path,HierarchalTensorGraph)):
-            htg = list(filter(lambda x : x == path,self.all_models.values()))
+            htg = list(filter(lambda x : x == path,self.all_nodes.values()))
             if htg:
                 if len(htg) > 1:
-                    raise ImproperTensorGraphError(f'multiple models found for {paht} in __getitem__')
+                    raise ImproperTensorGraphError(f'multiple nodes found for {path} in __getitem__')
                 return htg[0]
             raise ImproperTensorGraphError(f'HTG {path} is not contained within HTG {self.name}') 
              
@@ -511,7 +482,7 @@ class HierarchalTensorGraph(TensorGraph):
             if path in ['output'] and (path not in self.graph):
                 return HierarchalTensorGraph.output_node(path)
             try:
-                return self.graph.nodes[path]['model']
+                return self.graph.nodes[path]['htg']
             except:
                 raise ImproperTensorGraphError(f'node with path = {path} not in graph.')
         
@@ -522,50 +493,47 @@ class HierarchalTensorGraph(TensorGraph):
 
 
     def __contains__(self, path: str | tuple) -> bool:
-        """ Check if a model with the given name is in our graph.
+        """ Check if a node with the given name is in our graph.
 
         Parameters
         ----------
         path : string, tuple, or HierarchalTensorGraph
-              In the case of a string, the name of the child model within the parent.
-              In the case of a path (tuple), the model with the given path relative
-              to the parent.
+              In the case of a string, the name of the child node within the parent HTG.
+              In the case of a path (tuple), the node with the given path relative
+              to the parent HTG.
 
         """
-        #if given a string check if it is direct child of model
+        #if given a string check if it is direct child of node
         if isinstance(path,str):
             return (path == self.name) or self.graph.has_node(path)
         
         if isinstance(path,tuple):
-            return path in self.all_models
+            return path in self.all_nodes
         
         if isinstance(path,HierarchalTensorGraph):
-            return path in self.all_models.values()
+            return path in self.all_nodes.values()
         
         raise ImproperTensorGraphError('must pass either a str, tuple, or HierarchalTensorGraph')
 
     def feature_map(self,X: dict, io: str) -> dict:
         """
-
-        If an input/output map is specified it first applies the
-        corresponding replacements. Following this, if inputs/outputs
-        are specified, it will grab from the renamed input/output
-        the subset of input/output keys and return the corresponding
-        dictionary. If neither are specified, nothing is done.
+        Applies a map on the incoming and outgoing dictionaries.
+        according to the specified HTG paramerters inputs/outputs
+        and inputs/outputs_map.
 
         Parameters
         ----------
 
-        X : Input of the model
+        X : dictionary to be mapped.
 
-        io: either 'input' or 'output'
+        io: 'input' or 'output' specifiying which to apply
 
         Raises
         ------
 
         ImproperTensorGraphError:
          - if the key is not found.
-         - if multiple keys (coming from different models)
+         - if multiple keys (coming from different nodes)
          of that name are found. In this case,
          the found keys will be given in the error message
 
@@ -617,7 +585,7 @@ class HierarchalTensorGraph(TensorGraph):
             return X
         
         def find_and_select(namelist : list, X : dict) -> dict:
-            """tries to find and select a subset of a dictionary"""
+            """tries to find and select the subset of X with keys = namelist """
            
             x = {}
             for name in namelist:
@@ -634,13 +602,13 @@ class HierarchalTensorGraph(TensorGraph):
                 partials = [i for i in X.keys() if name in (i[-1],1)]
 
                 if not partials:
-                    message  = f'In Model[{self.name}] could not find key = {name}. '
+                    message  = f'In HierarchalTensorGraph[{self.name}] could not find key = {name}. '
                     message += f'You will have to rename an incoming key '
                     message += f'from the available keys = {X.keys()}'
                     raise ImproperTensorGraphError(message)
 
                 if len(partials) > 1:
-                    message  = f'In Model[{self.name}] found multiple keys = {partials} for key = {name}. '
+                    message  = f'In HierarchalTensorGraph[{self.name}] found multiple keys = {partials} for key = {name}. '
                     message += f'You will have to rename an incoming key '
                     message += f'from the available keys = {X.keys()}.'
                     raise ImproperTensorGraphError(message)
@@ -650,20 +618,20 @@ class HierarchalTensorGraph(TensorGraph):
         
         #Renaming and selecting inputs
         if io == 'input':
-            if not (self.inputs_map or self.inputs):
+            if not (self._inputs_map or self.inputs):
                 return X
             #flatten/convert to tuples
             x = dict([i for i in flatten_dict(X,())])
             #rename
-            if self.inputs_map:
-                x = find_and_replace(self.inputs_map,x)
+            if self._inputs_map:
+                x = find_and_replace(self._inputs_map,x)
             #select   
             if self.inputs:
                 x = find_and_select(self.inputs,x)
                 
         #Renaming and selecting outputs
         if io == 'output':
-            if not (self.outputs_map or self.outputs):
+            if not (self._outputs_map or self.outputs):
                 return X
             #flatten/convert to tuples
             x = dict([i for i in flatten_dict(X,())])
@@ -672,25 +640,10 @@ class HierarchalTensorGraph(TensorGraph):
                 x = find_and_select(self.outputs,x)
                 
             #rename
-            if self.outputs_map:
-                x = find_and_replace(self.outputs_map,x)
+            if self._outputs_map:
+                x = find_and_replace(self._outputs_map,x)
             
         return x
-
-    def set_feature_map(self,f: callable):
-        """
-
-        Define the feature mapping function.
-
-        f : The feature mapping to use on the input
-
-        """
-
-        return MethodType(f,self)
-
-    def reset_feature_map(self):
-        self.set_feature_map(lambda x,X : X)
-
 
     def __call__(self, X: dict) -> dict:
         """Propagate the given input through the graph.
@@ -699,13 +652,13 @@ class HierarchalTensorGraph(TensorGraph):
         ----------
 
         X : dict
-            Input of the model.
+            Input of the HTG.
 
         Returns
         -------
 
-        Dictionary containing outputs of the constructed
-        graph, using the format {path: output value}.
+        Outputs produce by executing the underlying graph in the 
+        form {path: output value}.
 
         Raises
         ------
@@ -718,12 +671,12 @@ class HierarchalTensorGraph(TensorGraph):
         #apply feature map
         _X = self.feature_map(X,'input')
 
-        #if not a basemodel
+        #if not a basenode
         if(self.node is self):
 
             #check that i/o exist
             if not all([b in self.graph for b in ['input','output']]):
-                message = f'A model name must contain i/o nodes'
+                message = f'A HierarchalTensorGraph name must contain i/o nodes'
                 raise ImproperTensorGraphError(message)
 
             #check that only i/o is a source/sink
@@ -799,7 +752,7 @@ class HierarchalTensorGraph(TensorGraph):
         create_edges += [(nodename + '.' +  x[0],y[1]) for x in out_edges for y in out_node_edges]
         create_edges += [(nodename + '.' + x[0],nodename + '.' + x[1]) for x in
                          [e for e in edges_within_node if ('input' not in e) and (not 'output' in e)]]
-        subnodes = {nodename + '.' +  k : node for (k,node) in self[nodename].models.items()
+        subnodes = {nodename + '.' +  k : node for (k,node) in self[nodename].nodes.items()
                     if k not in ['input','output']}
 
         #copy graph and remove node
@@ -807,17 +760,17 @@ class HierarchalTensorGraph(TensorGraph):
 
         #add in new edges and subnodes
         for k,v in subnodes.items():
-            graph.add_node(k,model=v)
+            graph.add_node(k,htg=v)
         graph.add_edges_from(create_edges)
 
         return graph
 
     def draw(self,expand_nodes=None,layout='kamada_kawai_layout'):
 
-        #check if submodels are empty
+        #check if nodes are empty
         def is_not_all_empty(graph):
             for v in graph:
-                if not graph.nodes[v]['model'].is_empty:
+                if not graph.nodes[v]['htg'].is_empty:
                     return True
             return False
 
@@ -836,8 +789,8 @@ class HierarchalTensorGraph(TensorGraph):
 
             if expand_nodes == 'all':
                 while(is_not_all_empty(g)):
-                    models = g.get_node_attributes('model')
-                    for k,node in models.items():
+                    nodes = g.get_node_attributes('htg')
+                    for k,node in nodes.items():
                         if not node.is_empty:
                             g = self.expand_graph_node(node.name,g)
 

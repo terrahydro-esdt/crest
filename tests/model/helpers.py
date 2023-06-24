@@ -44,7 +44,7 @@ class AddMult(HierarchalTensorGraph):
         self.add_edge(mult,'output')
         self.add_edge(adder,mult)
         self.rename_io(inputs_map={'sum' : 'x'},
-                       outputs_map={'product' : 'add_mult_res'}, model=mult)
+                       outputs_map={'product' : 'add_mult_res'}, node=mult)
 
 class AddMultExp(HierarchalTensorGraph):
 
@@ -61,4 +61,4 @@ class AddMultExp(HierarchalTensorGraph):
         self.add_edge(add_mult,expo)
         self.add_edge(expo,'output')
         self.rename_io(inputs_map={'add_mult_res':'x'},
-                       outputs_map={'exp':'add_mult_exp_res'},model=expo)
+                       outputs_map={'exp':'add_mult_exp_res'},node=expo)
