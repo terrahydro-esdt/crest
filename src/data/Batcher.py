@@ -3,10 +3,15 @@ from collections.abc import Collection
 from functools import partial, cached_property
 from numbers import Number
 from pathlib import Path 
+<<<<<<< HEAD
 # from threading import Timer, Lock, Event
 from queue import Empty
 from tqdm.auto import tqdm
 # from _thread import LockType
+=======
+from queue import Empty
+from tqdm.auto import tqdm
+>>>>>>> origin
 
 import logging
 import multiprocessing as mp
@@ -277,8 +282,14 @@ class Batcher:#(BaseAbstract):
             if self.shuffle: self.random.shuffle(samples)   
 
             # If multiprocessing, use only a subset of the overall samples                 
+<<<<<<< HEAD
             if hasattr(self, 'i'): subsets = samples[self.i::self.workers]
             else:                  subsets = list(samples) 
+=======
+            if hasattr(self, '_pidx'): 
+                subsets = samples[self._pidx::self.workers]
+            else: subsets = list(samples) 
+>>>>>>> origin
 
             # Initialize a new container for leftover samples
             self._remainder = []
@@ -340,7 +351,11 @@ class Batcher:#(BaseAbstract):
                 message = 'Not enough sample blocks for workers! '
                 message+= 'Set Batcher.duplicate=True.'
                 self.error(message)
+<<<<<<< HEAD
                 if getattr(self, 'i', 0) >= len(samples): return
+=======
+                if getattr(self, '_pidx', 0) >= len(samples): return
+>>>>>>> origin
 
             # Create threaded task executors for generating blocks and batches
             kwargs = {
@@ -358,7 +373,11 @@ class Batcher:#(BaseAbstract):
             # If requested, yield samples indefinitely
             while not self._exit_flag.is_set():
                 with Stopwatch(message, self.info):
+<<<<<<< HEAD
                     yield from generator_loop(samples)
+=======
+                    yield from generator_loop(list(samples))
+>>>>>>> origin
 
                 # Break the infinite loop if we're not repeating
                 # We don't want to set the exit flag here, as that would stop
@@ -586,7 +605,15 @@ class Batcher:#(BaseAbstract):
         return batch if self.features is None else _parse(batch)
 
 
+<<<<<<< HEAD
     def _put(self, queue: mp.queues.Queue, i: int) -> None:
+=======
+    def _put(self, 
+        queue    : mp.queues.Queue, 
+        proc_idx : int, 
+        exitflag : mp.synchronize.Event,
+    ) -> None:
+>>>>>>> origin
         """Helper to put batches into a multiprocessing queue.
 
         Notes
@@ -595,6 +622,7 @@ class Batcher:#(BaseAbstract):
 
         Parameters
         ----------
+<<<<<<< HEAD
         queue : multiprocessing.queues.Queue
             The multiprocessing Queue object that workers will put batches 
             into. The main process will monitor this queue to receive batches 
@@ -606,6 +634,21 @@ class Batcher:#(BaseAbstract):
 
         """
         self.info(f'Starting process {i}')
+=======
+        queue    : multiprocessing.queues.Queue
+            The multiprocessing Queue object that workers will put batches 
+            into. The main process will monitor this queue to receive batches 
+            and yield them to the rest of the program.
+        proc_idx : int
+            Integer specifying which worker process this is (ranging from
+            0 to `workers-1`). This is used to select which subset of dataset
+            blocks to operate on when Batcher.duplicate is set to False.
+        exitflag : multiprocessing.synchronize.Event
+            Event used to signal the process to exit. 
+
+        """
+        self.info(f'Starting process {proc_idx}')
+>>>>>>> origin
 
         # UploadMonitor is required to import in order to register it
         # Since this method is the entry point for new processes, it's the
@@ -618,6 +661,7 @@ class Batcher:#(BaseAbstract):
         # Make sure we catch and log any exceptions, as they will disappear 
         #  silently otherwise (since we're in a background process here)
         try:
+<<<<<<< HEAD
             # When duplicate is set, generate new randomness per process
             if self.duplicate: self.random = np.random.default_rng(i)
 
@@ -625,11 +669,27 @@ class Batcher:#(BaseAbstract):
             # different sections of the data
             else:              self.i = i
 
+=======
+            # Store the global exit flag Event object
+            self.__dict__['_exit_flag'] = exitflag 
+
+            # When duplicate is set, generate new randomness per process
+            if self.duplicate: self.random = np.random.default_rng(proc_idx)
+
+            # Otherwise randomness should be the same, and we just operate on
+            # different sections of the data
+            else: self._pidx = proc_idx
+
+>>>>>>> origin
             # Start adding batches to the queue
             list(map(queue.put, self._generator))
 
         except Exception as e:
+<<<<<<< HEAD
             self.error(f'Process {i} exception: {e}')
+=======
+            self.error(f'Process {proc_idx} exception: {e}')
+>>>>>>> origin
             raise
 
 
@@ -668,7 +728,11 @@ class Batcher:#(BaseAbstract):
         create = lambda *a: ctx.Process(args=a, target=self._put, daemon=True)
 
         # Create and start the background processes 
+<<<<<<< HEAD
         jobs = [create(queue, i) for i in range(self.workers)]
+=======
+        jobs = [create(queue, i, self._exit_flag) for i in range(self.workers)]
+>>>>>>> origin
         [job.start() for job in jobs]
 
         # Wait a second for them to start, then ensure that they are running
