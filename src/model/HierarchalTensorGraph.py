@@ -608,13 +608,18 @@ class HierarchalTensorGraph(TensorGraph):
                     raise ImproperTensorGraphError(message)
 
                 if len(partials) > 1:
-                    message  = f'In HierarchalTensorGraph[{self.name}] found multiple keys = {partials} for key = {name}. '
+                    message  = f'In HierarchalTensorGraph[{self.name}] found '
+                    message += f'multiple keys = {partials} for key = {name}. '
                     message += f'You will have to rename an incoming key '
                     message += f'from the available keys = {X.keys()}.'
                     raise ImproperTensorGraphError(message)
             
                 x[name] = X[partials[0]]
             return x
+        
+        # Ignore input/output nodes in multinode HTGs
+        if self.name in ['input','output']:
+            return X
         
         #Renaming and selecting inputs
         if io == 'input':
@@ -631,13 +636,22 @@ class HierarchalTensorGraph(TensorGraph):
                 
         #Renaming and selecting outputs
         if io == 'output':
+            self.output = None # Clear cached output
             if not (self._outputs_map or self.outputs):
+                self.output = X.copy() # Set node output
                 return X
+            
+            
             #flatten/convert to tuples
             x = dict([i for i in flatten_dict(X,())])
             #select   
             if self.outputs:
                 x = find_and_select(self.outputs,x)
+                self.output = x.copy()
+                
+            # If no selection occured set output before renaming.    
+            if not self.outputs:
+                self.output = X.copy()
                 
             #rename
             if self._outputs_map:
@@ -696,23 +710,17 @@ class HierarchalTensorGraph(TensorGraph):
         flatten = lambda d: [d.update(d.pop(k, {}))
                     for k in ['input', 'output']] and d
 
-        # Base case: graph is empty
-        if self.is_empty: return self.feature_map( self.node(flatten(_X)), 'output')
-
+        ## Basenode: graph is empty
+        if self.is_empty: 
+            return self.feature_map(self.node(flatten(_X)), 'output')
+        
         # Recursive case: traverse graph in reverse, from output to input
         nodes  = lambda name: dict(self.graph.in_edges(name))  # All input nodes
         search = lambda name: dict(map(traverse, nodes(name))) # Traverse all inputs
         output = lambda name: self[name]( search(name) or _X )  # Get output for a node
 
-
-        def output2(name):
-            self[name].output = self[name]( search(name) or _X )
-            return self[name].output
-
-        traverse = cache( lambda name: (name, output2(name)) )
-        self.output = self.feature_map( flatten(dict(map(traverse, self.sinks))), 'output')
-        return  self.output
-
+        traverse = cache( lambda name: (name, self[name]( search(name) or _X )) )
+        return self.feature_map(flatten(dict(map(traverse, self.sinks))), 'output')
 
     def expand_graph_node(self,nodename: str,g=None):
         """ expands the graph of nodename and returns a new graph with the expansion
