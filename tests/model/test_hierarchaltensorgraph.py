@@ -6,40 +6,46 @@ from math import exp
 import cloudpickle as pickle
 
 
-def test_basemodel():
-    def mult(x): return x['scalar'] * x['x']
-    m = HierarchalTensorGraph(node=mult,name='mult')
-    assert m({'scalar':2,'x':3}) == 6
+def test_basenode():
+    m = HierarchalTensorGraph(
+            node=lambda X : {'mult' : X['scalar'] * X['x']},
+            name='mult'
+    )
+    assert m({'scalar':2,'x':3}) == {'mult' : 6}
 
 def test_add_node():
-    #Adding a basemodel
-    def mult(x): return x['scalar'] * x['x']
-    m = HierarchalTensorGraph(name='mult')
-    m.add_node(mult)
+    #A multinode HierarchalTensorGraph
+    mult = HierarchalTensorGraph(
+            node=lambda X : {'mult' : X['scalar'] * X['x']},
+            name='mult'
+    )
+
+    #Adding a multinode HierarchalTensorGraph
+    m = HierarchalTensorGraph(
+            name='mult',
+            inputs = {'scalar' : None, 'x' : None},
+            outputs = {'mult' : None}
+    )
     m.add_edge('input',mult)
     m.add_edge(mult,'output')
     assert m({'scalar':2,'x':3}) == {'mult' : 6}
 
-    #Adding a HierarchalTensorGraph
-    multiply = HierarchalTensorGraph(node=mult,name='mult')
-    m = HierarchalTensorGraph(name='mult')
-    m.add_node(multiply)
-    m.add_edge('input',multiply)
-    m.add_edge(multiply,'output')
-    assert m({'scalar':2,'x':3}) == {'mult' : 6}
-
 def test_add_edges():
-    #Adding a basemodel
-    def mult(x): return x['scalar'] * x['x']
-    m = HierarchalTensorGraph(name='mult')
-    edges = [('input',mult),(mult,'output')]
-    m.add_edges_from(edges)
-    assert m({'scalar':2,'x':3}) == {'mult' : 6}
+    #A multinode HierarchalTensorGraph
+    mult = HierarchalTensorGraph(
+            node=lambda X : {'mult' : X['scalar'] * X['x']},
+            name='mult'
+    )
+
+    #Adding a multinode HierarchalTensorGraph
+    m = HierarchalTensorGraph(
+            name='multiply',
+            inputs = {'scalar' : None, 'x' : None},
+            outputs = {'mult' : None}
+    )
 
     #Adding a HierarchalTensorGraph
-    multiply = HierarchalTensorGraph(node=mult,name='mult')
-    m = HierarchalTensorGraph(name='mult')
-    edges = [('input',multiply),(multiply,'output')]
+    edges = [('input',mult),(mult,'output')]
     m.add_edges_from(edges)
     assert m({'scalar':2,'x':3}) == {'mult' : 6}
 
@@ -59,24 +65,34 @@ def test_contains():
 
 def test_remove_nodes():
     def a(X):
-        return 'a'
+        return {'a' : 'a'}
 
     def b(X):
-        return 'b'
+        return {'b' : 'b'}
 
-    m = HierarchalTensorGraph(name='test')
+    m = HierarchalTensorGraph(
+            name='test',
+            inputs={'a' : None, 'b' : None},
+            outputs={'a' : None, 'b' : None}
+    )
     edges = [('input',a),('input',b),(a,'output'),(b,'output')]
     m.add_edges_from(edges)
     assert m({'a': 'a', 'b': 'b'}) == {'a': 'a', 'b': 'b'}
 
     m.remove_node(b)
+    m.outputs={'a' : None}
     assert m({'a': 'a', 'b': 'b'}) == {'a': 'a'}
 
-    m = HierarchalTensorGraph(name='test')
+    m = HierarchalTensorGraph(
+            name='test',
+            inputs={'a' : None, 'b' : None},
+            outputs={'a' : None, 'b' : None}
+    )
     edges = [('input',a),('input',b),(a,'output'),(b,'output')]
     m.add_edges_from(edges)
 
     m.remove_node('b')
+    m.outputs={'a' : None}
     assert m({'a': 'a', 'b': 'b'}) == {'a': 'a'}
 
     ha = HierarchalTensorGraph(a)
@@ -87,6 +103,7 @@ def test_remove_nodes():
     m.add_edges_from(edges)
 
     m.remove_node(hb)
+    m.outputs={'a' : None}
     assert m({'a': 'a', 'b': 'b'}) == {'a': 'a'}
 
 def test_simple_coupled_model():

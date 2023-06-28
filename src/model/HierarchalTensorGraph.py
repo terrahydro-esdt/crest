@@ -638,6 +638,7 @@ class HierarchalTensorGraph(TensorGraph):
         if io == 'output':
             self.output = None # Clear cached output
             if not (self._outputs_map or self.outputs):
+                print(X)
                 self.output = X.copy() # Set node output
                 return X
             
