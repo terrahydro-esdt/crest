@@ -1,1 +1,1 @@
-from .src import HierarchalTensorGraph,NetworkXGraph
+from .src import HierarchalTensorGraph,NetworkXGraph,Model
