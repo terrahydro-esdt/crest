@@ -1,19 +1,19 @@
 from collections.abc import Collection
 from collections import defaultdict as dd
-from fsspec.mapping import FSMap 
+from fsspec.mapping import FSMap
 from functools import cached_property, partial
 from itertools import starmap
 from numbers import Number, Integral as Int
-from pathlib import Path 
+from pathlib import Path
 
-import dask.array as da 
+import dask.array as da
 import xarray as xr
 import numpy as np
 import typing
 import zarr
-import math 
+import math
 
-from crest.src.base import BaseAbstract 
+from crest.src.base import BaseAbstract
 from crest.src.data.loading import Block, Blockset
 
 # Bool type which allows numpy bools as well
@@ -22,51 +22,51 @@ Bool = bool | np.bool_
 
 class Datafile(BaseAbstract):
     """Class which handles loading data from a single source.
-    
+
     Parameters
     ----------
     location      : Path | str | FSMap | xr.Dataset,
         Location for which to load the data from. Note that this can take
-        a variety of formats, including disk filepath, or S3 bucket via 
-        an FSMap object. As well, an already loaded xr.Dataset object can 
+        a variety of formats, including disk filepath, or S3 bucket via
+        an FSMap object. As well, an already loaded xr.Dataset object can
         also be passed in.
     features      : list[str]
-        The list of features (variables) to load / keep in the created 
+        The list of features (variables) to load / keep in the created
         xr and dask objects.
     extent        : dict[str, Collection[Number]]
         A dictionary mapping {Dimension: [lower bound, upper bound]} for
         loading the data. For example, {'latitude': [10, 20]} would indicate
-        only data from 10 degrees latitude to 20 degrees latitude should be 
+        only data from 10 degrees latitude to 20 degrees latitude should be
         loaded.
     window_depth  : dict[str, Int | Collection[Int]]
-        Format of {Dimension: (lower, upper)} or {Dimension: both}, where 
-        (lower, upper) defines the number of elements to the left and to the 
-        right of the window center, and both would indicate both=left=right. 
+        Format of {Dimension: (lower, upper)} or {Dimension: both}, where
+        (lower, upper) defines the number of elements to the left and to the
+        right of the window center, and both would indicate both=left=right.
         {'time': (1, 0)} would indicate a window which has two elements along
-        the time dimension, where one element is the center and the other is 
+        the time dimension, where one element is the center and the other is
         a single lookback step (to the left). {'time': 1} would be equivalent
         to {'time': (1,1)}. Dimensions that exist in the data but are not given
-        in this dictionary use Datafile.DEFAULT_WINDOW_SIZE by default. 
-    valid_percent : dict[str | tuple[str], Number] 
-        Format of {Dimension: percent} or {(Dim1, Dim2, ...): percent}, where 
+        in this dictionary use Datafile.DEFAULT_WINDOW_SIZE by default.
+    valid_percent : dict[str | tuple[str], Number]
+        Format of {Dimension: percent} or {(Dim1, Dim2, ...): percent}, where
         the key can be single string, or a tuple with one or more elements;
-        multiple dimensions in the key tuple indicate that the valid percent 
+        multiple dimensions in the key tuple indicate that the valid percent
         is applied across all of those dimensions combined.
-        Percent is a value in the range [0, 1], indicating the percentage of 
+        Percent is a value in the range [0, 1], indicating the percentage of
         a window (for the given dimension(s)) which needs to be valid in order
-        for the window itself to be valid. For example, 
+        for the window itself to be valid. For example,
         {('latitude', 'longitude'): 0.8, ('time',): 1} would indicate that for
-        a given window, at least 80% of the elements must be valid across the 
+        a given window, at least 80% of the elements must be valid across the
         2d grid of latitude x longitude, and subsequently all elements across
         the time dimension must be valid. Note that the dictionary is ordered,
         and so dimensions are evaluated in the order given.
     invalid_value : Number | Collection[Number]
-        A single value or a collection of values which should be treated as 
+        A single value or a collection of values which should be treated as
         NaN in the `data`. Note that np.NaN and its integer representation
-        (i.e. -2147483648) are always treated as NaN, regardless of this 
-        parameter. 
+        (i.e. -2147483648) are always treated as NaN, regardless of this
+        parameter.
     **kwargs
-        Any additional kwargs are passed into xr.open_zarr when loading the 
+        Any additional kwargs are passed into xr.open_zarr when loading the
         given `location` (assuming it is not already an xr.Dataset object).
 
     Raises
@@ -83,7 +83,7 @@ class Datafile(BaseAbstract):
     DEFAULT_WINDOW_SIZE = 0
 
     # Full window must be valid for undefined dimensions
-    DEFAULT_VALID_PERCENT = 1 
+    DEFAULT_VALID_PERCENT = 1
 
     # Ensure we include int(32/64) representations of NaN
     DEFAULT_INVALID_VALUES = [-2147483648, -9223372036854775808]
@@ -143,10 +143,10 @@ class Datafile(BaseAbstract):
     def _raw_data(self):
         """ Only read the zarr once necessary """
         # If the given location isn't already an xr.Dataset, open it
-        if isinstance(self.location, xr.Dataset): 
+        if isinstance(self.location, xr.Dataset):
             return self.location
         return xr.open_zarr(self.location, **self._kwargs)
-    
+
 
     @cached_property
     def data(self) -> xr.DataArray:
@@ -186,7 +186,7 @@ class Datafile(BaseAbstract):
     def dims(self) -> list[str]:
         """ Ordered coordinate dimensions """
         return sorted(self._raw_data.coords.keys())
-    
+
 
     @cached_property
     def valid_percent(self) -> dict[str, Number]:
@@ -199,7 +199,7 @@ class Datafile(BaseAbstract):
         mapping|= {(dim,): default for dim in self.dims if dim not in defined}
         return dd(lambda: default, mapping)
 
-        
+
     @cached_property
     def window_depth(self) -> dict[str, Int]:
         """ {Dimension key : window depth} with default value for missing.
@@ -220,7 +220,7 @@ class Datafile(BaseAbstract):
     @cached_property
     def resolution(self) -> list[Number]:
         """ Coordinate resolution per axis.
-            For example: 
+            For example:
                 [1,2,3] -> resolution of 1
                 [3,6,9] -> resolution of 3
         """
@@ -244,7 +244,7 @@ class Datafile(BaseAbstract):
     def dask(self) -> da.Array:
         """ DaskArray reference held by the xr.DataArray """
         return self.data.data
-    
+
 
     def ensure_dims(self, dims: set[str]) -> None:
         """ Ensure any missing dimensions are added as virtual dimensions """
@@ -265,7 +265,7 @@ class Datafile(BaseAbstract):
 
 
     def calculate_overlap(self,
-        max_resolution : Collection, 
+        max_resolution : Collection,
         skip_dimension : Collection[Bool],
     ) -> dict[Int, Int]:
         """Calculate the required block overlap for the given max resolutions.
@@ -278,12 +278,12 @@ class Datafile(BaseAbstract):
             Bool flag per dimension which indicates if we should just return
             the originally requested window size as the block overlap buffer.
             This is used to ensure exactly one coordinate grid maintains the
-            minimum necessary buffer for the Dataset. If this wasn't present, 
-            there would be many duplicate samples created from the additional 
+            minimum necessary buffer for the Dataset. If this wasn't present,
+            there would be many duplicate samples created from the additional
             overlap (e.g. if there were multiple grids with equal resolution,
             they all would have window_depth+1 as their overlap and thus have
-            duplicate samples returned along block boundaries). With exactly 
-            one grid being skipped along each dimension, it ensures that 
+            duplicate samples returned along block boundaries). With exactly
+            one grid being skipped along each dimension, it ensures that
             duplicate samples are not created along the block edges.
 
         Returns
@@ -300,13 +300,13 @@ class Datafile(BaseAbstract):
         """
         def calculate(dim, res, max_res, skip):
             total = self.window_depth[dim].sum()
-            size  = self.window_depth[dim].max() 
+            size  = self.window_depth[dim].max()
             size += 0 if skip or (res==0) else ((max_res/2) / res)
             return (self.dims.index(dim), math.ceil(np.nan_to_num(size)))
 
         args = [self.dims, self.resolution, max_resolution, skip_dimension]
-        if len(set(map(len, args))) > 1: 
-            raise ValueError(f'Args not all the same length: {args}') 
+        if len(set(map(len, args))) > 1:
+            raise ValueError(f'Args not all the same length: {args}')
         return dict(map(calculate, *args))
 
 
@@ -317,12 +317,12 @@ class Datafile(BaseAbstract):
         ----------
         numblocks : Collection[int]
             The number of blocks which should be in each dimension. For
-            example, if numblocks=[3] and self.data=[1, 2, 3, 4, 5] then the 
+            example, if numblocks=[3] and self.data=[1, 2, 3, 4, 5] then the
             returned data will have a chunksize of 2: [[1,2], [3,4], [5]].
             If the length of the passed block size collection is less than
             the total number of axes, the requested sizes are only applied
             to the first N axes (where N is the number of sizes given).
-        
+
         Returns
         -------
         list
@@ -358,35 +358,35 @@ class Datafile(BaseAbstract):
         # Ensure the new block numbers are equal to what was requested
         if any(block != db for block, db in zip(numblocks, self.numblocks)):
             raise ValueError(f'blocks={numblocks}, created {self.numblocks}')
-        return newchunks 
+        return newchunks
 
 
-    def apply_overlap(self, 
+    def apply_overlap(self,
         overlaps : dict[Int, Int] | Int,
         boundary : dict[Int, Number] | Number | str = np.nan,
     ) -> Blockset:
         """Create a Blockset containing Blocks with the overlap applied.
-        
+
         Parameters
         ----------
         overlaps  : dict[Int, Int] | Int
             {axis number: overlap size} dictionary which defines the amount
-            of overlapping elements (on each side) for all blocks in the 
+            of overlapping elements (on each side) for all blocks in the
             dask array. Passing a single value will be applied to all axes.
         boundary : dict[Int, Number] | Number | str
             {axis number: boundary condition} dictionary which defines the
-            boundary condition for each block axis. Passing a single value 
+            boundary condition for each block axis. Passing a single value
             will be applied to all axes. Options are 'reflect', 'periodic',
             'nearest', 'none', or an array value (so that value will fill
             the boundary). For more information, see the dask documentation:
             https://docs.dask.org/en/stable/generated/dask.array.overlap.overlap.html
-        
+
         Notes
         -----
         The total number of blocks must remain constant, which means rechunking
-        cannot be performed by the overlap operation. Current tests seem to 
+        cannot be performed by the overlap operation. Current tests seem to
         indicate bypassing the dask.overlap.overlap restriction on minimum
-        chunk size will still generate correct results, but this may not be 
+        chunk size will still generate correct results, but this may not be
         the case in general - needs further testing. It appears the failure mode
         is when there needs to be more than one chunk included in the overlap,
         on the interior of the array:
@@ -394,16 +394,16 @@ class Datafile(BaseAbstract):
             [[nan, nan, nan, 1, 2, 3, 4], [1,2,3,4,5,6], [3,4,5,6,7,8], ...]
         instead of the expected:
             [[nan, nan, nan, 1, 2, 3, 4, 5], [nan, 1, 2, 3, 4, 5, 6, 7], ...]
-        because the third element requires an additional chunk. 
-        A common case where this does not fail is when the last chunk is too 
-        small, as the nan filling will correctly include the required number 
+        because the third element requires an additional chunk.
+        A common case where this does not fail is when the last chunk is too
+        small, as the nan filling will correctly include the required number
         of additional elements. The issue only appears when internal chunks
-        are too small. 
+        are too small.
 
         Returns
         -------
         Blockset
-            A Blockset object containing all of the Blocks for this Datafile. 
+            A Blockset object containing all of the Blocks for this Datafile.
 
         """
         def dask_overlap(x, depth, boundary, *, allow_rechunk=False):
@@ -419,25 +419,25 @@ class Datafile(BaseAbstract):
             return da.chunk.trim(x3, trim)
 
         kwargs = {
-            'depth'         : overlaps, 
-            'boundary'      : boundary, 
+            'depth'         : overlaps,
+            'boundary'      : boundary,
             'allow_rechunk' : False,
         }
 
         def set_id(x, block_id):
             block_id = np.ravel_multi_index(block_id, self.dask.numblocks[:-1]+(1,))
             return np.zeros_like(x, dtype='int32') + block_id
-        
+
         def id_equal(x, block_id):
             block_id = np.ravel_multi_index(block_id, self.dask.numblocks[:-1]+(1,))
             return x != block_id
-        
+
         # Create mask indicating overlapped elements in each block
         mask = np.zeros(self.dask.shape[:-1] + (1,), dtype=bool)
         mask = da.from_array(mask, chunks=self.dask.chunks[:-1] + ((1,),), name=False)
         mask = mask.map_blocks(set_id, dtype='int32')
-        
-        # Tile on dimensions which are virtual 
+
+        # Tile on dimensions which are virtual
         repeats = [self._virtual_dims.get(d, 1) for d in self.dims] + [1]
 
         # Clip block extents to avoid duplication
@@ -467,7 +467,7 @@ class Datafile(BaseAbstract):
             'resolution'    : self.resolution,
             'window_depth'  : self.window_depth,
             'valid_percent' : self.valid_percent,
-            'invalid_value' : self.invalid_value, 
+            'invalid_value' : self.invalid_value,
         }
         gen_blocks = lambda *args: Block(*args, **kwargs)
         block_objs = map(gen_blocks, d_blocks, c_blocks, m_blocks)
@@ -491,7 +491,7 @@ class Datafile(BaseAbstract):
             if not Path(self.location).exists():
                 raise FileNotFoundError(f'File not found: {self.location}')
             self.location = zarr.DirectoryStore(self.location)
-        
+
         # elif isinstance(self.location, FSMap):
         #     if not self.location.fs.exists(self.location.root):
         #         raise FileNotFoundError(f'Database not found: {self.location}')
