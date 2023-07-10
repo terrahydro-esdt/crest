@@ -95,7 +95,7 @@ class Sample:#(BaseAbstract):
 
     def to_list(self, features: list | None = None) -> list:
         """ Extract the requested features into a list """
-        data = [d[f] for d in self._dict for f in (features or d) if f in d]
+        data = [d[f] for f in (features or d) for d in self._dict if f in d]
         assert(len(data) == len(features or data)), \
             f'Missing / duplicate features: {len(features)} vs {len(data)}'
         return data 
