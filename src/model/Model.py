@@ -104,9 +104,10 @@ class Model(BaseModel):
                 
         # Training Batcher
         train_kwargs = {
-            'batch_size' : kwargs ['batch_size'],
+            'batch_size' : kwargs['batch_size'],
             'features'   : [list(self.inputs),list(self.outputs)],
             'workers'    : workers,
+            'repeat'     : True,
             'shuffle'    : kwargs['shuffle'],
             'seed'       : seed
         }
@@ -234,7 +235,7 @@ class Model(BaseModel):
 
         # Evaluation Batcher
         batch_kwargs = {
-            'batch_size' : kwargs ['batch_size'],
+            'batch_size' : kwargs['batch_size'],
             'features'   : [list(self.inputs),list(self.outputs)],
             'workers'    : workers,
             'shuffle'    : False,
