@@ -132,7 +132,7 @@ class Model(BaseModel):
 
         self.model.fit(training_batcher,**kwargs)
 
-    def predict(self, dataset : Dataset | Batcher | dict, labels=[], workers=3, seed=None, **kwargs):
+    def predict(self, dataset : Dataset | Batcher | dict, coords=[], workers=3, seed=None, **kwargs):
         """
         Make predictions with the model.
         
@@ -142,7 +142,7 @@ class Model(BaseModel):
         dataset : The predictions data containing inputs. Dataset
         can be either a Dataset, StructuredDataset, Batcher, or dict.
         
-        labels: The names/keys of additional features to include in the output.
+        coords: The names/keys of additional features to include in the output.
         The keys must be contained in dataset along with the input.
         
         workers (optional): Number of workers to use when creating a batcher unless a 
@@ -166,14 +166,14 @@ class Model(BaseModel):
             if k not in kwargs:
                 kwargs[k] = v
                 
-        # Make sure labels is a list
-        if isinstance(labels,str):
-            labels = [labels]
+        # Make sure coords is a list
+        if isinstance(coords,str):
+            coords = [coords]
         
         # Prediction Batcher
         batch_kwargs = {
             'batch_size' : kwargs ['batch_size'],
-            'features'   : labels + list(self.inputs),
+            'features'   : coords + list(self.inputs),
             'workers'    : workers,
             'shuffle'    : False,
             'seed'       : seed
@@ -188,10 +188,10 @@ class Model(BaseModel):
         for i in range(steps):
             batch = next(batcher)
             # Pop out auxillary outputs
-            if labels: lbls = {i : batch.pop(i) for i in labels} 
+            if coords: lbls = {i : batch.pop(i) for i in coords} 
             pred_batch = self.model.predict(batch, **kwargs)
-            # Add additional labels
-            if labels:
+            # Add additional coords
+            if coords:
                 for k,v in lbls.items(): pred_batch[k] = v
                 
             if pred:
