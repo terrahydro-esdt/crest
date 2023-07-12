@@ -5,6 +5,7 @@ from ..data.Batcher import Batcher
 from tensorflow.keras import Input
 from tensorflow.keras import Model as KerasModel
 from numpy import concatenate
+from contextlib import nullcontext
 
 
 class Model(BaseModel):
@@ -130,7 +131,8 @@ class Model(BaseModel):
             
             kwargs['validation_data'] = self._make_batcher(kwargs['validation_data'],**valid_kwargs)
 
-        self.model.fit(training_batcher,**kwargs)
+        with training_batcher as data, kwargs.get('validation_data',nullcontext()):
+            self.model.fit(data,**kwargs)
 
     def predict(self, dataset : Dataset | Batcher | dict, coords=[], workers=3, seed=None, **kwargs):
         """
@@ -184,22 +186,22 @@ class Model(BaseModel):
         # Make prediction using Keras.predict()
         pred = []
         lbls = []
-        steps = kwargs.pop('steps')
-        for i in range(steps):
-            batch = next(batcher)
-            # Pop out auxillary outputs
-            if coords: lbls = {i : batch.pop(i) for i in coords} 
-            pred_batch = self.model.predict(batch, **kwargs)
-            # Add additional coords
-            if coords:
-                for k,v in lbls.items(): pred_batch[k] = v
+        with batcher as data:
+            steps = kwargs.pop('steps')
+            for i in range(steps):
+                batch = next(data)
+                # Pop out auxillary outputs
+                if coords: lbls = {i : batch.pop(i) for i in coords} 
+                pred_batch = self.model.predict(batch, **kwargs)
+                # Add additional coords
+                if coords:
+                    for k,v in lbls.items(): pred_batch[k] = v
                 
-            if pred:
-                for key in pred_batch.keys():
-                    pred[key] = concatenate([pred[key],pred_batch[key]])
-            if not pred: 
-                pred = pred_batch
-                         
+                if pred:
+                    for key in pred_batch.keys():
+                        pred[key] = concatenate([pred[key],pred_batch[key]])
+                if not pred: 
+                    pred = pred_batch               
         return pred
 
     def evaluate(self, dataset : Dataset | Batcher | StructuredDataset | dict, workers=3, seed=None, **kwargs):
@@ -243,4 +245,5 @@ class Model(BaseModel):
          }
             
         batcher = self._make_batcher(dataset,**batch_kwargs)
-        return self.model.evaluate(batcher, **kwargs)
+        with batcher as data:
+            return self.model.evaluate(data, **kwargs)
