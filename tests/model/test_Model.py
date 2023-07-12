@@ -75,3 +75,5 @@ def test_Model():
     using_dict = model.evaluate({'x' : x, 'y' : y},**pred_kwargs)
     assert(using_ds == using_dict)
 
+    bs.close()
+
