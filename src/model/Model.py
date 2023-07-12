@@ -28,7 +28,7 @@ class Model(BaseModel):
                        None for k,v in self.TensorGraph.inputs.items()}
         self.outputs = self.TensorGraph(self.inputs)
         
-    def _make_batcher(self,dataset,**kwargs):
+    def _make_batcher(self,dataset,**kwargs) -> Batcher:
         """
         Makes a Batcher 
         
@@ -71,7 +71,7 @@ class Model(BaseModel):
         self.model = KerasModel(inputs=self.inputs, outputs=self.outputs)
         self.model.compile(**kwargs)
 
-    def fit(self, dataset : Dataset | Batcher | StructuredDataset, workers=3, seed=None, **kwargs):
+    def fit(self, dataset : Dataset | Batcher | StructuredDataset, **kwargs):
         """
         Fit the Model.
         
@@ -80,12 +80,6 @@ class Model(BaseModel):
         
         dataset : The training data containing both inputs and targets. Dataset
         can be either a Dataset, StructuredDataset, Batcher, or dict.
-        
-        workers (optional): Number of workers to use when creating a batcher unless a 
-        Batcher is passed for dataset.
-        
-        seed (optional): Seed to use when creating a batcher unless a 
-        Batcher is passed for dataset.
         
         kwargs : Keyword args for the fitter. Currently, can be any keyword args
         accepted by Keras.fit().
@@ -107,10 +101,8 @@ class Model(BaseModel):
         train_kwargs = {
             'batch_size' : kwargs['batch_size'],
             'features'   : [list(self.inputs),list(self.outputs)],
-            'workers'    : workers,
             'repeat'     : True,
-            'shuffle'    : kwargs['shuffle'],
-            'seed'       : seed
+            'shuffle'    : kwargs['shuffle']
         }
         
         training_batcher = self._make_batcher(dataset,**train_kwargs)
@@ -124,9 +116,7 @@ class Model(BaseModel):
             valid_kwargs = {
                 'batch_size' : kwargs ['batch_size'],
                 'features'   : [list(self.inputs),list(self.outputs)],
-                'workers'    : workers,
-                'shuffle'    : False,
-                'seed'       : seed
+                'shuffle'    : False
             }
             
             kwargs['validation_data'] = self._make_batcher(kwargs['validation_data'],**valid_kwargs)
@@ -134,24 +124,18 @@ class Model(BaseModel):
         with training_batcher as data, kwargs.get('validation_data',nullcontext()):
             self.model.fit(data,**kwargs)
 
-    def predict(self, dataset : Dataset | Batcher | dict, coords=[], workers=3, seed=None, **kwargs):
+    def predict(self, dataset : Dataset | Batcher | dict, coords=[], **kwargs) -> dict:
         """
         Make predictions with the model.
         
         Parameters
         ----------
         
-        dataset : The predictions data containing inputs. Dataset
+        dataset : The inputs to make predictions on. Dataset
         can be either a Dataset, StructuredDataset, Batcher, or dict.
         
         coords: The names/keys of additional features to include in the output.
         The keys must be contained in dataset along with the input.
-        
-        workers (optional): Number of workers to use when creating a batcher unless a 
-        Batcher is passed for dataset.
-        
-        seed (optional): Seed to use when creating a batcher unless a 
-        Batcher is passed for dataset.
         
         kwargs : Keyword args for prediciton. Currently, can be any keyword args
         accepted by Keras.predict().
@@ -176,9 +160,7 @@ class Model(BaseModel):
         batch_kwargs = {
             'batch_size' : kwargs ['batch_size'],
             'features'   : coords + list(self.inputs),
-            'workers'    : workers,
-            'shuffle'    : False,
-            'seed'       : seed
+            'shuffle'    : False
         }
         
         batcher = self._make_batcher(dataset,**batch_kwargs)
@@ -204,7 +186,7 @@ class Model(BaseModel):
                     pred = pred_batch               
         return pred
 
-    def evaluate(self, dataset : Dataset | Batcher | StructuredDataset | dict, workers=3, seed=None, **kwargs):
+    def evaluate(self, dataset : Dataset | Batcher | StructuredDataset | dict, **kwargs) -> dict:
         """
         Evaluate the performance of the fitter
         
@@ -213,12 +195,6 @@ class Model(BaseModel):
         
         dataset : The dataset containing inputs and outputs. Dataset
         can be either a Dataset, StructuredDataset, Batcher, or dict.
-        
-        workers (optional): Number of workers to use when creating a batcher unless a 
-        Batcher is passed for dataset.
-        
-        seed (optional): Seed to use when creating a batcher unless a 
-        Batcher is passed for dataset.
         
         kwargs : Keyword args for evaluation. Currently, can be any keyword args
         accepted by Keras.evaluate().
@@ -239,9 +215,7 @@ class Model(BaseModel):
         batch_kwargs = {
             'batch_size' : kwargs['batch_size'],
             'features'   : [list(self.inputs),list(self.outputs)],
-            'workers'    : workers,
-            'shuffle'    : False,
-            'seed'       : seed
+            'shuffle'    : False
          }
             
         batcher = self._make_batcher(dataset,**batch_kwargs)
