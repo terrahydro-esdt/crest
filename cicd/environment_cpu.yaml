@@ -12,7 +12,7 @@ dependencies:
   - tqdm=4.64.1
   - zarr=2.13.3
   - pandas=1.5.3
-  - numpy=1.23.5
+  - numpy=1.21.6
   - fsspec=2023.3.0
   - xarray[parallel]=2022.11.0
   - networkx=3.1
@@ -22,7 +22,15 @@ dependencies:
   - cloudpickle=2.0.0
   - sparse=0.14.0
   - ipywidgets=7.7.1
+  - pyarrow=11.0.0
+
+  # FAISS
+  # - pytorch
+  # - faiss-cpu=1.7.4
+  # - mkl=2021
+  # - blas=1.0=mkl
 
   # Specify conda-forge directly where necessary
   - conda-forge::scikit-learn=1.2.1
+  - conda-forge::polars=0.18.8
   # - conda-forge::awkward-2.2.1

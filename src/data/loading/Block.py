@@ -63,7 +63,7 @@ class Block(BaseAbstract):
         dims          : Collection[str],
         original_dims : Collection,
         resolution    : Collection[Number],
-        window_depth  : dict[str, np.ndarray[Int]] = {},
+        window_depth  : dict[str, np.ndarray] = {},#dict[str, np.ndarray[Int]] = {},
         valid_percent : dict[tuple[str], Number]   = {},
         invalid_value : Collection[object]         = [],
         block_count   : int                        = 1,
@@ -165,7 +165,7 @@ class Block(BaseAbstract):
 
 
     @cached_property
-    def valid_windows(self) -> np.ndarray[Int]:
+    def valid_windows(self) -> np.ndarray:#[Int]:
         """ Determine indices for all valid sample windows in the block """
         if self.sparse: return self.valid_windows_sparse
 
@@ -317,7 +317,7 @@ class Block(BaseAbstract):
             returned list equals the length of the input `indices`.
 
         """
-        indices = tuple(np.unique([j for i in matches for j in i.ravel()]))
+        indices = tuple(np.unique([j for i in matches for j in getattr(i, 'ravel', lambda: i)()]))
 
         ndims = len(self.dims)
         lower = np.array([self.window_depth[k][0] for k in self.dims])

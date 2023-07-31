@@ -88,7 +88,7 @@ class SampleSet(BaseSet):
         return np.sum(self.n_samples)
 
     
-    def __getitem__(self, idx) -> Sample | np.ndarray[Sample]:
+    def __getitem__(self, idx) -> Sample | np.ndarray:#[Sample]:
         """Performs the lazy cartesian product over data windows.
         
         Notes

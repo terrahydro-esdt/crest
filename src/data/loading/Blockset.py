@@ -51,7 +51,10 @@ class Blockset(BaseSet):
         # is a proxy for the overall coarsest resolution Block, as coarsest
         # resolution could be found in different Blocks when there are multiple
         # dimensions (e.g. Block_1 has coarsest dim_1, and Block_2 with dim_2)
-        self.sort(lambda block: -max(block.resolution))
+        # self.sort(lambda block: -max(block.resolution))
+        self.sort(lambda block: -block.valid_windows.size)
+        # print([b.valid_windows.shape for b in self])
+        
 
         # Find neighbors for the valid window locations within 1/2 the
         # resolution of the reference, using Chebyshev distance (L-inf)
@@ -67,7 +70,8 @@ class Blockset(BaseSet):
 
         # Number of samples in the cartesian product for dataframe divisions
         cartesian = np.prod(counts, axis=0)
-        divisions = np.cumsum(cartesian, dtype='int64')
+        divisions = np.cumsum(cartesian, dtype=counts.dtype)
+        # divisions = np.arange(matches.shape[1], dtype=counts.dtype)
 
         # Combine multiple match sets together into a single SampleSet for 
         # faster processing, with up to 8MB of data per SampleSet
@@ -88,7 +92,7 @@ class Blockset(BaseSet):
             matches   = np.split(matches, partitions[unique_idx], axis=1)
             hist_bins = np.r_[0, boundaries[unique_idx], total]
             cartesian = np.histogram(divisions, hist_bins, weights=cartesian)[0]
-            divisions = np.cumsum(cartesian.copy(), dtype='int64')
+            divisions = np.cumsum(cartesian.copy(), dtype=counts.dtype)
 
         # Otherwise just reshape to mimic having 1 set of matches per SampleSet
         else: matches = matches.T[..., None]
