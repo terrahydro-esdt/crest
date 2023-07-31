@@ -118,7 +118,7 @@ class BaseSet(BaseAbstract):
             return self._wrap(objs_attr)
         
         if not isinstance(objs_attr[0], Delayed):
-            objs_attr = map(dask.delayed, objs_attr)
+            objs_attr = list(map(dask.delayed, objs_attr))
         
         def wrapper(*args, _map=[], _kwmap={}, **kwargs) -> 'BaseSet':
             """ Wrapper function which allows distributing parameters 
@@ -153,6 +153,11 @@ class BaseSet(BaseAbstract):
             - See the BaseSet docstring for examples
 
             """
+            valid = lambda v: len(v) in [0, len(objs_attr)]
+            sizes = [len(v) for v in _map+list(_kwmap.values()) if not valid(v)]
+            assert(len(sizes) == 0), \
+                f'{len(objs_attr)} items in {self}, but {sizes} items passed via _map/_kwmap: {_map} | {_kwmap}'
+
             create_dict = lambda v: dict(zip(_kwmap.keys(), v))
             get_outputs = lambda f, k, *a: f(*(args+a), **(kwargs|k))
 
