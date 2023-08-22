@@ -186,7 +186,7 @@ class Model(BaseModel):
                     pred = pred_batch               
         return pred
 
-    def predict(self, batch: dict, coords=[], **kwargs) -> dict:
+    def predict_on_batch(self, batch: dict, coords=[], **kwargs) -> dict:
         """
         Make predictions with the model.
         
