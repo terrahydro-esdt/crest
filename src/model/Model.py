@@ -186,6 +186,46 @@ class Model(BaseModel):
                     pred = pred_batch               
         return pred
 
+    def predict(self, batch: dict, coords=[], **kwargs) -> dict:
+        """
+        Make predictions with the model.
+        
+        Parameters
+        ----------
+        
+        dataset : The inputs to make predictions on. Dataset is a dictionary.
+        
+        coords: The names/keys of additional features to include in the output.
+        The keys must be contained in dataset along with the input.
+        
+        kwargs : Keyword args for prediciton. Currently, can be any keyword args
+        accepted by Keras.predict().
+        
+        """
+                
+        # Make sure coords is a list
+        if isinstance(coords,str):
+            coords = [coords]
+                
+        # Make prediction using Keras.predict()
+        pred = []
+        lbls = []
+
+        # Pop out auxillary outputs
+        if coords: lbls = {i : batch.pop(i) for i in coords} 
+        pred_batch = self.model.predict_on_batch(batch)
+        # Add additional coords
+        if coords:
+            for k,v in lbls.items(): pred_batch[k] = v
+        
+        if pred:
+            for key in pred_batch.keys():
+                pred[key] = concatenate([pred[key],pred_batch[key]])
+        if not pred: 
+            pred = pred_batch
+            
+        return pred
+
     def evaluate(self, dataset : Dataset | Batcher | StructuredDataset | dict, **kwargs) -> dict:
         """
         Evaluate the performance of the fitter
