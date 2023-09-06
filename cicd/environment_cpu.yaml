@@ -33,5 +33,4 @@ dependencies:
   # Specify conda-forge directly where necessary
   - conda-forge::scikit-learn=1.2.1
   - conda-forge::polars=0.18.8
-  - conda-forge::lambdaJSON=4.3
   # - conda-forge::awkward-2.2.1
