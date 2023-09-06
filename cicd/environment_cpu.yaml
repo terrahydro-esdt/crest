@@ -23,7 +23,6 @@ dependencies:
   - sparse=0.14.0
   - ipywidgets=7.7.1
   - pyarrow=11.0.0
-  - lambdaJSON
 
   # FAISS
   # - pytorch
@@ -34,4 +33,5 @@ dependencies:
   # Specify conda-forge directly where necessary
   - conda-forge::scikit-learn=1.2.1
   - conda-forge::polars=0.18.8
+  - conda-forge::lambdaJSON=4.3
   # - conda-forge::awkward-2.2.1
