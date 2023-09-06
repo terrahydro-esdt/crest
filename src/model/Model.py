@@ -1,11 +1,14 @@
+import traceback
 from .BaseModel import BaseModel,ImproperModelError
 from .TensorGraph import TensorGraph
 from ..data.loading import Dataset,StructuredDataset
 from ..data.Batcher import Batcher
+import tensorflow as tf
 from tensorflow.keras import Input
 from tensorflow.keras import Model as KerasModel
 from numpy import concatenate
 from contextlib import nullcontext
+import numpy as np
 
 
 class Model(BaseModel):
@@ -124,6 +127,7 @@ class Model(BaseModel):
         with training_batcher as data, kwargs.get('validation_data',nullcontext()):
             self.model.fit(data,**kwargs)
 
+    
     def predict(self, dataset : Dataset | Batcher | dict, coords=[], **kwargs) -> dict:
         """
         Make predictions with the model.
@@ -184,6 +188,105 @@ class Model(BaseModel):
                         pred[key] = concatenate([pred[key],pred_batch[key]])
                 if not pred: 
                     pred = pred_batch               
+        return pred
+
+    def predict_exhaust(self, dataset : Dataset | Batcher | dict, coords=[], **kwargs) -> dict:
+        """
+        Make predictions with the model.
+        
+        Parameters
+        ----------
+        
+        dataset : The inputs to make predictions on. Dataset
+        can be either a Dataset, StructuredDataset, Batcher, or dict.
+        
+        coords: The names/keys of additional features to include in the output.
+        The keys must be contained in dataset along with the input.
+        
+        kwargs : Keyword args for prediciton. Currently, can be any keyword args
+        accepted by Keras.predict().
+        
+        """
+
+        # Set default options for kwargs
+        defaults = {
+            'batch_size'  : 1,
+            'steps'       : 1,
+            'exhaust'      : False
+        }
+
+        for k,v in defaults.items():
+            if k not in kwargs:
+                kwargs[k] = v
+                
+        # Make sure coords is a list
+        if isinstance(coords,str):
+            coords = [coords]
+        
+        # Prediction Batcher
+        batch_kwargs = {
+            'batch_size' : kwargs ['batch_size'],
+            'features'   : coords + list(self.inputs),
+            'shuffle'    : False
+        }
+        
+        batcher = self._make_batcher(dataset,**batch_kwargs)
+
+        if (kwargs.get('exhaust') is True) and batcher.repeat:
+            raise ImproperModelError('Cannot exhaust batcher when batcher is set to repeat.')
+        
+        # Make prediction using Keras.predict()
+        with batcher as data:
+            steps = kwargs.pop('steps')
+            exhaust = kwargs.pop('exhaust')
+
+
+            # collect all batches if exhaust is defined true
+            batches = list()
+            if (exhaust):
+                try:
+                    can_next = True
+                    while(can_next):
+                        batch = next(data)
+                        if (batch):
+                            batches.append(batch)
+                            can_next = True
+                        else: 
+                            can_next = False
+
+                except:
+                    pass
+                    # log this stack for later 
+                    # print(traceback.format_exc())
+                    # print('exhausted batcher')
+            else:
+                # collect only the number of batches specified by steps
+                try:
+                    for i in range(steps):
+                        batch = next(data)
+                        batches.append(batch)
+                except:
+                    raise ImproperModelError('Too many steps specified for batcher')
+                
+            pred = []
+            lbls = []
+            for batch in batches:
+                pred_batches = self.model.predict(batch, **kwargs)
+
+                # for each prediction of each batch
+                # Pop out auxillary outputs
+                if coords: lbls = {i : batch.pop(i) for i in coords} 
+                
+                # Add additional coords
+                if coords:
+                    for k,v in lbls.items(): pred_batches[k] = v
+                
+                # build up prediction
+                if pred:
+                    for key in pred_batches.keys():
+                        pred[key] = concatenate([pred[key],pred_batches[key]])
+                if not pred: 
+                    pred = pred_batches              
         return pred
 
     def evaluate(self, dataset : Dataset | Batcher | StructuredDataset | dict, **kwargs) -> dict:
