@@ -23,6 +23,7 @@ dependencies:
   - sparse=0.14.0
   - ipywidgets=7.7.1
   - pyarrow=11.0.0
+  - lambdajson=4.3
 
   # FAISS
   # - pytorch
