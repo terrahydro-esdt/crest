@@ -16,3 +16,4 @@ dependencies:
   - pyvis
   - pydot
   - graphviz
+  - lambdajson
