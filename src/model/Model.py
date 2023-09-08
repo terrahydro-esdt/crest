@@ -219,6 +219,7 @@ class Model(BaseModel):
         # Pop out auxillary outputs
         if coords: lbls = {i : batch.pop(i) for i in coords} 
         pred_batch = self.model.predict_on_batch(batch)
+        
         # Add additional coords
         if coords:
             for k,v in lbls.items(): pred_batch[k] = v
@@ -274,7 +275,7 @@ class Model(BaseModel):
         
         batcher = self._make_batcher(dataset,**batch_kwargs)
 
-        if (kwargs.get('exhaust') is True) and batcher.repeat:
+        if (kwargs.get('exhaust') and batcher.repeat):
             raise ImproperModelError('Cannot exhaust batcher when batcher is set to repeat.')
         
         # Make prediction using Keras.predict()
@@ -282,54 +283,27 @@ class Model(BaseModel):
             steps = kwargs.pop('steps')
             exhaust = kwargs.pop('exhaust')
 
+            # collect all batches if exhaust else collect number of batches specified by steps
+            batches = list(data) if(exhaust) else [batch for _, batch in zip(range(steps), data)]
 
-            # collect all batches if exhaust is defined true
-            batches = list()
-            if (exhaust):
-                try:
-                    can_next = True
-                    while(can_next):
-                        batch = next(data)
-                        if (batch):
-                            batches.append(batch)
-                            can_next = True
-                        else: 
-                            can_next = False
+            # concatenate all batches based on keys
+            batch = {}
+            for k in batches[0].keys():
+                batch[k] = np.concatenate([b[k] for b in batches])
+            
+            # for each prediction of each batch
+            # Pop out auxillary outputs
+            lbls = None
+            if coords: 
+                lbls = {i : batch.pop(i) for i in coords}
 
-                except:
-                    pass
-                    # log this stack for later 
-                    # print(traceback.format_exc())
-                    # print('exhausted batcher')
-            else:
-                # collect only the number of batches specified by steps
-                try:
-                    for i in range(steps):
-                        batch = next(data)
-                        batches.append(batch)
-                except:
-                    raise ImproperModelError('Too many steps specified for batcher')
+            pred_batches = self.model.predict(batch, **kwargs)
                 
-            pred = []
-            lbls = []
-            for batch in batches:
-                pred_batches = self.model.predict(batch, **kwargs)
-
-                # for each prediction of each batch
-                # Pop out auxillary outputs
-                if coords: lbls = {i : batch.pop(i) for i in coords} 
-                
-                # Add additional coords
-                if coords:
-                    for k,v in lbls.items(): pred_batches[k] = v
-                
-                # build up prediction
-                if pred:
-                    for key in pred_batches.keys():
-                        pred[key] = concatenate([pred[key],pred_batches[key]])
-                if not pred: 
-                    pred = pred_batches              
-        return pred
+            if coords:    
+                for k,v in lbls.items(): 
+                    pred_batches[k] = v
+                          
+        return pred_batches
 
 
     def evaluate(self, dataset : Dataset | Batcher | StructuredDataset | dict, **kwargs) -> dict:
