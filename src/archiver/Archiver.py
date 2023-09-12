@@ -41,7 +41,8 @@ class Archiver(BaseAbstract):
         
     datafile_index      : int | None, Optional
         The index of the Datafile to be used as the data_schemer if a 
-        Dataset is specified.
+        Dataset is specified as data_schemer. Default is the Datafile 
+        with the finest resolution.
         
     aggregate_func      : typing.Callable, Optional
         The function to be used as the aggregator of the predicted values
@@ -76,8 +77,7 @@ class Archiver(BaseAbstract):
         not specified.
         
     ValueError
-        If datafile_index is not specified when data_schemer is
-        a Dataset.
+        If datafile_index is out of range.
 
     """
     
@@ -123,13 +123,20 @@ class Archiver(BaseAbstract):
             
             # if the data_schemer is of type Dataset
             if isinstance(self.data_schemer, Dataset):
-            
+                
+                # By default, the Datafile with the finest resolution 
+                # is considered as the data_schemer unless it is defined
+                # by the user
                 if not self.datafile_index:
-                    message = 'datafile_index must be specified when '
-                    message+= 'data_schemer is of type Dataset'
-                    raise ValueError(message)
+                    self.datafile_index = np.argmin([np.prod(df.resolution) for df in self.data_schemer])
+                
                 else:
-                    self.data_schemer = self.data_schemer[self.datafile_index]
+                    if self.datafile_index < 0 and self.datafile_index >= len(self.data_schemer):
+                        message = 'datafile_index is out of range. '
+                        message+= f'The valid range is (0, {len(self.data_schemer)-1})'
+                        raise ValueError(message)
+                    
+                self.data_schemer = self.data_schemer[self.datafile_index]
             
             # convert the features coordinate to separate variables
             self.data_schemer = self.data_schemer.data.to_dataset(dim='features')
