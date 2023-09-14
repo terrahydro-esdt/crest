@@ -131,7 +131,7 @@ class Archiver(BaseAbstract):
                     self.datafile_index = np.argmin([np.prod(df.resolution) for df in self.data_schemer])
                 
                 else:
-                    if self.datafile_index < 0 and self.datafile_index >= len(self.data_schemer):
+                    if self.datafile_index < 0 or self.datafile_index >= len(self.data_schemer):
                         message = 'datafile_index is out of range. '
                         message+= f'The valid range is (0, {len(self.data_schemer)-1})'
                         raise ValueError(message)
