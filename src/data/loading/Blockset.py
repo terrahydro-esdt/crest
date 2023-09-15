@@ -1,4 +1,4 @@
-from collections.abc import Collection
+from collections.abc import Collection, Callable
 from functools import cached_property
 
 import dask.dataframe as dd
@@ -23,8 +23,9 @@ class Blockset(BaseSet):
         crest.src.base.BaseSet for more details.
 
     """
-    def __init__(self, blocks: Collection[Block]):
-        self.container = blocks
+    def __init__(self, blocks: Collection[Block] | Collection[Callable], logger=print):
+        self.container = [getattr(b, '__call__', lambda: b)() for b in blocks]
+        self.logger = logger 
 
         # Set block count for all blocks
         for block in self.container:
@@ -51,14 +52,13 @@ class Blockset(BaseSet):
         # is a proxy for the overall coarsest resolution Block, as coarsest
         # resolution could be found in different Blocks when there are multiple
         # dimensions (e.g. Block_1 has coarsest dim_1, and Block_2 with dim_2)
-        # self.sort(lambda block: -max(block.resolution))
+        # self.sort(lambda block: max(block.resolution))
         self.sort(lambda block: -block.valid_windows.size)
         # print([b.valid_windows.shape for b in self])
         
-
         # Find neighbors for the valid window locations within 1/2 the
         # resolution of the reference, using Chebyshev distance (L-inf)
-        matches, counts = find_neighbors(self.valid_coords, self.resolution, p=np.inf)
+        matches, counts = find_neighbors(self.valid_coords, [b.valid_resolution for b in self], p=np.inf)
 
         # Clean up memory resources that aren't needed beyond this point
         # Not currently used, since the objects in memory will be used
@@ -71,11 +71,11 @@ class Blockset(BaseSet):
         # Number of samples in the cartesian product for dataframe divisions
         cartesian = np.prod(counts, axis=0)
         divisions = np.cumsum(cartesian, dtype=counts.dtype)
-        # divisions = np.arange(matches.shape[1], dtype=counts.dtype)
 
         # Combine multiple match sets together into a single SampleSet for 
-        # faster processing, with up to 8MB of data per SampleSet
-        maxim = 4e6 / self.dtype.itemsize # Can have up to 2x numerator
+        #   faster processing, with up to 20MB of data per SampleSet
+        # This also drastically reduces memory and time used by dd.from_map
+        maxim = 1e7 / self.dtype.itemsize # Can have up to 2x numerator
         total = divisions[-1]
         first = divisions[0]
         n_ele = min(maxim, total)
@@ -96,7 +96,7 @@ class Blockset(BaseSet):
 
         # Otherwise just reshape to mimic having 1 set of matches per SampleSet
         else: matches = matches.T[..., None]
-
+        
         # Create a dask dataframe first, then transform into a dask
         # array, in order to satisfy dask's built in assumptions 
         return dd.from_map(self._parse, matches, **{

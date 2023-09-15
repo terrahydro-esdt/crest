@@ -13,7 +13,8 @@ import sparse
 from crest.src.base import BaseAbstract 
 from crest.src.utils import Stopwatch
 
-
+from dask.diagnostics import Profiler, ResourceProfiler, CacheProfiler
+import pickle as pkl
 
 class Block(BaseAbstract):
     """Class which wraps a dask block. 
@@ -60,9 +61,9 @@ class Block(BaseAbstract):
         data          : da.Array,
         coords        : da.Array,
         mask          : da.Array,
+        resolution    : Collection | da.Array,
         dims          : Collection[str],
         original_dims : Collection,
-        resolution    : Collection[Number],
         window_depth  : dict[str, np.ndarray] = {},#dict[str, np.ndarray[Int]] = {},
         valid_percent : dict[tuple[str], Number]   = {},
         invalid_value : Collection[object]         = [],
@@ -73,7 +74,7 @@ class Block(BaseAbstract):
         self._mask   = mask
         self.dims    = dims
         self.original_dims = original_dims
-        self.resolution    = resolution
+        self._resolution   = resolution
         self.window_depth  = window_depth
         self.valid_percent = valid_percent
         self.invalid_value = invalid_value
@@ -96,6 +97,12 @@ class Block(BaseAbstract):
     def mask(self) -> np.ndarray:
         """ Only compute dask mask array upon first use """
         return self._mask.compute()
+
+
+    @cached_property
+    def resolution(self) -> list:
+        """ Resolutions only need computed when non-uniform """
+        return [getattr(r, 'compute', lambda: r)() for r in self._resolution]
 
 
     @cached_property
@@ -247,15 +254,31 @@ class Block(BaseAbstract):
 
 
     @cached_property
+    def valid_resolution(self) -> np.ndarray:
+        """ Retrieve resolution for the valid location, parsing left/right if necessary """
+        if self.is_uniform: 
+            return self.resolution
+
+        res = [r[v] for r,v in zip(self.resolution, self.valid_windows)]
+        return np.stack(res, axis=1)
+
+
+    @cached_property
     def fast_invalid_check(self):
         """ Quick check to verify there exists any valid data """
         return self.invalid( self._data[..., 0].compute() ).all()
 
 
     @property
-    def sparse(self):
+    def sparse(self) -> bool:
         """ Return True if data is a sparse object """
         return hasattr(type(self._data._meta), 'todense')
+
+
+    @property
+    def is_uniform(self) -> bool:
+        """ Return True if the coordinate grid is uniform """
+        return not isinstance(self._resolution[0], da.Array)
 
 
     def invalid(self, data: np.ndarray | None = None):
@@ -317,27 +340,31 @@ class Block(BaseAbstract):
             returned list equals the length of the input `indices`.
 
         """
-        indices = tuple(np.unique([j for i in matches for j in getattr(i, 'ravel', lambda: i)()]))
+        ravel   = lambda v: getattr(v, 'ravel', lambda: v)()
+        indices = tuple(np.unique([j for i in matches for j in ravel(i)]))
 
-        ndims = len(self.dims)
+        # Create arrays for the left and total window depths
         lower = np.array([self.window_depth[k][0] for k in self.dims])
         total = np.array([self.window_total[k]    for k in self.dims])
+        ndims = len(self.dims)
 
         # Calculate the lower and upper bounds for each window dimension
         center = np.array(self.valid_windows)[:, indices, None]
         center-= lower[:, None, None]
         bounds = [left + np.arange(size) for left, size in zip(center, total)]
 
-        original_dims, features = self.original_dims
-        original_dims = ['features'] + [d for d in original_dims if d != 'features']
+        orig_dims, features = self.original_dims
+        orig_dims = ['features'] + [d for d in orig_dims if d != 'features']
 
+        # Initialize the final result dict with all globally applicable values
         full_dims = self.dims + ['features']
-        dim_order = np.array(list(map(full_dims.index, original_dims))) + 1
+        dim_order = np.array(list(map(full_dims.index, orig_dims))) + 1
         xr_kwargs = {
-            'dims'  : [d for d in original_dims if self.window_total.get(d, 2) > 1],
-            'attrs' : {'resolution': dict(zip(self.dims, self.resolution))},
-            'order' : original_dims,
-        }
+            'dims'  : [d for d in orig_dims if self.window_total.get(d,2) > 1],
+            'order' : orig_dims,
+        } | ({
+            'attrs' : {'resolution': dict(zip(self.dims, self.resolution))}
+        } if self.is_uniform else {})
 
         def expand(axis: int, bound: np.ndarray) -> np.ndarray:
             """ Add dimensions to each bound based on the dim it applies to """
@@ -349,20 +376,25 @@ class Block(BaseAbstract):
 
         def gen_coords(coords: np.ndarray) -> dict[str, np.ndarray]:
             """ Generate a coordinates vector dictionary for xarray """
-            return dict(zip(self.dims, starmap(collapse, enumerate(coords.T)))) | {'features': features}
+            coord_vectors = starmap(collapse, enumerate(coords.T))
+            return dict(zip(self.dims, coord_vectors)) | {'features': features}
 
-        def gen_dataset(data: np.ndarray, coords: np.ndarray):# -> xr.Dataset:
-            """ Generate the xr.Dataset for the given data/coord windows """
+        def gen_xr_dict(data: np.ndarray, coords: np.ndarray) -> dict:
+            """ Generate the xr.Dataset dict for given data/coord windows """
             return xr_kwargs | {'data': data, 'coords': coords}
-            # return xr.DataArray(data, coords, **xr_kwargs).to_dataset('features')
 
         # Expand the bounds so they can be broadcast over the full data/coords
         windows = tuple(starmap(expand, enumerate(bounds, 1)))
         assert(len(windows[0]) == len(indices)), [len(windows), len(indices)]
 
-        # Transpose data to be in the correct order, and extract final windows
-        data    = self.data[windows].transpose((0,)+tuple(dim_order))
-        data    = data.reshape(data.shape[:2] + tuple(s for s in data.shape[2:] if s > 1))
+        # Transpose data to the correct order, and remove dimensions of size 1
+        # Note: SegFault/Access violation here is likely an issue with data
+        #       that is cached on disk; try removing the cache to resolve. 
+        data = self.data[windows].transpose((0,)+tuple(dim_order))
+        keep = tuple(s for s in data.shape[2:] if s > 1)
+        data = data.reshape(data.shape[:2] + keep)
+
+        # Extract final window dictionaries to use for Sample initialization 
         coords  = map(gen_coords, self.coords[windows])
-        windows = dict(zip(indices, map(gen_dataset, data, coords)))
-        return [[windows[i] for i in np.atleast_1d(match)] for match in matches]
+        windows = dict(zip(indices, map(gen_xr_dict, data, coords)))
+        return [[windows[i] for i in np.atleast_1d(idx)] for idx in matches]

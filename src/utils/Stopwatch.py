@@ -97,6 +97,7 @@ class Stopwatch:
         formats : dict[str, dict]     = {}, 
         samples : int = 1,
         delay   : Number = 0,
+        silent  : bool = False,
     ):
         self.prefix  = prefix
         self.logger  = logger 
@@ -104,6 +105,7 @@ class Stopwatch:
         self.formats = formats | {'time' : {'units': 'time', 'divisor': 60}}
         self.samples = samples
         self.delay   = delay 
+        self.silent  = silent
 
         # Time is handled separately to avoid influence by other metrics
         self.timer = timer
@@ -125,7 +127,7 @@ class Stopwatch:
         deltas  = {k: self.finish[k] - self.start[k] for k in self.finish}
         outputs = [self.prefix] if self.prefix else []
         outputs+= ['  '.join([f'{k}={fmt_out(k, v)}' for k,v in deltas.items()])]
-        self.logger(': '.join(map(str, outputs)))
+        if not self.silent: self.logger(': '.join(map(str, outputs)))
 
         Stopwatch.GC_DISABLE -= 1
         if Stopwatch.GC_DISABLE == 0:

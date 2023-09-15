@@ -1,4 +1,6 @@
+from collections import defaultdict as dd
 from functools import partial
+from itertools import zip_longest
 import pytest
 import xarray as xr 
 import numpy as np 
@@ -9,13 +11,13 @@ from .Dataset_config import configs
 
 
 
-def check_outputs(config, expected, update_data=lambda x: x):
+def check_outputs(config, expected, update_data=lambda x: x, norm=True):
     """ Run the given config, and check if outputs match expectations """
     config = config.copy()
-    depths = config.pop('depth')
+    depths = config.pop('depth', [])
     
-    data = update_data( synthetic_data(**config) )
-    dfs  = [Datafile(d, window_depth=wd) for d, wd in zip(data, depths)]
+    data = update_data(synthetic_data(**config) if config else None)
+    dfs  = [Datafile(d, window_depth=wd) for d,wd in zip_longest(data, depths, fillvalue={})]
 
     dataset = Dataset(dfs)
     outputs = dataset.generate_samples()
@@ -26,11 +28,10 @@ def check_outputs(config, expected, update_data=lambda x: x):
     except: pass
 
     for output, expect in zip(outputs.compute(), expected):
-        assert(len(depths) == len(output))
-
-        for out, exp, depth in zip(output, map(tuple, expect), depths):
+        for out, exp, depth in zip_longest(output, map(tuple, expect), depths, fillvalue={}):
+            resolut = getattr(out, 'resolution', dd(lambda: 1)) if norm else dd(lambda: 1)
             get_mid = lambda v, d: (v[d[0]] if isinstance(d, tuple) else v[len(v) // 2]).values.item()
-            get_out = lambda d: round(get_mid(out[d], depth.get(d, 0)) / out.resolution[d], 6)
+            get_out = lambda d: round(get_mid(out[d], depth.get(d, 0)) / resolut[d], 6)
             center  = tuple(map(get_out, out.dims))
             equals  = partial(np.array_equal, equal_nan=True)
             assert(equals(center, exp)), [center, exp]
@@ -143,6 +144,24 @@ def test_two_blocks():
     check_outputs(config, expected)
 
 
+def test_non_uniform():
+    """ Test non-uniform grid matching """
+    def update_data(_):
+        gen_xr = lambda v, c: xr.DataArray(v, coords=c).to_dataset('features')
+        return [gen_xr(np.array([v]).T, {'x':v, 'features':[f'var{i}']})
+                for i, v in enumerate([
+                    [1,          9,     13, 15, 16],
+                    [1, 3, 5, 7, 9, 11, 13, 15],
+                ])]
+
+    config   = {}
+    expected = [ 
+        [[1],[1]],   [[1],[3]],  [[1],[5]],
+        [[9],[5]],   [[9],[7]],  [[9],[9]], [[9],[11]],
+        [[13],[11]], [[13],[13]],
+        [[15],[15]], [[16],[15]],
+    ]
+    check_outputs(config, expected, update_data, norm=False)
 
 """ Unclear how to prevent duplicate matchups in situations like this test,
     without missing some matchups in other situations (like test_1d). 

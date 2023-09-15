@@ -43,7 +43,7 @@ def test_getattr():
     assert(output == expect)
 
     # Test mapping a function with one argument per element
-    output = intset.__add__(_map=[[0, 1, 2, 0, 0, 0]])
+    output = intset + [0, 1, 2, 0, 0, 0]
     expect = [1, 3, 5, 6, 5, 4]
     assert(output == expect)
 
@@ -64,7 +64,7 @@ def test_getattr():
 
 def test_chain():
     # Test chaining functions together
-    output = intset.__add__(1).__mul__(_map=[[2,1,0,0,1,2]])
+    output = (intset + 1) * [2,1,0,0,1,2]
     expect = [4, 3, 0, 0, 6, 10]
     assert(output == expect)
 

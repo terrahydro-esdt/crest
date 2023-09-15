@@ -93,9 +93,12 @@ class ThreadedFunction(set):
         """   
         try: 
             # Wait for capacity in the task set or exit to be signaled
+            loops = 0
             while (not self.exitflag.is_set()) and self.is_full():
-                time.sleep(3) 
-                self.logger.debug(f'Waiting to add more {self.name} tasks')
+                time.sleep(0.5) 
+                if loops % 10 == 0:
+                    self.logger.debug(f'Waiting to add more {self.name} tasks')
+                loops += 1 
 
             # If exit not signaled, submit the job and track its order
             if not self.exitflag.is_set(): 
@@ -104,9 +107,8 @@ class ThreadedFunction(set):
                 self._total += 1
                 self.add(future)
             else: 
-                self.logger.warning(f'Exit signal; closed {self.name} threads')
                 self.close()
-                raise StopIteration()
+                raise StopIteration
 
         except StopIteration: raise
         except Exception as e:
@@ -129,9 +131,11 @@ class ThreadedFunction(set):
 
     def close(self):
         """ Attempt to gracefully clean up the background threads """
-        self.exitflag.set()
-        self._pool.shutdown(wait=False, cancel_futures=True)
-
+        with Stopwatch(f'Finished closing {self.name} pool', self.logger.info):
+            try: self.exitflag.set()
+            except: pass
+            try: self._pool.shutdown(wait=False, cancel_futures=True)
+            except: pass
 
     def _execute(self, *args, **kwargs):
         """ Log any errors which result when calling the function """
@@ -147,3 +151,7 @@ class ThreadedFunction(set):
                 self.logger.error(msg)
                 self.close()
                 raise
+
+        finally: 
+            if self.exitflag.is_set():
+                self.close()

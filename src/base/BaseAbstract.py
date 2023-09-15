@@ -1,7 +1,7 @@
 from functools import wraps
 from itertools import starmap
 from typing import get_args, get_origin, _type_repr
-from typing import Union, Iterator, TypeVar #Generic, _SpecialGenericAlias, _GenericAlias
+from typing import Union, Iterator, Generator, TypeVar #Generic, _SpecialGenericAlias, _GenericAlias
 from types import UnionType #GenericAlias
 from abc import ABCMeta, ABC
 
@@ -15,7 +15,7 @@ def type_repr(val=None, T=None, _maxdepth=4):
     """ Recursive type representation """
     if isinstance(T, str):        return T
     if T is not None:             return _type_repr(T)
-    if isinstance(val, Iterator): val = copy.deepcopy(val)
+    if isinstance(val, Iterator): return type(val)
     container = _type_repr(type(val)).split('.')[-1]
 
     # Recurse on val if it's iterable (and not a str)
@@ -44,8 +44,14 @@ def handle_generic(val, T):
 
 def istype(val, T):
     """ Recursively determine if value matches generic type T """
-    # Ensure Iterators aren't modified, and handle TypeVars
-    if isinstance(val, Iterator): val = copy.deepcopy(val)
+    # Cannot look inside iterators to verify types, as it would exhaust values
+    if isinstance(val, Iterator): 
+        origin = get_origin(T) or T
+        types  = get_args(T)
+        if origin in [Union, UnionType]: 
+            return any(istype(val, T) for T in types)
+        return isinstance(val, origin)
+
     T = handle_generic(val, T)
 
     # Handle a tuple of types
@@ -95,6 +101,9 @@ class EnsureTypes:
         self.cls = cls
         self.f = f 
 
+    def __repr__(self): 
+        return self.cls.__repr__()
+
     def __call__(self, *args, **kwargs):
         """ Wrap the function with an explicit type checker """
         f = self.f
@@ -107,9 +116,7 @@ class EnsureTypes:
         keywords = inspect.getcallargs(f, *args, **kwargs)
 
         def check_type(key, value):
-            # Skip checking iterator return types to avoid deepcopy
-            if isinstance(value, Iterator): return value
-
+            """ Verify types match their annotations """
             if key in f_types and not istype(value, f_types[key]):
                 require = type_repr(T=f_types[key])
                 actual  = type_repr(value)
@@ -123,6 +130,7 @@ class EnsureTypes:
         return check_type('return', f(*args, **kwargs))
 
     def __getattr__(self, attr):
+        """ Pass through attribute lookups to the underlying object """
         if attr == '__call__':
             return self 
         return getattr(self.f, attr)

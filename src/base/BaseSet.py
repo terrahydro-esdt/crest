@@ -1,18 +1,50 @@
 from collections.abc import Collection, Callable, Iterator
 from itertools import zip_longest, starmap
+from functools import partial
 from dask.delayed import Delayed
+from operator import itemgetter
 from typing import TypeVar, Any
 
+import numpy as np
 import dask 
+import operator 
 
 from crest.src.base import BaseAbstract
+from crest.src.base.BaseAbstract import BaseMeta 
 
 
 # Generic representing single type
 T = TypeVar('T')
 
+class AddOperators(BaseMeta):
+    """ Add special operators to the BaseSet (e.g. __add__) """
+    def __init__(cls, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-class BaseSet(BaseAbstract):
+        skip = ['__name__', '__loader__', '__package__'] + dir(cls)
+        for op in dir(operator):
+            if op.startswith('__') and op.endswith('__') and (op not in skip):
+                try:              setattr(cls, op, AddOperators.factory(op))
+                except TypeError: print(f'Failed to set {op}: {e}')
+
+    @staticmethod
+    def factory(name):
+        """ Allow operators to be distributed over the container """
+        def wrapper(self, other=None):
+            method = lambda a,b: getattr(a, name)(b)
+            if other is not None:
+                if isinstance(other, Collection) and (len(other) == len(self)):
+                    result = [method(c, o) for c,o in zip(self, other)]
+                else: result = [method(c, other) for c in self]
+            else: result = [getattr(c, name)() for c in self]
+            assert(not any([r is NotImplemented for r in result]))
+            return self._wrap(result)
+        wrapper.__name__ = name 
+        return wrapper
+
+
+
+class BaseSet(BaseAbstract, metaclass=AddOperators):
     """Class which wraps a set of classes into a single object.
 
     Notes
@@ -87,6 +119,15 @@ class BaseSet(BaseAbstract):
     def __getitem__(self, idx: Any) -> T:
         """ Get an element in the container """
         return self.container[idx]
+    
+
+    def __setitem__(self, idx: Any, val: T) -> None:
+        """ Set an element in the container """
+        self.container[idx] = val
+
+
+    def __array__(self, *args, **kwargs):
+        return np.array(self.container)
 
 
     def _repr_html_(self) -> str:
@@ -110,17 +151,14 @@ class BaseSet(BaseAbstract):
         if attr == 'container': return object.__getattribute__(self, attr)
 
         # Ignore pickle functions to avoid recursion issues
-        if attr in ['__getstate__', '__setstate__']:
+        if attr in ['__getstate__', '__setstate__', '__array_struct__', '__array_interface__']:
             raise AttributeError()
 
         objs_attr = [getattr(obj, attr) for obj in self]
         if not callable(objs_attr[0]): 
             return self._wrap(objs_attr)
         
-        if not isinstance(objs_attr[0], Delayed):
-            objs_attr = list(map(dask.delayed, objs_attr))
-        
-        def wrapper(*args, _map=[], _kwmap={}, **kwargs) -> 'BaseSet':
+        def wrapper(*args, _map=[], _kwmap={}, _delay=True, __objs=objs_attr, **kwargs) -> 'BaseSet':
             """ Wrapper function which allows distributing parameters 
                 over the container objects. 
 
@@ -128,11 +166,11 @@ class BaseSet(BaseAbstract):
             ----------
             *args
                 All unnamed arguments are passed to all container objects.
-            _map : list
+            _map   : list[list]
                 Any parameters passed to _map are distributed over container
                 objects - and so the length of each _map element must equal
                 the number of objects in the container. 
-            _kwmap : dict
+            _kwmap : dict[str, list]
                 Equivalent to _map, but allows using keyword arguments for
                 the distributed parameters. 
             **kwargs
@@ -153,21 +191,31 @@ class BaseSet(BaseAbstract):
             - See the BaseSet docstring for examples
 
             """
-            valid = lambda v: len(v) in [0, len(objs_attr)]
-            sizes = [len(v) for v in _map+list(_kwmap.values()) if not valid(v)]
-            assert(len(sizes) == 0), \
-                f'{len(objs_attr)} items in {self}, but {sizes} items passed via _map/_kwmap: {_map} | {_kwmap}'
+            # Ensure any generators are replaced
+            _map   = [list(m) for m in _map]
+            _kwmap = {k: list(v) for k, v in _kwmap.items()}
+
+            # Check that all passed arguments are the correct length
+            valid = lambda v: len(v) in [0, len(__objs)]
+            items = _map + list(_kwmap.values())
+            assert(all(map(valid, items))), \
+                f'{self} has {len(__objs)} items, but items passed via' + \
+                f' _map/_kwmap had sizes {map(len, items)}: {_map} | {_kwmap}'
 
             create_dict = lambda v: dict(zip(_kwmap.keys(), v))
             get_outputs = lambda f, k, *a: f(*(args+a), **(kwargs|k))
 
+            # Use a delayed call over the functions to compute simultaneously
+            if _delay: __objs = map(dask.delayed, __objs)
+
+            # Distribute arguments over the container objects
             kwdict = map(create_dict, zip(*_kwmap.values()))
             params = map(tuple, [kwdict] + _map)
-            f_args = zip_longest(objs_attr, *params, fillvalue={})
-            output = list(starmap(get_outputs, f_args))
+            f_args = zip_longest(__objs, *params, fillvalue={})
+            output = starmap(get_outputs, f_args)
 
-            if isinstance(output[0], Delayed):
-                output = dask.compute(*output)
+            # Only exhaust the generator if _compute was requested
+            if _delay: output = dask.compute(*output)
             return self._wrap(list(output))
         return wrapper
 
@@ -227,3 +275,26 @@ class BaseSet(BaseAbstract):
             self.order     = new_order
             self.container = container
         return container
+
+
+    @property
+    def ix(self):
+        """ Convenience function to slice container's objects """
+        def getitem(_, i):
+            multi = lambda x: isinstance(x, Collection)
+            if not multi(i): i = [i] * len(self)
+            assert(len(i) == len(self))
+            
+            values = []
+            for j, c in zip(i, self):
+                val = itemgetter(*np.atleast_1d(j))(c)
+                if multi(j) and not multi(val):
+                    val = [val]
+                values.append(val)
+            return self._wrap(values)
+        return type('ix', (object,), {'__getitem__': getitem})()
+
+
+    def map(self, f: Callable):
+        """ Convenience function to map a callable over container's objects """
+        return self._wrap(list(map(f, self)))
