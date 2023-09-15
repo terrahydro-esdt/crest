@@ -1,7 +1,7 @@
 from sklearn.neighbors import BallTree
 from scipy.spatial import KDTree
 from collections.abc import Collection
-from itertools import combinations, product
+from itertools import combinations, product, chain
 from functools import reduce, partial
 
 import numpy as np
@@ -9,6 +9,7 @@ import polars as pl
 import pandas as pd 
 
 from .Stopwatch import Stopwatch 
+from ._bruteforce import bruteforce
 import time
 
 
@@ -154,7 +155,7 @@ def get_indices(
         return KDTree(build, **kd_kwargs).query_ball_point(query, radius, **kwargs)
 
     maxim = np.nanmax(resolutions, axis=0, keepdims=True)
-    shape = lambda c: c.reshape(len(c), -1)
+    shape = lambda c: c[:, None] if c.ndim < 2 else c
     scale = lambda c: c / maxim
 
     # Normalize coordinates and find neighbors within the requested radius
@@ -196,7 +197,7 @@ def implode(table: np.ndarray | pl.DataFrame):
         dtype = table.dtypes[0]
         names = table.columns 
     else:
-        assert(table.shape[0] < table.shape[1]), f'table is likely transposed: {table.shape}'
+        # assert(table.shape[0] <= table.shape[1]), f'table is likely transposed: {table.shape}'
         dtype = getattr(pl, table.dtype.name.title())
         names = [f'col_{i}' for i in range(len(table))]
         table = pl.DataFrame(dict(zip(names, table))).lazy()
@@ -222,10 +223,8 @@ def find_neighbors(
     coordinates : Collection[np.ndarray], 
     resolutions : Collection[np.ndarray] | None = None,
     radius      : float = 0.5,
+    method      : str   = 'brute',
     allow_empty : bool  = False,
-    use_anchor  : bool  = False,
-    use_polars  : bool  = False,
-    use_pandas  : bool  = False,
     use_implode : bool  = False,
     **kwargs,
 ) -> (np.ndarray, np.ndarray):
@@ -234,14 +233,11 @@ def find_neighbors(
     Notes
     -----
     Ordinarily, finding nearest neighbors for multiple sets of coordinate 
-    grids would have combinatorial time complexity. By leveraging BallTrees
-    however, we can reduce that to K*Dlog(N), where K is the number of grids,
-    D is the dimensionality of the grids, and N is the size of the grids. 
-
-    To find nearest neighbors, this method builds N-1 BallTrees and queries
-    each of them using a reference coordinate set (where N=len(coordinates)).
-    The reference coordinate set is the first index in the given collection
-    of coordinates.
+    grids would have combinatorial time complexity. This function implements
+    a variety of methods which are able to utilize structural information 
+    inherent to the grids, in order to reduce the time complexity to 
+    O(K*Dlog(N)); where K is the number of grids, D is the dimensionality 
+    of the grids, and N is the size of the grids.
 
     Parameters
     ----------
@@ -250,36 +246,65 @@ def find_neighbors(
     resolutions : Collection[np.ndarray] | None
         Resolution of the given coordinate locations, which is used
         to normalize the coordinates prior to building the BallTrees.
-        If it is not given, no normalization is used.
+        If it is not given, a resolution of 1 is used for all dimensions.
+        For the `brute` method, resolutions can be a 3d matrix of shape
+        (N, D, 2) - which represents the number of coordinate grids, the
+        dimensionality, and the left and right hand resolution, respectively.
+        This allows non-uniform coordinate spacing, including anisotropic 
+        coordinate systems. 
     radius      : float
         Radius in which points are considered neighbors of a reference point.
+    method      : str
+        Method to use for finding neighbors. Options are:
+        - brute (default)
+            Brute force neighbor search which exploits monotonically increasing
+            coordinate grids. Note that coordinates passed in *must* be 
+            lexicographically sorted within each grid's coordinates, but 
+            generally in CREST this comes for free where finding neighbors 
+            happens. This brute force approach is the only implemented method 
+            which allows grids with non-uniform spacing (rectilinear grids, as
+            well as anisotropic coordinate systems) to be accurately matched. 
+            It should also be at least on par with the speed of other comparable 
+            methods, if not faster - esp. when more grids and/or number of 
+            dimensions are used. Further (relatively significant) optimizations
+            could be made to the method as well, if warranted. 
+        - tree
+            Iteratively build up the matches by combining grids together and
+            extending the coordinate dimensionality. A KDTree is constructed 
+            on each iteration, with the output of one tree being fed into the
+            next such that the coordinates are combined together. This method
+            provides simultaneous grid matching, and can sometimes be faster
+            than `brute` if coordinates are regular grids (uniform spacing). 
+        - polars
+            Use a table inner join to find matches. Slower than using a single
+            anchor, but ensures any returned matches are simultaneously matched
+            across all grids; i.e. [i,j,k] implies A[i] == B[j] == C[k]. Note 
+            that order of returned matches can sometimes vary. 
+        - pandas
+            Same as `polars`, but uses the pandas library instead of polars.
+            In general, `polars` should be preferred since it will produce
+            the same result but operate faster than using `pandas`. 
+        - anchor
+            Builds N-1 BallTrees and queries each of them using a reference 
+            coordinate set (where N=len(coordinates)). The reference 
+            coordinate set is the first index in the given collection of 
+            coordinates. Generally much faster than methods which ensure 
+            matches are simultaneous across all grids, but also returns 
+            many matches which may not be considered actual neighbors; 
+            i.e. [i,j,k] implies A[i] == B[j] and A[i] == C[k], but not 
+            necessarily B[j] == C[k].
     allow_empty : bool
         Whether to allow empty neighbor sets in the results (i.e. all reference
         points are returned, regardless of if there are any neighbors). By
         default, only reference points which have at least one neighbor in 
         all other coordinate sets are returned. Note that this option is only 
         available when `use_anchor=True`; otherwise has no effect.
-    use_anchor  : bool
-        Use the first coordinate grid as the sole anchor, meaning matches are
-        only checked against this single grid. Much faster than the default
-        method of ensuring matches are simultaneous across all grids, but 
-        also returns many matches which may not be considered actual neighbors;
-        i.e. [i,j,k] implies A[i] == B[j] and A[i] == C[k], but not necessarily
-        B[j] == C[k].
-    use_polars  : bool
-        Use a table inner join to find matches. Slower than using a single
-        anchor, but ensures any returned matches are simultaneously matched 
-        across all coordinate grids; i.e. [i,j,k] implies A[i] == B[j] == C[k]. 
-        Note that order of returned matches can sometimes vary. 
-    use_pandas  : bool
-        Same as `use_polars`, but uses the pandas library instead of polars. In
-        general, `use_polars` should be preferred since it will produce the
-        same result but operate faster than using pandas. 
     use_implode : bool
         Condense matches into nested lists rather than returning a flattened
         representation. Takes slightly longer to run, but can significantly
         reduce memory requirements in some cases. See the `implode` method 
         for further details.
+
     **kwargs
         Additional keywords are passed to sklearn.neighbors.BallTree.
 
@@ -337,7 +362,7 @@ def find_neighbors(
         return table, count 
 
     # Single anchor grid, checked against all other grids
-    if use_anchor:
+    if method == 'anchor':
         # Create trees and query against the reference (anchor) grid
         coordinates = product(coordinates[1:], coordinates[:1])
         resolutions = product(resolutions[1:], resolutions[:1])
@@ -357,15 +382,15 @@ def find_neighbors(
             table = table[:, ~empty]
         return table, count
 
-    # Inner join over all combinations of grids (multiple anchors)
-    if use_polars or use_pandas:
+    # [Multiple anchors] Inner join over all combinations of grids
+    if method in ['polars', 'pandas']:
 
         def build_frame(keys, *cs_rs):
             """ Create a dataframe with the names/coordinates/resolutions """
             build_i, query_i = get_matches(*cs_rs, expand=True)
             if use_polars:
                 return pl.DataFrame(dict(zip(keys, [build_i, query_i]))).set_sorted(keys[1]).lazy()
-            return pd.MultiIndex.from_arrays([build_i, query_i], names=keys)#.to_frame().reset_index(drop=True)
+            return pd.MultiIndex.from_arrays([build_i, query_i], names=keys)
 
         # Perform an inner join on matches over all combinations of grids
         indices = list(range(len(coordinates)))
@@ -384,8 +409,8 @@ def find_neighbors(
         elif not use_implode:
             table = table.select(columns).collect().to_numpy().T
 
-    # Extended dimension tree search over all grids (multiple anchors)
-    else:
+    # [Multiple anchors] Extended dimension tree search over all grids
+    elif method == 'tree':
         grids = zip(coordinates, map(np.atleast_1d, resolutions))
         query = next(grids)
 
@@ -408,7 +433,77 @@ def find_neighbors(
 
         table = table.T
 
+    # [Multiple non-uniform grids] Extended dimension brute force search optimized with numba
+    elif method == 'brute':
+        ftype = max([c.dtype for c in coordinates if np.issubdtype(c.dtype, np.floating)] + [np.float32])
 
+        # Format resolutions into (left side, right side) 2D resolution arrays
+        resolutions = list(map(np.atleast_1d, resolutions))
+        for i, res in enumerate(resolutions):
+            c_shp = coordinates[i].shape 
+
+            # Uniform resolution, simply duplicate for left/right side
+            if res.ndim == 1:
+                res = np.tile(res, (2, 1)).T[None]
+                assert(res.shape == (1, c_shp[-1], 2)), [res.shape, c_shp]
+            
+            # Non-uniform resolution, extend to endpoints for left and right
+            elif res.ndim == 2:
+                assert(res.shape[1] == (c_shp[0]-1)), [res.shape, c_shp]
+                res = np.stack([
+                    np.c_[res[:, :1], res].T,
+                    np.c_[res, res[:,-1:]].T,
+                ], axis=-1)
+                assert(res.shape[0] == c_shp[0]), [res.shape, c_shp]
+
+            # Full left/right resolution vectors already provided
+            else: assert(res.shape[0] == c_shp[0]), [res.shape, c_shp]
+            assert(res.shape[-1] == 2), res.shape
+
+            # Place left/right dimension on the first axis
+            res = np.moveaxis(res, -1, 0)
+
+            # Left/right tolerance is half the resolution (plus a small epsilon)
+            resolutions[i] = res.astype(ftype) * radius + 1e-5
+
+        # Create the grids to iterate over and pull out the first query
+        grids = zip([c.astype(ftype) for c in coordinates], resolutions)
+        query = next(grids)
+
+        # Initialize the table of neighbor indices, along with the column order 
+        table = np.arange(len(query[0]), dtype=np.int32)[:, None]
+        order = [0]
+
+        # Find simultaneously matching indices across all grids
+        for i, build in enumerate(grids, 1):
+
+            # Duplicate the next grid to align with the current table
+            build_dup = [np.tile(b, i) for b in build]
+
+            # Order grids so that the one with fewer elements is first (used as the build)
+            min_first = slice(None, None, 1 if len(build[0]) < len(query[0]) else -1) 
+
+            # Extract the build/query coordinates/resolutions
+            b,q,br,qr = chain.from_iterable( zip(*[build_dup, query][min_first]) )
+            
+            # Find the matching indices between the build/query grids
+            # assert((q[np.lexsort(q.T[::-1])] == q).all())#, [q, q[np.lexsort(q.T[::-1])]]
+            # assert((b[np.lexsort(b.T[::-1])] == b).all())#, [b, b[np.lexsort(b.T[::-1])]]
+            b_ix, q_ix = bruteforce(b, q, *br, *qr).T[min_first]
+
+            # Separate the coordinates/resolutions and extract the locations
+            table = np.c_[(b_ix, table[q_ix])[min_first]]
+            order = sum([[i], order][min_first], [])
+
+            # Save time/memory by skipping unnecessary work on the final loop
+            if (i+1) < len(coordinates):
+                _,bqr = (b, q), (br, qr) = list(zip(build, query)) 
+                br_qr = [br[:, b_ix], qr[:, q_ix]] if br.shape[1] > 1 else bqr
+                query = np.c_[(b[b_ix], q[q_ix])[min_first]], np.dstack(br_qr[min_first])
+
+        # Reorder the columns correctly 
+        table = table[:, np.argsort(order)].T
+       
     if use_implode:
         table = implode(table)
         count = np.array([list(map(len, col)) for col in table], dtype=dtype)

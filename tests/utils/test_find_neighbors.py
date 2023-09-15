@@ -101,6 +101,7 @@ def test_1d_radius():
     assert(equal(c,   counts)), readable(c,   counts)
  
 
+""" kwargs not currently used """
 # def test_1d_kwargs():
 #     coords = [
 #         [1, 2, 3],
@@ -122,12 +123,12 @@ def test_2d():
     coords = [
         [[1,1], [1,2], [2,3]],
         [[2,1], [2,2], [3,3]],
-        [[3,1], [3,2], [1,2]],
+        [[1,2], [3,1], [3,2]],
     ]
     expect = [
         [[1]],
         [[1]],
-        [[2]]
+        [[0]]
     ]
     counts = [
         [1],
@@ -138,7 +139,7 @@ def test_2d():
     coords = list(map(make2d, coords))
     expect = np.c_[list(map(make_nested, expect))]
     counts = np.array(counts)
-    out, c = find_neighbors(coords, radius=1)
+    out, c = find_neighbors(coords, radius=1, method='tree')
     assert(equal(out, expect)), readable(out, expect)
     assert(equal(c,   counts)), readable(c,   counts)
 
@@ -147,12 +148,12 @@ def test_2d_chebyshev():
     coords = [
         [[1,1], [1,2], [2,3]],
         [[2,1], [2,2], [3,3]],
-        [[3,1], [3,2], [1,3]],
+        [[1,3], [3,1], [3,2]],
     ]
     expect = [
         [[1], [2],    [2]],
         [[1], [1],    [2]],
-        [[2], [1, 2], [1]],
+        [[0], [0, 2], [2]],
     ]
     counts = [
         [1, 1, 1],
@@ -164,5 +165,28 @@ def test_2d_chebyshev():
     expect = np.c_[list(map(make_nested, expect))]
     counts = np.array(counts)
     out, c = find_neighbors(coords, radius=1, p=np.inf, use_implode=True)
+    assert(equal(out, expect)), readable(out, expect)   
+    assert(equal(c,   counts)), readable(c,   counts)
+
+
+def test_non_uniform():
+    coords = [
+        [1,          9,     13, 15, 16],
+        [1, 3, 5, 7, 9, 11, 13, 15],
+    ]
+    expect = [
+        [0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 4],
+        [0, 1, 2, 2, 3, 4, 5, 5, 6, 7, 7],
+    ]
+    counts = [
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    ]
+
+    coords = list(map(make2d, coords))
+    resolu = [np.diff(c.T) for c in coords]
+    expect = np.c_[list(map(make_nested, expect))]
+    counts = np.array(counts)
+    out, c = find_neighbors(coords, resolu)
     assert(equal(out, expect)), readable(out, expect)   
     assert(equal(c,   counts)), readable(c,   counts)
