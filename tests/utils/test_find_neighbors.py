@@ -190,3 +190,16 @@ def test_non_uniform():
     out, c = find_neighbors(coords, resolu)
     assert(equal(out, expect)), readable(out, expect)   
     assert(equal(c,   counts)), readable(c,   counts)
+
+
+def test_empty():
+    coords = [
+        [1, 9, 13, 15, 16],
+        [18, 19, 20, 21],
+        [1,4,7,10],
+        [-3,-2,-1,0,1,2],
+    ]
+    coords = list(map(make2d, coords))
+    resolu = [np.diff(c.T) for c in coords]
+    result = find_neighbors(coords, resolu)
+    assert(sum(map(np.size, result)) == 0), result 

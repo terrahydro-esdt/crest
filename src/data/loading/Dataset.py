@@ -125,7 +125,6 @@ class Dataset(BaseSet):
             - switch Block coordinate grids to use vectors instead (though perhaps handle both?)
                 - vectors by default for reduced memory usage, but may want to keep dense representation
                   handling in order to allow skewed grids 
-            * add additional tests for fast neighbor / non-uniform grid spacing
             * diagnose changing sample number based on block count
 
         """
@@ -214,10 +213,12 @@ class Dataset(BaseSet):
         # Maximum number of blocks the data could theoretically be split into, 
         # while still maintaining the required number of elements along each 
         # dimension to fulfill the requested window size
-        required = lambda dim, data, size: [len(data[d])//size[d] for d in dim]
-        req_blks = map(required, self.dims, self.data, self.window_total)
-        max_blks = np.min(list(req_blks), axis=0)
-        assert(min(max_blks)), f'Requested window larger than data: {self.shape}'
+        required = lambda d_v, data, size: [np.inf if v else len(data[d])//size[d] for d,v in d_v]
+        data_obj = self.data, self.window_total
+        req_blks = map(required, map(zip, self.dims, self.virtual), *data_obj)
+        max_blks = np.min(list(req_blks), axis=0).astype(int)
+        assert(np.isfinite(max_blks).all()), f'Invalid max block size: {max_blks}'
+        assert(min(max_blks) > 0), f'Requested window larger than data: {self.shape}'
         if verbose: print(self.align('Max valid blocks', max_blks))
 
         # Exponential rounding scheme
@@ -369,8 +370,8 @@ class Dataset(BaseSet):
         # Get the current number of blocks
         chunks  = self.chunks.ix[:-1]
         current = self.numblocks.ix[:-1]
-        blocks  = current[0]
-        assert(all(c == blocks for c in current)), current 
+        blocks  = np.array(current[0])
+        assert(all(((current == blocks) | self.virtual).map(all))), current
 
         # Calculate required overlaps for each Datafile
         max_res = np.nanmax(self.max_resolution, axis=0)
@@ -387,8 +388,6 @@ class Dataset(BaseSet):
         prepped = self.apply_overlap(_map=[overlap])
         blksize = (self.total_bytes / np.prod(blocks)) / 1e6
         element = sum(map(np.prod, [list(map(np.mean, c)) for c in chunks]))
-        eq_blks = lambda blks: all(blk == b for blk, b in zip(blocks, blks))
-        assert(all(map(eq_blks, self.numblocks))), [blocks, self.numblocks]
 
         if verbose: 
             print('\nResults:\n  ' + '\n  '.join([

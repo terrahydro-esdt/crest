@@ -98,7 +98,9 @@ class BaseSet(BaseAbstract, metaclass=AddOperators):
 
     def __eq__(self, other: Any) -> bool:
         """ Check for equality with another container """
-        return self.container == other 
+        if isinstance(other, BaseSet) and len(self) == len(other):
+            return all(a == b for a,b in zip(self, other))
+        return self._wrap([a == other for a in self]) 
 
 
     def __len__(self) -> int:

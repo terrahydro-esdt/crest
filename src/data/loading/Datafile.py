@@ -189,6 +189,12 @@ class Datafile(BaseAbstract):
         return sorted(self._raw_data.coords.keys())
 
 
+    @property
+    def virtual(self) -> np.ndarray:#[bool]:
+        """ Array of flags indicating virtual dimensions """
+        return np.array([d in self._virtual_dims for d in self.dims])
+
+
     @cached_property
     def dtype(self) -> np.dtype:
         """ Create a composite datatype based on shapes of the data windows """
@@ -401,6 +407,7 @@ class Datafile(BaseAbstract):
         is_virtual = lambda dim: dim[0] in self._virtual_dims
         dim_block  = list(zip(self.dims, numblocks))
         self._virtual_dims.update(dict(filter(is_virtual, dim_block)))
+        self._target_blocks = numblocks
 
         numblocks   = [1 if is_virtual([dim]) else n for dim, n in dim_block]
         block_shape = list(zip(numblocks, self.shape))
@@ -450,9 +457,11 @@ class Datafile(BaseAbstract):
         """        
         # Update virtual_dims to track the requested number of blocks
         is_virtual = lambda dim: dim[0] in self._virtual_dims
+        calc_block = lambda s,c: getattr(c, '__len__', lambda: s//c)()
         dim_chunks = zip(self.dims, chunksize)
         dim_block  = zip(self.dims, map(len, map(np.atleast_1d, chunksize)))
         self._virtual_dims.update(dict(filter(is_virtual, dim_block)))
+        self._target_blocks = np.array(list(map(calc_block, self.shape, chunksize)))
 
         chunksize   = [1 if is_virtual([dim]) else n for dim, n in dim_chunks]
         block_shape = list(zip(chunksize, self.shape))
@@ -518,7 +527,7 @@ class Datafile(BaseAbstract):
         """
         # Expected number of blocks, chunk sizes, and dimension shapes
         # Skip the last dimension (features), since that varies by grid
-        blocks = self.dask.numblocks[:-1]
+        blocks = self._target_blocks # self.dask.numblocks[:-1]
         chunks = self.dask.chunks[:-1]
         shapes = self.dask.shape[:-1]
 
@@ -536,7 +545,7 @@ class Datafile(BaseAbstract):
 
         def get_id(index):
             """ Get the block id from the multi-index representation """
-            return np.ravel_multi_index(index, blocks + (1,))
+            return np.ravel_multi_index(index, tuple(blocks) + (1,))
 
         def set_id(array):
             """ Set all values in a block equal to its own block id """
