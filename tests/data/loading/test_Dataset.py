@@ -1,9 +1,11 @@
 from collections import defaultdict as dd
 from functools import partial
 from itertools import zip_longest
-import pytest
+
+import dask.array as da
 import xarray as xr 
 import numpy as np 
+import pytest
 
 from crest.src.data.loading import Dataset, Datafile
 from crest.src.utils import synthetic_data
@@ -162,6 +164,100 @@ def test_non_uniform():
         [[15],[15]], [[16],[15]],
     ]
     check_outputs(config, expected, update_data, norm=False)
+
+
+
+class TestDataset:
+
+    @pytest.fixture(scope='function')
+    def synthetic(self):
+        # Generate synthetic data        
+        dims = [ # shape, chunks
+            [(100, 200, 30), (85,  50, 1)],
+            [( 20,  50,  5), (10,  25, 1)],
+            [(     800,  5), (     40, 1)],
+            [(     200,  3), (    200, 1)],
+            [( 14,  40,  1), ( 8,  25, 1)],
+        ]
+        ext  = [ # extent (min/max)
+            [(1, 25), (0, 60)],
+            [(2, 24), (2, 60)],
+            [         (1, 61)],
+            [         (0, 59)],
+            [(0, 25), (0, 60)],
+        ]
+        data = [da.zeros(shp, chunks=chk, dtype='float32') for shp,chk in dims]
+        keys = ['a', 'b']
+        feat = lambda n, p: [f'var{p}_{i}' for i in range(n)]
+
+        datafiles = [
+            Datafile(xr.DataArray(d, coords={k: np.linspace(*(e+(s,))) 
+                for e, k, s in zip(ex, keys[-len(ex):], shape)
+            } | {'features':feat(shape[-1], i)}).to_dataset('features'),
+        ) for i, (d, ex, (shape, _)) in enumerate(zip(data, ext, dims))]
+        return Dataset(datafiles)
+
+
+    @pytest.fixture(autouse=True)
+    def ensure_dims(self, synthetic):
+        """ Add virtual dimensions """
+        synthetic.ensure_dims( set.union(*map(set, synthetic.dims)) )
+
+
+    def test_ensure_dims(self, synthetic):
+        """ Test adding virtual dimensions """
+        assert((np.array(synthetic.virtual) == np.array([
+            [False, False],
+            [False, False],
+            [ True, False],
+            [ True, False],
+            [False, False],
+        ])).all()), synthetic.virtual
+
+
+    def test_autochunk_min(self, synthetic):
+        """ Test automatically chunking data with small blocksize """
+        synthetic.autochunk(blocksize=1e4, verbose=True)
+        assert((np.array(synthetic.numblocks) == np.array([
+            [14, 40, 30],
+            [14, 40,  5],
+            [ 1, 40,  5],
+            [ 1, 40,  3],
+            [14, 40,  1],
+        ])).all()), synthetic.numblocks
+
+
+    def test_autochunk_mid(self, synthetic):
+        """ Test automatically chunking data with mid blocksize """
+        synthetic.autochunk(blocksize=1e7, verbose=True)
+        assert((np.array(synthetic.numblocks) == np.array([
+            [4, 10, 30],
+            [4, 10,  5],
+            [1, 10,  5],
+            [1, 10,  3],
+            [4, 10,  1],
+        ])).all()), synthetic.numblocks
+
+
+    def test_autochunk_max(self, synthetic):
+        """ Test automatically chunking data with large blocksize """
+        synthetic.autochunk(blocksize=1e16, verbose=True)
+        assert((np.array(synthetic.numblocks) == np.array([
+            [1, 4, 30],
+            [1, 4,  5],
+            [1, 4,  5],
+            [1, 4,  3],
+            [1, 4,  1],
+        ])).all()), synthetic.numblocks
+
+
+    def test_create_blocks(self, synthetic):
+        """ Test creating the Block objects """
+        synthetic.autochunk(blocksize=1e16, verbose=True)
+        blocks = synthetic.create_blocks(verbose=True)
+        assert(len(blocks) == 4), len(blocks)
+
+
 
 """ Unclear how to prevent duplicate matchups in situations like this test,
     without missing some matchups in other situations (like test_1d). 

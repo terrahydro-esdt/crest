@@ -167,33 +167,46 @@ class Batcher:#(BaseAbstract):
 
     def close(self, timeout: Number = 10, origin=''):
         """ Close and delete all thread / process resources """
-        self.info('Called close'+(f' from {origin}' if origin else ''))
-       
+        # Need to wrap _everything_ in try/except since we may be in __del__
+        try: self.info('Called close'+(f' from {origin}' if origin else ''))
+        except: pass
+
         if '_exit_flag' in self.__dict__:
             try:    self._exit_flag.set()
             except: pass
 
         if '_processes' in self.__dict__:
             for job in self._processes:
-                pid  = job.pid 
-                code = job.exitcode
+                try:    pid  = job.pid 
+                except: pid  = 'UNKNOWN' 
+                try:    code = job.exitcode
+                except: code = 'UNKNOWN'
                 try: 
                     # Wait a maximum of `timeout` seconds to join
-                    self.debug(f'Joining pid={pid} (code={code})...')
+                    try: self.debug(f'Joining pid={pid} (code={code})...')
+                    except: pass
                     job.join(timeout)
-                    self.debug(f'Process {pid} was joined successfully')
+                    try: self.debug(f'Process {pid} was joined successfully')
+                    except: pass
                 except:
-                    self.debug(f'Process {pid} needed to be terminated')
-                finally: job.terminate()
-
+                    try: self.debug(f'Process {pid} needed to be terminated')
+                    except: pass
+                finally: 
+                    try: job.terminate()
+                    except: pass
+    
         for key in ['_generator', '_processes', '_queue']:
             if key in self.__dict__:
-                del self.__dict__[key]
+                try:
+                    del self.__dict__[key]
+                except: pass
 
         for key in ['block', 'batch']:
-            task_set = getattr(self, f'_{key}_tasks', None)
-            if task_set is not None: task_set.close()
-
+            try:    
+                task_set = getattr(self, f'_{key}_tasks', None)
+                if task_set is not None: task_set.close()
+            except: pass
+            
 
     @property
     def active_workers(self) -> list[mp.process.BaseProcess]:

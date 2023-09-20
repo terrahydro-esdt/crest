@@ -498,7 +498,15 @@ def find_neighbors(
             # Save time/memory by skipping unnecessary work on the final loop
             if (i+1) < len(coordinates):
                 _,bqr = (b, q), (br, qr) = list(zip(build, query)) 
-                br_qr = [br[:, b_ix], qr[:, q_ix]] if br.shape[1] > 1 else bqr
+
+                # If either grid uses a non-uniform resolution, both need to
+                if max(br.shape[1], qr.shape[1]) > 1:
+                    if br.shape[1] == 1: br = np.tile(br, (1, len(b), 1))
+                    if qr.shape[1] == 1: qr = np.tile(qr, (1, len(q), 1))
+                    br_qr = [br[:, b_ix], qr[:, q_ix]]
+                else: br_qr = bqr
+
+                # Construct the next query set by combining the current two grids
                 query = np.c_[(b[b_ix], q[q_ix])[min_first]], np.dstack(br_qr[min_first])
 
         # Reorder the columns correctly 

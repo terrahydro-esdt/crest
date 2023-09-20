@@ -208,7 +208,7 @@ class Dataset(BaseSet):
         # (inp bytes + (estimated) out bytes) / blocksize = number of blocks
         tgt_block = int(np.ceil(self.total_bytes / blocksize))
         exp_round = lambda n: round(np.exp(n * np.ceil(np.log(tgt_block))))
-        if verbose: print(self.align('Target block total', tgt_block))
+        if verbose: print(self.align('Target block total', f'{tgt_block:,}'))
 
         # Maximum number of blocks the data could theoretically be split into, 
         # while still maintaining the required number of elements along each 
@@ -299,6 +299,10 @@ class Dataset(BaseSet):
         # Otherwise the current number of blocks needs to be decreased along
         # one or more dimensions (which is done by evenly combining existing
         # blocks using their prime factors)
+        # The way this is currently set up will artificially limit the lower
+        # end of block sizes, as only 2,3,5 are used as (single) divisors.
+        # Eventually we need to remove this limit to allow more control over
+        # blocks via blocksize.
         else: 
             for dim in range(len(init)):
                 primefac = [[f for f in [2, 3, 5] if c%f == 0] for c in init]
