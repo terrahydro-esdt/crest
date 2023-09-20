@@ -131,11 +131,17 @@ class ThreadedFunction(set):
 
     def close(self):
         """ Attempt to gracefully clean up the background threads """
-        with Stopwatch(f'Finished closing {self.name} pool', self.logger.info):
+        # Need to wrap _everything_ in try/except since we may be in __del__
+        def exit():
             try: self.exitflag.set()
             except: pass
             try: self._pool.shutdown(wait=False, cancel_futures=True)
-            except: pass
+            except: pass        
+        try:
+            with Stopwatch(f'Finished closing {self.name} pool', self.logger.info):
+                exit()
+        except: exit()
+
 
     def _execute(self, *args, **kwargs):
         """ Log any errors which result when calling the function """

@@ -375,7 +375,7 @@ class Batcher:#(BaseAbstract):
             # Samples is a list of dask.Delayed objects or a crest Dataset
             if hasattr(self.dataset, 'generate_samples'):
                 with Stopwatch('Generated dataset blocks in', self.debug):
-                    blocks = self.dataset.generate_samples(6e7, **{
+                    blocks = self.dataset.generate_samples(6e8, **{
                         'compute' : False, 
                         'verbose' : True, 
                         'logger'  : self.info,
