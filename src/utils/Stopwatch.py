@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from itertools import starmap
 from numbers import Number
 from psutil import Process  
 from math import floor, log10
@@ -73,7 +74,12 @@ class Stopwatch:
     delay   : Number
         Amount of time (in seconds) to wait between function calls when taking
         multiple samples. If `samples` <= 1, this parameter has no effect.  
-
+    silent  : bool
+        If true, calculate the change in metric values but do not log outputs.
+    stop_gc : bool
+        Stops garbage collection while inside the Stopwatch context manager,
+        which can sometimes be useful for getting a more accurate estimate
+        of memory usage.
 
     Examples
     --------
@@ -98,6 +104,7 @@ class Stopwatch:
         samples : int = 1,
         delay   : Number = 0,
         silent  : bool = False,
+        stop_gc : bool = True,
     ):
         self.prefix  = prefix
         self.logger  = logger 
@@ -106,33 +113,51 @@ class Stopwatch:
         self.samples = samples
         self.delay   = delay 
         self.silent  = silent
+        self.stop_gc = stop_gc
 
         # Time is handled separately to avoid influence by other metrics
         self.timer = timer
 
 
     def __enter__(self):
+        """ Begin tracking the requested metrics """
+        if self.stop_gc:
+            Stopwatch.GC_DISABLE += 1
+            gc.disable()
         self.start = {k: self.sample(v) for k,v in self.metrics.items()}
         self.start|= {'time': self.timer()}
-        Stopwatch.GC_DISABLE += 1
-        gc.disable()
         return self 
 
 
     def __exit__(self, *args, **kwargs):
+        """ Finish tracking metrics, calculate deltas, and log if requested """
         self.finish = {'time': self.timer()}
         self.finish|= {k: self.sample(v) for k,v in self.metrics.items()}
+        self.deltas = {k: self.finish[k] - self.start[k] for k in self.finish}
 
-        fmt_out = lambda k, v: self.readable(v, **self.formats.get(k, {}))
-        deltas  = {k: self.finish[k] - self.start[k] for k in self.finish}
-        outputs = [self.prefix] if self.prefix else []
-        outputs+= ['  '.join([f'{k}={fmt_out(k, v)}' for k,v in deltas.items()])]
-        if not self.silent: self.logger(': '.join(map(str, outputs)))
+        # Format the metric delta into the final output string
+        fmt = lambda k,v: f'{k}={self.readable(v, **self.formats.get(k, {}))}'
 
-        Stopwatch.GC_DISABLE -= 1
-        if Stopwatch.GC_DISABLE == 0:
-            gc.enable()
-        assert(Stopwatch.GC_DISABLE >= 0)
+        if not self.silent: 
+            self.logger( ': '.join(
+                ([str(self.prefix)] if self.prefix else []) +
+                ['  '.join(starmap(fmt, self.deltas.items()))]
+            ) )
+
+        if self.stop_gc:
+            Stopwatch.GC_DISABLE -= 1
+            if Stopwatch.GC_DISABLE == 0:
+                gc.enable()
+            assert(Stopwatch.GC_DISABLE >= 0)
+
+
+    def __getitem__(self, key):
+        """ Return the delta value for the requested metric """
+        if hasattr(self, 'deltas'):
+            if key in self.deltas:
+                return self.deltas[key]
+            raise Exception(f'Unknown key "{key}": {list(self.deltas)}')
+        raise Exception('Stopwatch has not yet exited or calculated metrics')
 
 
     @staticmethod

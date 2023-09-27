@@ -136,7 +136,7 @@ class Datafile(BaseAbstract):
         }
 
 
-    def __setstate(self, d):
+    def __setstate__(self, d):
         self.__dict__.update(d)
 
 

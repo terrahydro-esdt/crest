@@ -257,7 +257,7 @@ class Block(BaseAbstract):
     def valid_resolution(self) -> np.ndarray:
         """ Retrieve resolution for the valid location, parsing left/right if necessary """
         if self.is_uniform: 
-            return self.resolution
+            return np.array(self.resolution)
 
         res = [r[v] for r,v in zip(self.resolution, self.valid_windows)]
         return np.stack(res, axis=1)

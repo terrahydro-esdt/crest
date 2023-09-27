@@ -485,11 +485,18 @@ def find_neighbors(
 
             # Extract the build/query coordinates/resolutions
             b,q,br,qr = chain.from_iterable( zip(*[build_dup, query][min_first]) )
-            
+
+            # Drop any all NaN (virtual) columns from the build and query tables
+            na_column = np.isnan(b).all(0) | np.isnan(q).all(0)
+            b,q,br,qr = [arr[..., ~na_column] for arr in [b,q,br,qr]]
+
             # Find the matching indices between the build/query grids
             # assert((q[np.lexsort(q.T[::-1])] == q).all())#, [q, q[np.lexsort(q.T[::-1])]]
             # assert((b[np.lexsort(b.T[::-1])] == b).all())#, [b, b[np.lexsort(b.T[::-1])]]
             b_ix, q_ix = bruteforce(b, q, *br, *qr).T[min_first]
+
+            # If no matches are found, we can immediately return 
+            if min(b_ix.size, q_ix.size) == 0: return (np.empty((0, 0)),) * 2
 
             # Separate the coordinates/resolutions and extract the locations
             table = np.c_[(b_ix, table[q_ix])[min_first]]

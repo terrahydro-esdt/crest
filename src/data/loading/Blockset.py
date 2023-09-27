@@ -54,11 +54,10 @@ class Blockset(BaseSet):
         # dimensions (e.g. Block_1 has coarsest dim_1, and Block_2 with dim_2)
         # self.sort(lambda block: max(block.resolution))
         self.sort(lambda block: -block.valid_windows.size)
-        # print([b.valid_windows.shape for b in self])
         
-        # Find neighbors for the valid window locations within 1/2 the
-        # resolution of the reference, using Chebyshev distance (L-inf)
-        matches, counts = find_neighbors(self.valid_coords, [b.valid_resolution for b in self], p=np.inf)
+        # Find neighboring points between coordinate grids for the valid window
+        # locations, within the resolution tolerances provided
+        matches, counts = find_neighbors(self.valid_coords, self.valid_resolution)
 
         # Clean up memory resources that aren't needed beyond this point
         # Not currently used, since the objects in memory will be used
