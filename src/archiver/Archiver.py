@@ -70,14 +70,9 @@ class Archiver(BaseAbstract):
     Raises
     ------
     ValueError
-        If the dataset located at the output_path has no variables.
-    
-    ValueError
-        If output_path does not exist and the data_schemer is
-        not specified.
-        
-    ValueError
-        If datafile_index is out of range.
+        - If the dataset located at the output_path has no variables.
+        - If output_path does not exist and the data_schemer is not specified.
+        - If datafile_index is out of range.
 
     """
     
