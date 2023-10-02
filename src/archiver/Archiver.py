@@ -10,7 +10,6 @@ from crest.src.base import BaseAbstract
 from crest.src.data.loading.Dataset import Dataset
 from crest.src.data.loading.Datafile import Datafile
 
-_DEFAULT_AGG_FUN = lambda x: np.mean(x, axis=0)
 
 class Archiver(BaseAbstract):
     
@@ -80,7 +79,8 @@ class Archiver(BaseAbstract):
                  output_path: str | Path,
                  data_schemer: Datafile | Dataset | None = None,
                  datafile_index: int | None = None,
-                 aggregate_func: typing.Callable = _DEFAULT_AGG_FUN,
+                 aggregate_func: typing.Callable = lambda x: np.mean(x, axis=0)
+,
                  exact_coord_match: bool = False,
                  **kwargs
                  ):
