@@ -67,6 +67,9 @@ class NetworkXGraph(BaseGraph):
     @property
     def is_directed_acyclic_graph(self):
          return nx.is_directed_acyclic_graph(self.graph)
+    
+    def is_isomorphic(self, other_graph):
+        return nx.is_isomorphic(self.graph, other_graph)
 
     @property
     def adj(self):
