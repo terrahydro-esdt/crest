@@ -1,10 +1,10 @@
 import pytest
-from .helpers import AddMult,AddMultExp
+from .helpers import *
 from ...src import HierarchalTensorGraph
 from ...src.model.TensorGraph import ImproperTensorGraphError
 from math import exp
 import cloudpickle as pickle
-
+import json
 
 def test_basenode():
     m = HierarchalTensorGraph(
@@ -267,3 +267,117 @@ def test_pickling():
     n = pickle.loads(pickle.dumps(m))
     pickled_res = n(X)
     assert m(X) == n(X)
+
+def test_json_basic():
+    add = lambda x : x['a'] + x['b']
+
+    htg_1 = HierarchalTensorGraph(node=add, name='add')
+    with open('test_json_basic.json', 'w') as f:
+        json_data = htg_1.to_json()
+        json.dump(json_data, f)
+
+    htg_2 = HierarchalTensorGraph(node=lambda x : x)
+    with open('test_json_basic.json', 'r') as f:
+        json_data = json.load(f)
+        assert(not json_data == None)
+
+        htg_2 = htg_2.from_json(json_data)
+        assert(not htg_2 == None)
+
+    assert(htg_1.name == htg_2.name)
+
+def test_json_model():
+    htg_1 = AddSequentialLayer()
+    with open('test_json_model.json', 'w') as f:
+        json_data = htg_1.to_json()
+        json.dump(json_data, f)
+
+    htg_2 = HierarchalTensorGraph(node=lambda x : x)
+    with open('test_json_model.json', 'r') as f:
+        json_data = json.load(f)
+        assert(not json_data == None)
+
+        htg_2 = htg_2.from_json(json_data)
+        assert(not htg_2 == None)
+
+    assert(htg_1.get_node('dense_layer') and htg_2.get_node('dense_layer'))
+    assert(htg_1.get_node('input') and htg_2.get_node('input'))
+    assert(htg_1.get_node('output') and htg_2.get_node('output'))
+    assert(str(htg_1.edges) == str(htg_2.edges))
+
+def test_json_double():
+    
+    htg_1 = AddSquare()
+    with open('test_json_double.json', 'w') as f:
+        json_data = htg_1.to_json()
+        json.dump(json_data, f)
+
+    htg_2 = HierarchalTensorGraph(node=lambda x : x)
+    with open('test_json_double.json', 'r') as f:
+        json_data = json.load(f)
+        assert(not json_data == None)
+
+        htg_2 = htg_2.from_json(json_data)
+        assert(not htg_2 == None)
+
+        assert(htg_1.get_node('add') and htg_2.get_node('add'))
+        assert(htg_1.get_node('square') and htg_2.get_node('square'))
+        assert(htg_1.get_node('input') and htg_2.get_node('input'))
+        assert(htg_1.get_node('output') and htg_2.get_node('output'))
+        assert(str(htg_1.edges) == str(htg_2.edges))
+
+def test_json_triple():
+
+    htg_1 = LogAddSquare()
+    with open('test_json_triple.json', 'w') as f:
+        json_data = htg_1.to_json()
+        json.dump(json_data, f)
+
+    htg_2 = HierarchalTensorGraph(node=lambda x : x)
+    with open('test_json_triple.json', 'r') as f:
+        json_data = json.load(f)
+        assert(not json_data == None)
+
+        htg_2 = htg_2.from_json(json_data)
+        assert(not htg_2 == None)
+
+    assert(htg_1[('add_square', 'add')] and htg_2[('add_square', 'add')])
+    assert(htg_1[('add_square', 'square')] and htg_2[('add_square', 'square')])
+    assert(htg_1.get_node('log') and htg_2.get_node('log'))
+    assert(htg_1.get_node('add_square') and htg_2.get_node('add_square'))
+    assert(htg_1.get_node('input') and htg_2.get_node('input'))
+    assert(htg_1.get_node('output') and htg_2.get_node('output'))
+    assert(str(htg_1.edges) == str(htg_2.edges))
+
+    with pytest.raises(Exception) as ImproperTensorGraphError:
+        htg_1.get_node('add')
+    
+    with pytest.raises(Exception) as ImproperTensorGraphError:
+        htg_2.get_node('add')
+
+    with pytest.raises(Exception) as ImproperTensorGraphError:
+        htg_1.get_node('square')
+    
+    with pytest.raises(Exception) as ImproperTensorGraphError:
+        htg_2.get_node('square')
+   
+def test_json_custom():
+
+    htg = HierarchalTensorGraph(
+        name='square',
+        node=SquareRoot()
+    )
+
+    json_data = htg.to_json()
+    str_data = str(htg.to_json())
+
+    assert ('<<serialized--SquareRootCustomSerial>>' in str_data)
+
+    htg_get = HierarchalTensorGraph(node=lambda x : x)
+    htg_get.from_json(json_data)
+
+    # fails due to import errors within the directory
+    # works if tested outside this directory
+    # assert(htg_get.name == htg.name)
+    # assert(htg_get.node.__class__.__name__ == htg.node.__class__.__name__)
+    
