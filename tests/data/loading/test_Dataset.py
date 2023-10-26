@@ -3,44 +3,44 @@ from functools import partial
 from itertools import zip_longest
 
 import dask.array as da
-import xarray as xr 
-import numpy as np 
+import xarray as xr
+import numpy as np
 import pytest
 
 from crest.src.data.loading import Dataset, Datafile
 from crest.src.utils import synthetic_data
-from .Dataset_config import configs 
+from .Dataset_config import configs
 
 
+import dask # Added for patch with forking error
 
 def check_outputs(config, expected, update_data=lambda x: x, norm=True):
     """ Run the given config, and check if outputs match expectations """
     config = config.copy()
     depths = config.pop('depth', [])
-    
+
     data = update_data(synthetic_data(**config) if config else None)
     dfs  = [Datafile(d, window_depth=wd) for d,wd in zip_longest(data, depths, fillvalue={})]
 
-    dataset = Dataset(dfs)
-    outputs = dataset.generate_samples()
-    
-    try: 
-        for output in outputs.compute():
-            print([list(o.x.to_numpy()) for o in output])
-    except: pass
+    with dask.config.set(scheduler='synchronous'): # Added for patch with forking error
+        dataset = Dataset(dfs)
+        outputs = dataset.generate_samples()
 
-    for output, expect in zip(outputs.compute(), expected):
-        for out, exp, depth in zip_longest(output, map(tuple, expect), depths, fillvalue={}):
-            resolut = getattr(out, 'resolution', dd(lambda: 1)) if norm else dd(lambda: 1)
-            get_mid = lambda v, d: (v[d[0]] if isinstance(d, tuple) else v[len(v) // 2]).values.item()
-            get_out = lambda d: round(get_mid(out[d], depth.get(d, 0)) / resolut[d], 6)
-            center  = tuple(map(get_out, out.dims))
-            equals  = partial(np.array_equal, equal_nan=True)
-            assert(equals(center, exp)), [center, exp]
-        assert(len(output) == len(expect))
-    assert(len(outputs) == len(expected))
+        try:
+            for output in outputs.compute():
+                print([list(o.x.to_numpy()) for o in output])
+        except: pass
 
-
+        for output, expect in zip(outputs.compute(), expected):
+            for out, exp, depth in zip_longest(output, map(tuple, expect), depths, fillvalue={}):
+                resolut = getattr(out, 'resolution', dd(lambda: 1)) if norm else dd(lambda: 1)
+                get_mid = lambda v, d: (v[d[0]] if isinstance(d, tuple) else v[len(v) // 2]).values.item()
+                get_out = lambda d: round(get_mid(out[d], depth.get(d, 0)) / resolut[d], 6)
+                center  = tuple(map(get_out, out.dims))
+                equals  = partial(np.array_equal, equal_nan=True)
+                assert(equals(center, exp)), [center, exp]
+            assert(len(output) == len(expect))
+        assert(len(outputs) == len(expected))
 
 def test_1d():
     """ Three 1d datafiles """
@@ -87,7 +87,7 @@ def test_3d_nan():
     # [var_0],        [0, 1, 2], [0, 1, 2, 3, 4], [0, 1, 2, 3, 4] -> 2x3x3
     expected = [ # time, lat, lon
         [[2, 1, 1],[2, 1, 1]], [[2, 1, 1],[2, 1, 2]], [[2, 1, 1],[2, 1, 3]],
-        [[2, 1, 1],[2, 2, 3]], 
+        [[2, 1, 1],[2, 2, 3]],
         [[2, 1, 1],[2, 3, 3]],
     ]
     check_outputs(configs['3d'], expected, update_data)
@@ -98,7 +98,7 @@ def test_static():
     na = np.nan
     expected = [ # time, lat, lon
         [[1, 1, 1],[na, 2, 1]], [[1, 1, 1],[na, 2, 2]], [[1, 1, 1],[na, 2, 3]],
-        [[1, 1, 1],[na, 3, 1]], [[1, 1, 1],[na, 3, 2]], [[1, 1, 1],[na, 3, 3]], 
+        [[1, 1, 1],[na, 3, 1]], [[1, 1, 1],[na, 3, 2]], [[1, 1, 1],[na, 3, 3]],
         [[2, 1, 1],[na, 2, 1]], [[2, 1, 1],[na, 2, 2]], [[2, 1, 1],[na, 2, 3]],
         [[2, 1, 1],[na, 3, 1]], [[2, 1, 1],[na, 3, 2]], [[2, 1, 1],[na, 3, 3]],
     ]
@@ -157,7 +157,7 @@ def test_non_uniform():
                 ])]
 
     config   = {}
-    expected = [ 
+    expected = [
         [[1],[1]],   [[1],[3]],  [[1],[5]],
         [[9],[5]],   [[9],[7]],  [[9],[9]], [[9],[11]],
         [[13],[11]], [[13],[13]],
@@ -171,7 +171,7 @@ class TestDataset:
 
     @pytest.fixture(scope='function')
     def synthetic(self):
-        # Generate synthetic data        
+        # Generate synthetic data
         dims = [ # shape, chunks
             [(100, 200, 30), (85,  50, 1)],
             [( 20,  50,  5), (10,  25, 1)],
@@ -191,7 +191,7 @@ class TestDataset:
         feat = lambda n, p: [f'var{p}_{i}' for i in range(n)]
 
         datafiles = [
-            Datafile(xr.DataArray(d, coords={k: np.linspace(*(e+(s,))) 
+            Datafile(xr.DataArray(d, coords={k: np.linspace(*(e+(s,)))
                 for e, k, s in zip(ex, keys[-len(ex):], shape)
             } | {'features':feat(shape[-1], i)}).to_dataset('features'),
         ) for i, (d, ex, (shape, _)) in enumerate(zip(data, ext, dims))]
@@ -260,10 +260,10 @@ class TestDataset:
 
 
 """ Unclear how to prevent duplicate matchups in situations like this test,
-    without missing some matchups in other situations (like test_1d). 
+    without missing some matchups in other situations (like test_1d).
 
     It's potentially something along the lines of masking overlapped elements
-    conditional upon the window depth (e.g. depth of (0,2) would mask the 
+    conditional upon the window depth (e.g. depth of (0,2) would mask the
     left and right sides differently) - but uncertain at the moment.
 """
 # def test_two_blocks_double():
