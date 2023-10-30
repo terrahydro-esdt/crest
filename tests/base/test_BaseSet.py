@@ -1,7 +1,7 @@
 import pytest
 import numpy as np 
 
-from crest.src.base import BaseSet
+from crest.base.BaseSet import BaseSet
 
 
 intset  = BaseSet([1,2,3,6,5,4])

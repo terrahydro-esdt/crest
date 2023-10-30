@@ -2,10 +2,11 @@ import pytest
 from tensorflow.keras.layers import Dense, Dropout
 from tensorflow.keras import Sequential
 from tensorflow import TensorSpec
-from ...src.model import HierarchalTensorGraph, Model
+from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
+from crest.model.Model import Model
 import numpy as np
-from ...src.data.loading import StructuredDataset
-from ...src.data import Batcher
+from crest.data.loading.StructuredDataset import StructuredDataset
+from crest.data.Batcher import Batcher
 
 
 def test_Model():

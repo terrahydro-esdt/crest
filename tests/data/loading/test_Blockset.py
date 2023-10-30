@@ -3,7 +3,9 @@ import xarray as xr
 import numpy as np 
 import dask.array as da 
 
-from crest.src.data.loading import Block, Blockset, Sample
+from crest.data.loading.Block import Block
+from crest.data.loading.Blockset import Blockset
+from crest.data.loading.Sample import Sample
 
 
 nan = np.nan 

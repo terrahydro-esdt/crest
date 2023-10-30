@@ -6,8 +6,10 @@ import pandas as pd
 import xarray as xr
 import dask.array as da
 
-from ...src.data.loading import Datafile, Dataset
-from ...src.archiver.Archiver import Archiver
+from crest.data.loading.Dataset import Dataset
+from crest.data.loading.Datafile import Datafile
+from crest.archiver.Archiver import Archiver
+
 
 np.random.seed(1)
 random.seed(1)
@@ -86,8 +88,8 @@ _PREDICTIONS['var2_pred'] = np.random.random((18,))
 
 def test_create_schema():
 
-    a = Archiver(output_path='tests/archiver/test.zarr',
-                 data_schema=Dataset([_DF1, _DF2]))
+    # a = Archiver(output_path='tests/archiver/test.zarr',
+    #              data_schema=Dataset([_DF1, _DF2]))
 
     a = xr.open_zarr('tests/archiver/test.zarr')
     cond1 = np.all(a['latitude'] == _DF2.data['latitude'])

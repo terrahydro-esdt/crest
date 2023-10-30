@@ -1,5 +1,6 @@
-from ...src import HierarchalTensorGraph
+from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
 from math import exp
+
 
 class Adder(HierarchalTensorGraph):
     def __init__(self):

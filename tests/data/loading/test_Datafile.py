@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 import dask
 
-from crest.src.data.loading import Datafile, Blockset
+from crest.data.loading.Blockset import Blockset
+from crest.data.loading.Datafile import Datafile
 
 
 example_coord = [
