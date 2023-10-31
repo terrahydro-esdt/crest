@@ -88,8 +88,8 @@ _PREDICTIONS['var2_pred'] = np.random.random((18,))
 
 def test_create_schema():
 
-    # a = Archiver(output_path='tests/archiver/test.zarr',
-    #              data_schema=Dataset([_DF1, _DF2]))
+    a = Archiver(output_path='tests/archiver/test.zarr',
+                 data_schema=Dataset([_DF1, _DF2]))
 
     a = xr.open_zarr('tests/archiver/test.zarr')
     cond1 = np.all(a['latitude'] == _DF2.data['latitude'])
