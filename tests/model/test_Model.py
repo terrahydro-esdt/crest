@@ -9,7 +9,7 @@ from crest.data.loading.StructuredDataset import StructuredDataset
 from crest.data.Batcher import Batcher
 
 
-@pytest.mark.manual
+@pytest.mark.skip(reason="this should be an integration test")
 def test_Model():
     """ Basic test of model interfaces """
 
