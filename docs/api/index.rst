@@ -6,7 +6,6 @@ The API reference contains detailed descriptions of the CREST classes, functions
 Notes
 -----
 
-- Add special project notes here that you want to communicate to the user.
 
 .. automodule:: crest
    :members:

@@ -7,6 +7,7 @@ channels:
 
 dependencies:
   - python=3.10
+  - ipykernel=6.19
   # Documentation packages
   - sphinx=7.2.5
   - pandoc=3.1.3

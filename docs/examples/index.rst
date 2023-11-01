@@ -1,9 +1,6 @@
 Examples
 =========
 
-All examples are based on Jupyter notebooks that are hosted on GitLab.
-If you want to run the code yourself, you can find the notebooks in the `examples folder <https://gitlab.smce.nasa.gov/astg/terrahydro/production/crest/examples>`__ of the CREST GitLab repository.
-
 | **HTG_overview**
 
 Overview of the CREST Hierarchal Tensor Graph
