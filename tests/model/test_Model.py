@@ -9,7 +9,8 @@ from crest.data.loading.StructuredDataset import StructuredDataset
 from crest.data.Batcher import Batcher
 
 
-@pytest.mark.skip(reason="this should be an integration test")
+# Temporary workaround for Heisenbug:
+@pytest.mark.xfail
 def test_Model():
     """ Basic test of model interfaces """
 
