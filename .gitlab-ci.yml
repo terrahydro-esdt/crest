@@ -1,10 +1,21 @@
 image: continuumio/miniconda3:latest
 
+stages:
+  - unit_tests
+  - deploy
+
 before_script:
     # Switch to using libmamba solver:
     #   https://www.anaconda.com/blog/conda-is-fast-now
     - conda install -n base conda-libmamba-solver -q
     - conda config --set solver libmamba
+
+unit_tests:
+  stage: unit_tests
+  script:
+    - conda env create -f cicd/environment_cpu.yaml -q
+    - source activate crest_cpu
+    - pytest --color=yes tests
 
 pages:
   stage: deploy
@@ -13,15 +24,9 @@ pages:
     - source activate crest_doc
     - pip install --upgrade pip
     - pip install sphinx_rtd_theme
-    - sphinx-build -b html docs public
   artifacts:
     paths:
     - public
-  rules:
-    - if: $CI_COMMIT_REF_NAME == $CI_DEFAULT_BRANCH
-
-test:
-  script:
-    - conda env create -f cicd/environment_cpu.yaml -q
-    - source activate crest_cpu
-    - pytest --color=yes
+  only:
+    - develop
+    - master
