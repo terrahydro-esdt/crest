@@ -3,43 +3,32 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
-
+import datetime
 import sys
 import os
+sys.path.insert(0, os.path.abspath('.'))
 sys.path.insert(0, os.path.abspath('..'))
-sys.path.insert(0, os.path.abspath('../crest'))
 
 # -- Project information -----------------------------------------------------
+about = {}
+with open('../crest/__about__.py', "r") as fp:
+    exec(fp.read(), about)
 project = 'CREST'
-copyright = '2023, Craig Pelissier et. al.'
-author = 'Craig Pelissier et. al.'
-release = '0.1'
+copyright = f'{datetime.datetime.now().year}, Craig Pelissier et. al.'
+release = about["__version__"]
 
 # -- General configuration ---------------------------------------------------
 extensions = [
-    "sphinx.ext.autodoc",
-    "sphinx_autodoc_typehints",
-    "sphinx.ext.doctest",
-    "sphinx.ext.intersphinx",
-    "sphinx.ext.viewcode",
-    # for direct embedding of jupyter notebooks into sphinx docs
-    'nbsphinx',
-    # to be able to include notebooks from outside of the docs folder
-    'nbsphinx_link',
-    # google and numpy doc string support
-    'sphinx.ext.napoleon',  
+    'sphinx.ext.autodoc',  # autodocument
+    'sphinx.ext.napoleon',  # google and numpy doc string support
+    'sphinx.ext.mathjax',  # latex rendering of equations using MathJax
+    'nbsphinx',  # for direct embedding of jupyter notebooks into sphinx docs
+    'nbsphinx_link'  # to be able to include notebooks from outside of the docs folder
 ]
-
-autodoc_default_options = {
-    'members': True,
-    'member-order': 'bysource',
-    'special-members': '__init__',
-    'private-members': False,
-    'undoc-members': False,
-    'inherited-members': False,
-    'show-inheritance': False,
-#    'exclude-members': 'return_parser'
-}
+#    "sphinx_autodoc_typehints",
+#    "sphinx.ext.doctest",
+#    "sphinx.ext.intersphinx",
+#    "sphinx.ext.viewcode",
 
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
@@ -50,8 +39,7 @@ source_suffix = '.rst'
 # The master toctree document.
 master_doc = 'index'
 
-pygments_style = "sphinx"
-
+# Allows to build the docs with a minimal environment without warnings about missing packages
 autodoc_mock_imports = [
     'tensorflow',
     'pytest',
