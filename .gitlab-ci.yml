@@ -24,6 +24,7 @@ pages:
     - source activate crest_doc
     - pip install --upgrade pip
     - pip install sphinx_rtd_theme
+    - sphinx-build -b html docs public
   artifacts:
     paths:
     - public
