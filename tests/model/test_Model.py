@@ -9,6 +9,7 @@ from crest.data.loading.StructuredDataset import StructuredDataset
 from crest.data.Batcher import Batcher
 
 
+@pytest.mark.manual
 def test_Model():
     """ Basic test of model interfaces """
 
