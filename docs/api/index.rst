@@ -3,9 +3,6 @@ API Reference
 
 The API reference contains detailed descriptions of the CREST classes, functions, methods, etc.
 
-Notes
------
-
 
 .. automodule:: crest
    :members:

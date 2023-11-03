@@ -2,7 +2,7 @@ image: continuumio/miniconda3:latest
 
 stages:
   - unit_tests
-  - deploy
+  - pages
 
 before_script:
     # Switch to using libmamba solver:
