@@ -9,6 +9,9 @@ from tensorflow.keras import Model as KerasModel
 from numpy import concatenate
 from contextlib import nullcontext
 import numpy as np
+from keras.callbacks import Callback
+import traceback
+
 
 
 class Model(BaseModel):
@@ -30,6 +33,7 @@ class Model(BaseModel):
         self.inputs = {k : Input(type_spec=v)  if not v is None else 
                        None for k,v in self.TensorGraph.inputs.items()}
         self.outputs = self.TensorGraph(self.inputs)
+        self.metric = Metrics()
         
     def _make_batcher(self,dataset,**kwargs) -> Batcher:
         """
@@ -70,6 +74,12 @@ class Model(BaseModel):
         kwargs : args passed as keras.Model.compile(kwargs)
 
         '''
+
+        # Check kwargs for metrics locally defined
+        if ('metrics' in kwargs):
+            metrics = self.metric.get_callbacks(kwargs['metrics'])
+            kwargs['metrics'] = metrics
+            print(metrics)
 
         self.model = KerasModel(inputs=self.inputs, outputs=self.outputs)
         self.model.compile(**kwargs)
@@ -369,7 +379,7 @@ class Model(BaseModel):
 
         for k,v in defaults.items():
             if k not in kwargs:
-                kwargs[k] = v
+                kwargs[k] = v      
 
         # Evaluation Batcher
         batch_kwargs = {
