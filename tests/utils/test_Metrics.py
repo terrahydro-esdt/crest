@@ -1,5 +1,5 @@
 import pytest
-from crest.utils.Metrics import Metrics
+from crest.crest.utils.Metrics import Metrics
 import numpy as np
 import xarray as xr
 import tensorflow as tf
@@ -194,7 +194,7 @@ def test_pearsonr():
     mcrest = Metrics()
     cmetrics = mcrest.pearsonr(obs, pred)
 
-    assert cmetrics == 1.0
+    assert cmetrics == pytest.approx(1.0)
 
 
 def test_call_keras_metrics():
