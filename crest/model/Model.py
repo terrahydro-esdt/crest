@@ -1,9 +1,9 @@
-from crest.model.BaseModel import BaseModel
-from crest.model.BaseModel import ImproperModelError
-from crest.model.TensorGraph import TensorGraph
-from crest.data.loading.Dataset import Dataset
-from crest.data.loading.StructuredDataset import StructuredDataset
-from crest.data.Batcher import Batcher
+from .BaseModel import BaseModel
+from .BaseModel import ImproperModelError
+from .TensorGraph import TensorGraph
+from ..data.loading.Dataset import Dataset
+from ..data.loading.StructuredDataset import StructuredDataset
+from ..data.Batcher import Batcher
 from tensorflow.keras import Input
 from tensorflow.keras import Model as KerasModel
 from numpy import concatenate

@@ -2,9 +2,9 @@ from collections.abc import Collection
 import xarray as xr
 import numpy as np 
 
-from crest.base.BaseSet import BaseSet
-from crest.utils.partial_product import partial_product
-from crest.data.loading.Sample import Sample
+from ...base.BaseSet import BaseSet
+from ...utils.partial_product import partial_product
+from .Sample import Sample
 
 
 class SampleSet(BaseSet):

@@ -1,4 +1,4 @@
-from crest.model.graphs.NetworkXGraph import NetworkXGraph as graph
+from crest import NetworkXGraph as graph
 
 
 def test_add_node():

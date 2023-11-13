@@ -1,4 +1,4 @@
-from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
+from crest import HierarchalTensorGraph
 from math import exp
 
 

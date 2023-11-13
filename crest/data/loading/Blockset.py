@@ -5,10 +5,10 @@ import dask.dataframe as dd
 import dask.array as da 
 import numpy as np 
 
-from crest.data.loading.Block import Block
-from crest.base.BaseSet import BaseSet
-from crest.utils.find_neighbors import find_neighbors
-from crest.data.loading.SampleSet import SampleSet
+from .Block import Block
+from ...base.BaseSet import BaseSet
+from ...utils.find_neighbors import find_neighbors
+from .SampleSet import SampleSet
 
 
 class Blockset(BaseSet):

@@ -1,4 +1,4 @@
-from crest.model.graphs.BaseGraph import BaseGraph
+from .BaseGraph import BaseGraph
 import networkx as nx
 import copy
 

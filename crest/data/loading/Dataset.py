@@ -12,9 +12,9 @@ import dask.array as da
 import dask
 import io 
 
-from crest.base.BaseSet import BaseSet
-from crest.data.loading.Datafile import Datafile
-from crest.data.loading.Blockset import Blockset
+from ...base.BaseSet import BaseSet
+from .Datafile import Datafile
+from .Blockset import Blockset
 
 
 class Dataset(BaseSet):

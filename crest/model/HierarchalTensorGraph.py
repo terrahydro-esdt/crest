@@ -3,9 +3,9 @@ import networkx as nx
 from copy import deepcopy
 import marshal, base64
 import traceback
-from crest.model.TensorGraph import TensorGraph
-from crest.model.TensorGraph import ImproperTensorGraphError
-from crest.model.graphs.NetworkXGraph import NetworkXGraph
+from .TensorGraph import TensorGraph
+from .TensorGraph import ImproperTensorGraphError
+from .graphs.NetworkXGraph import NetworkXGraph
 from typing import Union
 
 

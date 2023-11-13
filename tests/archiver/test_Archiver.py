@@ -6,9 +6,9 @@ import pandas as pd
 import xarray as xr
 import dask.array as da
 
-from crest.data.loading.Dataset import Dataset
-from crest.data.loading.Datafile import Datafile
-from crest.archiver.Archiver import Archiver
+from crest.crest.data.loading.Dataset import Dataset
+from crest.crest.data.loading.Datafile import Datafile
+from crest.crest.archiver.Archiver import Archiver
 
 
 np.random.seed(1)

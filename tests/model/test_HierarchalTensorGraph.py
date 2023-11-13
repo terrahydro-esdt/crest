@@ -1,9 +1,7 @@
 import pytest
 from .helpers import *
-from tests.model.helpers import AddMult
-from tests.model.helpers import AddMultExp
-from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
-from crest.model.TensorGraph import ImproperTensorGraphError
+from crest import HierarchalTensorGraph
+from crest.crest.model.TensorGraph import ImproperTensorGraphError
 from math import exp
 import cloudpickle as pickle
 import json, os

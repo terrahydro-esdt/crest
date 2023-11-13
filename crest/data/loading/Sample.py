@@ -2,7 +2,7 @@ from collections.abc import Collection, Iterator
 import xarray as xr 
 import numpy as np 
 
-from crest.base import BaseAbstract 
+from ...base.BaseAbstract import BaseAbstract 
 
 
 # Inheriting from BaseAbstract nearly triples the time for loading batches

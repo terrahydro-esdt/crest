@@ -7,8 +7,8 @@ import numpy as np
 import dask 
 import operator 
 
-from crest.base.BaseAbstract import BaseMeta
-from crest.base.BaseAbstract import BaseAbstract
+from .BaseAbstract import BaseMeta
+from .BaseAbstract import BaseAbstract
 
 
 # Generic representing single type

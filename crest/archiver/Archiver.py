@@ -6,9 +6,9 @@ import xarray as xr
 from scipy.spatial import KDTree
 import dask.array as da
 
-from crest.base.BaseAbstract import BaseAbstract
-from crest.data.loading.Dataset import Dataset
-from crest.data.loading.Datafile import Datafile
+from ..base.BaseAbstract import BaseAbstract
+from ..data.loading.Dataset import Dataset
+from ..data.loading.Datafile import Datafile
 
 
 class Archiver(BaseAbstract):

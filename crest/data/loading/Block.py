@@ -9,7 +9,7 @@ import xarray as xr
 import pandas as pd
 import numpy as np 
 
-from crest.base.BaseAbstract import BaseAbstract
+from ...base.BaseAbstract import BaseAbstract
 
 from dask.diagnostics import Profiler, ResourceProfiler, CacheProfiler
 import pickle as pkl

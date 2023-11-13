@@ -2,11 +2,11 @@ import pytest
 from tensorflow.keras.layers import Dense, Dropout
 from tensorflow.keras import Sequential
 from tensorflow import TensorSpec
-from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
-from crest.model.Model import Model
+from crest import HierarchalTensorGraph
+from crest import Model
 import numpy as np
-from crest.data.loading.StructuredDataset import StructuredDataset
-from crest.data.Batcher import Batcher
+from crest.crest.data.loading.StructuredDataset import StructuredDataset
+from crest.crest.data.Batcher import Batcher
 
 
 # Temporary workaround for Heisenbug:

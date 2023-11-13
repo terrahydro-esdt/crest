@@ -12,9 +12,9 @@ import numpy as np
 import zarr
 import math
 
-from crest.base.BaseAbstract import BaseAbstract
-from crest.data.loading.Block import Block
-from crest.data.loading.Blockset import Blockset
+from ...base.BaseAbstract import BaseAbstract
+from .Block import Block
+from .Blockset import Blockset
 
 # Bool type which allows numpy bools as well
 Bool = bool | np.bool_

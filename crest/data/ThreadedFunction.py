@@ -5,7 +5,7 @@ from numbers import Number
 from logging import Logger, getLogger
 import traceback, time
 
-from crest.utils.Stopwatch import Stopwatch
+from ..utils.Stopwatch import Stopwatch
 
 
 class ThreadedFunction(set):

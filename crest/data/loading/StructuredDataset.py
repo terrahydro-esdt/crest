@@ -5,7 +5,7 @@ import numpy as np
 import dask.array as da
 import dask
 
-from crest.data.loading.Sample import Sample
+from .Sample import Sample
 
 
 class StructuredDataset:

@@ -16,12 +16,12 @@ import numpy as np
 import traceback
 import time
 
-from crest.data.loading.Dataset import Dataset
-from crest.data.loading.StructuredDataset import StructuredDataset
-from crest.data.loading.SampleSet import SampleSet
+from .loading.Dataset import Dataset
+from .loading.StructuredDataset import StructuredDataset
+from .loading.SampleSet import SampleSet
 
-from crest.utils.Stopwatch import Stopwatch
-from crest.data.ThreadedFunction import ThreadedFunction
+from ..utils.Stopwatch import Stopwatch
+from .ThreadedFunction import ThreadedFunction
 
 
 class Batcher:

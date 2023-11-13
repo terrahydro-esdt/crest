@@ -3,7 +3,7 @@ import xarray as xr
 import numpy as np 
 import dask.array as da 
 
-from crest.data.loading.Block import Block
+from crest.crest.data.loading.Block import Block
 
 
 nan = np.nan 

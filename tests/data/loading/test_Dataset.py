@@ -7,9 +7,9 @@ import pytest
 import dask # Added for patch with forking error
 import numpy as np
 
-from crest.data.loading.Dataset import Dataset
-from crest.data.loading.Datafile import Datafile
-from crest.utils.synthetic_data import synthetic_data
+from crest.crest.data.loading.Dataset import Dataset
+from crest.crest.data.loading.Datafile import Datafile
+from crest.crest.utils.synthetic_data import synthetic_data
 from .Dataset_config import configs
 
 
