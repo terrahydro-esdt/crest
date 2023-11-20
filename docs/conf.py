@@ -62,6 +62,7 @@ autodoc_mock_imports = [
     'scipy',
     'zarr',
     'psutil',
+    'crest_cpu',
 ]
 
 # -- Options for HTML output -------------------------------------------------
