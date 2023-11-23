@@ -4,6 +4,7 @@ from functools import cached_property
 import numpy as np
 import dask.array as da
 import dask
+import json
 
 from .Sample import Sample
 
@@ -71,7 +72,24 @@ class StructuredDataset:
         state = dict(self.__dict__)
         state.pop('_delayed_blocks', None)
         return state
-
+    
+    def to_json(self) -> str:
+        state = dict(self.__dict__)
+        state.pop('features')
+        state.pop('samples')
+        state['data'] = [i.tolist() for i in state['data']]
+        return json.dumps(state)
+    
+    @staticmethod
+    def from_json(json_string : str) -> "StructuredDataset":
+        state = json.loads(json_string)
+        state['data'] = [np.array(i) for i in state['data']]
+        return StructuredDataset(
+            *state['data'],
+            labels=state['labels'],
+            chunks=state['chunks'],
+            blocks=state['blocks'],
+        )
 
     @cached_property
     def _sample_dict(self) -> list[dict]:
