@@ -21,7 +21,7 @@ def get_memory(priority: list[str] = ['uss', 'vms', 'rss']) -> int:
     int
         Current memory usage.
 
-    .. _Key options:
+    .. _priority options:
         https://psutil.readthedocs.io/en/latest/#psutil.Process.memory_full_info
 
     """
@@ -61,12 +61,16 @@ class Stopwatch:
     metrics : dict[str, Callable]
         A dictionary of any other functions that should be called when entering
         and exiting the context manager, and then the difference logged. The 
-        keys in this dictionary will be used to label when logging.
+        keys in this dictionary will be used to label the logged difference.
+        For example, the metric for change in memory could be defined as::
+
+            {'dMem': (lambda: psutil.Process().memory_full_info().uss)} 
+    
     formats : dict[str, dict]
         A dictionary of keys matching those in `metrics`, and values being the
         keyword arguments for formatting the respective metrics with. Valid 
         keyword arguments are 'units' and 'divisor'; see Stopwatch.readable for
-        docstring.
+        the docstring.
     samples : int
         Number of times to repeatedly call metric functions, in order to obtain
         an averaged value over time. Should be used in combination with the 
@@ -76,23 +80,31 @@ class Stopwatch:
         multiple samples. If `samples` <= 1, this parameter has no effect.  
     silent  : bool
         If true, calculate the change in metric values but do not log outputs.
+        Note that these difference values are stored in `Stopwatch.deltas`, 
+        which can be accessed after the Stopwatch context manager has exited.
     stop_gc : bool
         Stops garbage collection while inside the Stopwatch context manager,
         which can sometimes be useful for getting a more accurate estimate
-        of memory usage.
+        of elapsed time and memory usage.
 
     Examples
     --------
     >>> import time
     >>> with Stopwatch():
     ...   time.sleep(1)
-    1.00 seconds
+    time=1 seconds  dMem=0 B
     >>> with Stopwatch('using time.perf_counter', timer=time.perf_counter):
     ...   time.sleep(1)
-    1.01 seconds
+    using time.perf_couunter: time=1.01 seconds  dMem=0 B
 
     """
+
     GC_DISABLE = 0
+
+    default_fmt = {
+        'time': {'units': 'time'},
+        'dMem': {'units': 'byte'},
+    }
 
     def __init__(self, 
         prefix  : str = '', 
@@ -104,12 +116,12 @@ class Stopwatch:
         samples : int = 1,
         delay   : Number = 0,
         silent  : bool = False,
-        stop_gc : bool = True,
+        stop_gc : bool = False,
     ):
         self.prefix  = prefix
         self.logger  = logger 
-        self.metrics = metrics | {'dMem': get_memory}
-        self.formats = formats | {'time' : {'units': 'time', 'divisor': 60}}
+        self.metrics = {'dMem': memory} | metrics
+        self.formats = self.default_fmt | formats
         self.samples = samples
         self.delay   = delay 
         self.silent  = silent
@@ -121,10 +133,12 @@ class Stopwatch:
 
     def __enter__(self):
         """ Begin tracking the requested metrics """
-        if self.stop_gc:
-            Stopwatch.GC_DISABLE += 1
-            gc.disable()
-        self.start = {k: self.sample(v) for k,v in self.metrics.items()}
+        # Only disable (and later re-enable) the gc if it's currently enabled
+        self.stop_gc &= gc.isenabled()
+        if self.stop_gc: gc.disable()
+
+        # Store the initial values for all metrics, fetching time last
+        self.start = {k: self._sample(v) for k,v in self.metrics.items()}
         self.start|= {'time': self.timer()}
         return self 
 
@@ -132,23 +146,20 @@ class Stopwatch:
     def __exit__(self, *args, **kwargs):
         """ Finish tracking metrics, calculate deltas, and log if requested """
         self.finish = {'time': self.timer()}
-        self.finish|= {k: self.sample(v) for k,v in self.metrics.items()}
+        self.finish|= {k: self._sample(v) for k,v in self.metrics.items()}
         self.deltas = {k: self.finish[k] - self.start[k] for k in self.finish}
+        if self.stop_gc: gc.enable()
 
         # Format the metric delta into the final output string
         fmt = lambda k,v: f'{k}={self.readable(v, **self.formats.get(k, {}))}'
 
         if not self.silent: 
-            self.logger( ': '.join(
+            message = ': '.join(
                 ([str(self.prefix)] if self.prefix else []) +
                 ['  '.join(starmap(fmt, self.deltas.items()))]
-            ) )
-
-        if self.stop_gc:
-            Stopwatch.GC_DISABLE -= 1
-            if Stopwatch.GC_DISABLE == 0:
-                gc.enable()
-            assert(Stopwatch.GC_DISABLE >= 0)
+            )
+            try:    self.logger(message, stacklevel=2)
+            except: self.logger(message)
 
 
     def __getitem__(self, key):
@@ -163,17 +174,19 @@ class Stopwatch:
     @staticmethod
     def readable( 
         value   : Number, 
-        divisor : Number = 1000,
-        units   : str    = 'byte', 
+        units   : str | list[str] = 'size', 
+        divisor : Number | None   = None,
     ) -> str:
-        """Return a string with reasonable rounding and units.
+        """Format a value to have reasonable rounding and units.
         
         Notes
         -----
         Reduces resolution by one decimal place every multiple of 10; e.g.:
-            - [0.1,   1) -> 3 decimal places
-            - [  1,  10) -> 2 decimal places
-            - [ 10, 100) -> 1 decimal place
+
+        - [0.1,   1) -> 3 decimal places
+        - [  1,  10) -> 2 decimal places
+        - [ 10, 100) -> 1 decimal place
+        
         100 onwards it will use 0 decimal places.  
 
         Also attaches units such that the available units list is iterated 
@@ -187,11 +200,13 @@ class Stopwatch:
         ----------
         value   : Number
             The number to get the string representation for.
-        divisor : Number
-            Signifies moving to the next unit when the current number
-            can be completely divided by the divisor. 
-        units   : str
+        units   : str | list[str]
             Units to label the number with; one of ['time', 'byte', 'size'].
+            A custom list of unit strings can also be provided.
+        divisor : Number | None
+            Signifies moving to the next unit when the current number
+            can be completely divided by the divisor. If divisor is None
+            (default) then a value is chosen based on the given units.
 
         Returns
         -------
@@ -199,8 +214,30 @@ class Stopwatch:
             String which rounds the given value to a reasonable
             number of decimal places and attaches the correct units.
         
+        Examples
+        --------
+        >>> Stopwatch.readable(12345)
+        '12.3K'
+        >>> Stopwatch.readable(12345, 'byte')
+        '12.1 KB'
+        >>> Stopwatch.readable(12345, 'time')
+        '206 minutes'
+        >>> Stopwatch.readable(1234.5, 'time')
+        '20.6 minutes'
+        >>> Stopwatch.readable(123.45, 'time')
+        '123 seconds'
+        >>> Stopwatch.readable(123456, 'time')
+        '34.3 hours'
+
         """
-        units = {
+
+        divisor = divisor or {
+            'time' : 60,
+            'byte' : 1024,
+            'size' : 1000,
+        }.get(units if isinstance(units, str) else 'size', 1000)
+
+        units = units if isinstance(units, list) else {
             'time' : [' seconds', ' minutes', ' hours'],
             'byte' : [' B', ' KB', ' MB', ' GB', ' TB'],
             'size' : ['', 'K', 'M', 'G', 'T'],
@@ -221,7 +258,7 @@ class Stopwatch:
         return fmt(value, units)
 
 
-    def sample(self, function: Callable) -> Number:
+    def _sample(self, function: Callable) -> Number:
         """ Average multiple function values with delays in between calls """
         if self.samples > 1:
             call = lambda: sleep(self.delay) or function()

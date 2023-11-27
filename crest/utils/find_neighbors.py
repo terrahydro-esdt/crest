@@ -1,14 +1,20 @@
 from sklearn.neighbors import BallTree
 from scipy.spatial import KDTree
 from collections.abc import Collection
+from contextlib import nullcontext
 from itertools import combinations, product, chain
 from functools import reduce, partial
 
+# Allow bruteforce progress logging if numba_progress available
+try:                from numba_progress import ProgressBar
+except ImportError: ProgressBar = None 
+
 import numpy as np
 import polars as pl
+import pandas as pd 
+import logging 
 
 from ._bruteforce import bruteforce
-import pandas as pd
 
 
 def get_indices(
@@ -64,9 +70,10 @@ def get_indices(
         each element is a collection (list or array) containing indices 
         of `coordinates[0]` (i.e. `build`) that match the element's index. 
         For instance, the return array `[[2], [], [1,4]]` would indicate:
-            - `query[0]` matches `build[2]`
-            - `query[1]` does not match any `build` elements
-            - `query[2]` matches `build[1]` and `build[4]`
+
+        - `query[0]` matches `build[2]`
+        - `query[1]` does not match any `build` elements
+        - `query[2]` matches `build[1]` and `build[4]`
 
         Note that 'matches' in this context means that two points are
         within a distance of `radius` from each other, with the distance
@@ -77,6 +84,7 @@ def get_indices(
         value would be (`[2, 1, 4]`, `[0, 2, 2]`).
 
     """
+
     def concat(array, dtype, count=-1):
         """ Faster version of np.concatenate that does not cause thread
             contention (see https://github.com/numpy/numpy/issues/24252) """
@@ -171,21 +179,23 @@ def get_indices(
     return neighbors
 
 
-def implode(table: np.ndarray | pl.DataFrame):
+def implode(table):#: np.ndarray | pl.DataFrame):
     """Inverse of DataFrame.explode.
 
     Takes a row-expanded representation of data and transforms it into
     a condensed ragged array. For example:
-        >>> a = [ [0, 0, 0],
-        ...       [0, 0, 1],
-        ...       [0, 1, 0],
-        ...       [1, 1, 1] ]
-        >>> implode(a.T)
-        [ [[0], [0], [0,1]],
-          [[0], [1], [0]  ],
-          [[1], [1], [1]  ] ]
+
+    >>> a = [ [0, 0, 0],
+    ...       [0, 0, 1],
+    ...       [0, 1, 0],
+    ...       [1, 1, 1] ]
+    >>> implode(a.T)
+    [ [[0], [0], [0,1]],
+      [[0], [1], [0]  ],
+      [[1], [1], [1]  ] ]
 
     """
+
     # Exclude one name from the full list
     # Groupby all names except one, then concat into a comma-delimited string
     excl = lambda remove: list( set(names) - {remove} )
@@ -207,14 +217,19 @@ def implode(table: np.ndarray | pl.DataFrame):
     # then sort by the first column, parse all columns  
     # into lists of ints, restore original column order,
     # and finally collect and return as a numpy array
-    return ( reduce(join, names[::-1], table)
-        .sort(names)
-        .with_columns(
-            pl.col(names).str.split(',')
-              .cast(pl.List(dtype)))
-        .select(names)
-        .collect().to_numpy().T # Ensure pyarrow installed if error
-    )
+    try:
+        return ( reduce(join, names[::-1], table)
+            .sort(names)
+            .with_columns(
+                pl.col(names).str.split(',')
+                  .cast(pl.List(dtype)))
+            .select(names)
+            .collect().to_numpy().T # Ensure pyarrow installed if error
+        )
+    except: 
+        print('Ensure pyarrow is installed.')
+        raise
+        
 
 
 def find_neighbors(
@@ -224,6 +239,7 @@ def find_neighbors(
     method      : str   = 'brute',
     allow_empty : bool  = False,
     use_implode : bool  = False,
+    logger      : logging.Logger | None = None,
     **kwargs,
 ) -> (np.ndarray, np.ndarray):
     """ Find all nearest neighbors for the given coordinates.
@@ -254,6 +270,7 @@ def find_neighbors(
         Radius in which points are considered neighbors of a reference point.
     method      : str
         Method to use for finding neighbors. Options are:
+
         - brute (default)
             Brute force neighbor search which exploits monotonically increasing
             coordinate grids. Note that coordinates passed in *must* be 
@@ -291,6 +308,7 @@ def find_neighbors(
             many matches which may not be considered actual neighbors; 
             i.e. [i,j,k] implies A[i] == B[j] and A[i] == C[k], but not 
             necessarily B[j] == C[k].
+
     allow_empty : bool
         Whether to allow empty neighbor sets in the results (i.e. all reference
         points are returned, regardless of if there are any neighbors). By
@@ -312,7 +330,8 @@ def find_neighbors(
         A tuple of two arrays: neighbor indices, and neighbor counts.
         Both arrays are shaped [len(coordinates), len(coordinates[0])],
         but neighbor indices (first array) is a ragged object array where 
-        each element is itself a variable length array:
+        each element is itself a variable length array::
+
           [ 
              array(ref grid indices) 
              array([grid 2 indices matching ref grid indices[0]], 
@@ -322,16 +341,23 @@ def find_neighbors(
                    [grid 3 indices matching ref grid indices[1]],
                    [...])
           ]
+
         For example, indices equal to 
+
             [ [[1], [2]],  [[0, 1], [2]],  [[2], [4,5]] ]
+        
         would indicate:
-         - ref_grid[1] matches [grid_2[0], grid_2[1]] and [grid_3[2]]
-         - ref_grid[2] matches [grid_2[2]] and [grid_3[4], grid_3[5]]
+        
+        - ref_grid[1] matches [grid_2[0], grid_2[1]] and [grid_3[2]]
+        - ref_grid[2] matches [grid_2[2]] and [grid_3[4], grid_3[5]]
+        
         Counts (the second array output) is then the length (number of 
         matches) for each coordinate grid neighbor set, i.e. the length
         of each nested ragged array. Using the above example, counts would
-        correspond to:
+        correspond to::
+        
             [[1, 1], [2, 1], [1, 2]]
+        
         as the matches for the ref grid have lengths 1 and 1; for grid_2 
         have lengths 2 and 1; and for grid_3 have lengths 1 and 2. 
 
@@ -386,7 +412,7 @@ def find_neighbors(
         def build_frame(keys, *cs_rs):
             """ Create a dataframe with the names/coordinates/resolutions """
             build_i, query_i = get_matches(*cs_rs, expand=True)
-            if use_polars:
+            if method == 'polars':
                 return pl.DataFrame(dict(zip(keys, [build_i, query_i]))).set_sorted(keys[1]).lazy()
             return pd.MultiIndex.from_arrays([build_i, query_i], names=keys)
 
@@ -397,10 +423,10 @@ def find_neighbors(
         frames  = map(build_frame, *map(pairing, [columns, coordinates, resolutions]))
 
         c_set = lambda df1, df2: list( set(df2.columns) & set(df1.columns) )
-        join  = lambda df1, df2: df1.join(df2, how='inner', **({} if use_pandas else {'on': c_set(df1, df2)}))
+        join  = lambda df1, df2: df1.join(df2, how='inner', **({} if method=='pandas' else {'on': c_set(df1, df2)}))
         table = reduce(join, frames)
 
-        if use_pandas:
+        if method=='pandas':
             table = np.array(table.reorder_levels(columns).to_list(), dtype=dtype).T
        
         # If we're using polars and not imploding, collect the lazy dataframe data
@@ -409,6 +435,10 @@ def find_neighbors(
 
     # [Multiple anchors] Extended dimension tree search over all grids
     elif method == 'tree':
+        resolutions = list(map(np.atleast_1d, resolutions))
+        resolutions = [r[..., 0] if len(r.shape) > 2 else r for r in resolutions]
+        resolutions = [np.nanmean(r, axis=0) if len(r.shape) > 1 else r for r in resolutions]
+
         grids = zip(coordinates, map(np.atleast_1d, resolutions))
         query = next(grids)
 
@@ -419,15 +449,21 @@ def find_neighbors(
         for i, build in enumerate(grids, 1):
             order = slice(None, None, 1 if len(build[0]) > len(query[0]) else -1)
             tiled = [np.tile(b, i) for b in build]
-            cs_rs = zip(*[tiled, query][order])
-            
+
+            # Extract the build/query coordinates/resolutions
+            cs_rs = b,q,br,qr = chain.from_iterable( zip(*[tiled, query][order]) )
+
+            # Drop any all NaN (virtual) columns from the build and query tables
+            na_column = np.isnan(b).all(0) | np.isnan(q).all(0)
+            b,q,br,qr = [arr[..., ~na_column] for arr in [b,q,br,qr]]
+
             # Update the table indices to include the new grid
-            build_ix, query_ix = get_matches(*cs_rs, expand=True)[order]
+            build_ix, query_ix = get_matches([b,q], [br,qr], expand=True)[order]
             (build, query), rs = zip(build, query) 
 
             # Collate the new query values, resolutions, and indices
             table = np.c_[table[query_ix], build_ix]
-            query = np.c_[query[query_ix], build[build_ix]], np.hstack(rs)
+            query = np.c_[query[query_ix], build[build_ix]], np.hstack(rs[::-1])
 
         table = table.T
 
@@ -464,6 +500,14 @@ def find_neighbors(
             # Left/right tolerance is half the resolution (plus a small epsilon)
             resolutions[i] = res.astype(ftype) * radius + 1e-5
 
+        # Optimize column and grid orderings
+        optimizations = True
+        coord_order = list(range(len(coordinates)))
+        if optimizations: 
+            coord_order = np.argsort([float(f'{r.size}.{c.size}') for c,r in zip(coordinates, resolutions)])[::-1]        
+        coordinates = [coordinates[i] for i in coord_order]
+        resolutions = [resolutions[i] for i in coord_order]
+
         # Create the grids to iterate over and pull out the first query
         grids = zip([c.astype(ftype) for c in coordinates], resolutions)
         query = next(grids)
@@ -477,28 +521,82 @@ def find_neighbors(
 
             # Duplicate the next grid to align with the current table
             build_dup = [np.tile(b, i) for b in build]
+            
+            if optimizations:
+                nc = np.isnan(query[0]).all(0)
+                nq = nc.any()
+                na = np.isnan(build[0]).all(0)
+                nb = na.any()
+                if nq and not nb:
+                    min_first = slice(None, None, -1)
+                elif nb and not nq:
+                        min_first = slice(None, None, 1)
+                elif not nb and not nq:
+                    min_first = slice(None, None, 1 if len(build[0]) < len(query[0]) else -1) 
+                else:  
+                    min_first = slice(None, None, 1 if nc.sum() < na.sum() else -1) 
 
             # Order grids so that the one with fewer elements is first (used as the build)
-            min_first = slice(None, None, 1 if len(build[0]) < len(query[0]) else -1) 
+            else: min_first = slice(None, None, 1)
 
             # Extract the build/query coordinates/resolutions
             b,q,br,qr = chain.from_iterable( zip(*[build_dup, query][min_first]) )
 
+            # Reorder the columns
+            if optimizations:
+
+                # Order the columns ascending wrt query unique values, descending wrt build
+                order_dim = []
+                for dim in range(b.shape[1]):
+                    bd = len(np.unique(b[:,dim]))
+                    qd = len(np.unique(q[:,dim]))
+                    # order_dim.append(-qd - float(f'0.{bd}') if min(bd, qd) > 1 else np.inf)
+                    order_dim.append(-bd - float(f'0.{qd}') if min(bd, qd) > 1 else np.inf)
+                order_dim = np.argsort(order_dim)
+ 
+                b = b[:,order_dim]
+                q = q[:,order_dim]
+                bo = np.lexsort(b.T[::-1])
+                qo = np.lexsort(q.T[::-1])
+                b_orig = np.arange(len(b))[bo]
+                q_orig = np.arange(len(q))[qo]
+
+                b = b[bo]
+                q = q[qo]
+                br = (br[:, bo] if br.shape[1] > 1 else br)[..., order_dim]
+                qr = (qr[:, qo] if qr.shape[1] > 1 else qr)[..., order_dim]
+
             # Drop any all NaN (virtual) columns from the build and query tables
-            na_column = np.isnan(b).all(0) | np.isnan(q).all(0)
-            b,q,br,qr = [arr[..., ~na_column] for arr in [b,q,br,qr]]
+            skipdim = np.isnan(b).all(0) | np.isnan(q).all(0)
 
             # Find the matching indices between the build/query grids
-            # assert((q[np.lexsort(q.T[::-1])] == q).all())#, [q, q[np.lexsort(q.T[::-1])]]
-            # assert((b[np.lexsort(b.T[::-1])] == b).all())#, [b, b[np.lexsort(b.T[::-1])]]
-            b_ix, q_ix = bruteforce(b, q, *br, *qr).T[min_first]
+            # assert((q[np.lexsort(q.T[::-1])] == q).all()), [q, q[np.lexsort(q.T[::-1])]]
+            # assert((b[np.lexsort(b.T[::-1])] == b).all()), [b, b[np.lexsort(b.T[::-1])]]
+
+            progress = nullcontext(None)
+            if logger is not None:
+                if ProgressBar is not None:
+                    streamer = StreamToLogger(logger, logging.DEBUG)
+                    progress = ProgressBar(
+                        total=len(b), 
+                        file=streamer, 
+                        update_interval=30, 
+                        dynamic_ncols=False,
+                        notebook=False, 
+                        postfix='find_neighbors progress',
+                    )
+            # progress = ProgressBar(total=0, update_interval=1)
+
+            with progress as pbar:
+                b_ix, q_ix = bruteforce(b, q, *br, *qr, skipdim, pbar).T[min_first]
 
             # If no matches are found, we can immediately return 
             if min(b_ix.size, q_ix.size) == 0: return (np.empty((0, 0)),) * 2
 
-            # Separate the coordinates/resolutions and extract the locations
-            table = np.c_[(b_ix, table[q_ix])[min_first]]
-            order = sum([[i], order][min_first], [])
+            if optimizations:
+                b_orig, q_orig = [b_orig, q_orig][min_first]
+                b_ix = b_orig[b_ix if b_ix.size else b_ix]
+                q_ix = q_orig[q_ix if q_ix.size else q_ix]
 
             # Save time/memory by skipping unnecessary work on the final loop
             if (i+1) < len(coordinates):
@@ -514,9 +612,16 @@ def find_neighbors(
                 # Construct the next query set by combining the current two grids
                 query = np.c_[(b[b_ix], q[q_ix])[min_first]], np.dstack(br_qr[min_first])
 
+            # Separate the coordinates/resolutions and extract the locations
+            table = np.c_[(b_ix, table[q_ix])[min_first]]
+            order = sum([[i], order][min_first], [])
+
         # Reorder the columns correctly 
-        table = table[:, np.argsort(order)].T
-       
+        table = table[:, np.argsort(order)[np.argsort(coord_order)]]
+
+        # Lexigraphic sort to have consistent return order
+        table = table[np.lexsort(table.T[::-1])].T
+
     if use_implode:
         table = implode(table)
         count = np.array([list(map(len, col)) for col in table], dtype=dtype)
@@ -524,3 +629,38 @@ def find_neighbors(
         count = np.ones_like(table, dtype=dtype)
 
     return table, count
+
+
+
+class StreamToLogger:
+    """
+    Fake file-like stream object that redirects writes to a logger instance.
+    Source: https://stackoverflow.com/a/36296215/22210498
+    """
+    def __init__(self, logger, log_level=logging.INFO):
+        self.logger = logger
+        self.log_level = log_level
+        self.linebuf = ''
+
+    def write(self, buf):
+        temp_linebuf = self.linebuf + buf
+        self.linebuf = ''
+        for line in temp_linebuf.splitlines(True):
+            # From the io.TextIOWrapper docs:
+            #   On output, if newline is None, any '\n' characters written
+            #   are translated to the system default line separator.
+            # By default sys.stdout.write() expects '\n' newlines and then
+            # translates them so this is still cross platform.
+            if line[-1] == '\n':
+                line = line.strip()
+                if line:
+                    self.logger.log(self.log_level, line.strip())
+            else:
+                self.linebuf += line
+
+    def flush(self):
+        if self.linebuf != '':
+            line, self.linebuf = self.linebuf.strip(), ''
+            if not (line.startswith('0%') or line.startswith('100%')):
+                self.logger.log(self.log_level, line)
+        

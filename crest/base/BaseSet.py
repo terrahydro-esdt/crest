@@ -7,42 +7,14 @@ import numpy as np
 import dask 
 import operator 
 
-from .BaseAbstract import BaseMeta
 from .BaseAbstract import BaseAbstract
 
 
 # Generic representing single type
 T = TypeVar('T')
 
-class AddOperators(BaseMeta):
-    """ Add special operators to the BaseSet (e.g. __add__) """
-    def __init__(cls, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
-        skip = ['__name__', '__loader__', '__package__'] + dir(cls)
-        for op in dir(operator):
-            if op.startswith('__') and op.endswith('__') and (op not in skip):
-                try:              setattr(cls, op, AddOperators.factory(op))
-                except TypeError: print(f'Failed to set {op}: {e}')
-
-    @staticmethod
-    def factory(name):
-        """ Allow operators to be distributed over the container """
-        def wrapper(self, other=None):
-            method = lambda a,b: getattr(a, name)(b)
-            if other is not None:
-                if isinstance(other, Collection) and (len(other) == len(self)):
-                    result = [method(c, o) for c,o in zip(self, other)]
-                else: result = [method(c, other) for c in self]
-            else: result = [getattr(c, name)() for c in self]
-            assert(not any([r is NotImplemented for r in result]))
-            return self._wrap(result)
-        wrapper.__name__ = name 
-        return wrapper
-
-
-
-class BaseSet(BaseAbstract, metaclass=AddOperators):
+class BaseSet(BaseAbstract):
     """Class which wraps a set of classes into a single object.
 
     Notes
@@ -91,7 +63,7 @@ class BaseSet(BaseAbstract, metaclass=AddOperators):
 
     def __repr__(self) -> str:
         """ String representation: BaseSet[container] """
-        return f"{super().__str__()}{getattr(self, 'container', '')}"
+        return f"{super().__repr__()}{getattr(self, 'container', '')}"
 
 
     def __eq__(self, other: Any) -> bool:
@@ -118,6 +90,8 @@ class BaseSet(BaseAbstract, metaclass=AddOperators):
 
     def __getitem__(self, idx: Any) -> T:
         """ Get an element in the container """
+        if isinstance(idx, slice):
+            return self.__class__(self.container[idx])
         return self.container[idx]
     
 
@@ -298,3 +272,28 @@ class BaseSet(BaseAbstract, metaclass=AddOperators):
     def map(self, f: Callable):
         """ Convenience function to map a callable over container's objects """
         return self._wrap(list(map(f, self)))
+
+
+    def __new__(cls, *args, **kwargs):
+        """ Add special operators to the BaseSet (e.g. __add__) """
+        def factory(name):
+            """ Allow operators to be distributed over the container """
+            def wrapper(self, other=None):
+                method = lambda a,b: getattr(a, name)(b)
+                if other is not None:
+                    if isinstance(other, Collection) and (len(other) == len(self)):
+                        result = [method(c, o) for c,o in zip(self, other)]
+                    else: result = [method(c, other) for c in self]
+                else: result = [getattr(c, name)() for c in self]
+                assert(not any([r is NotImplemented for r in result]))
+                return self._wrap(result)
+            wrapper.__name__ = name 
+            return wrapper
+
+        # Add all Operators except those already contained in the class
+        skip = ['__name__', '__loader__', '__package__'] + dir(cls)
+        for op in dir(operator):
+            if op.startswith('__') and op.endswith('__') and (op not in skip):
+                try:              setattr(cls, op, factory(op))
+                except TypeError: print(f'Failed to set {op}: {e}')
+        return super().__new__(cls, *args, **kwargs)

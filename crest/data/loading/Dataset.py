@@ -1,18 +1,27 @@
+from collections.abc import Iterable, Iterator, Callable, Collection
 from dask.diagnostics import ProgressBar
-from collections.abc import Iterable, Callable
+from dask.delayed import Delayed
 from fsspec.mapping import FSMap 
 from contextlib import nullcontext, redirect_stdout
 from functools import partial, cached_property
 from pathlib import Path
 from numbers import Number 
+from logging import Logger 
+from typing import Union 
 
 import cloudpickle as pkl
+import xarray as xr
 import numpy as np 
 import dask.array as da
 import dask
+import traceback
+import logging
+import shutil
+import zarr
 import io 
 
-from ...base.BaseSet import BaseSet
+from crest.utils import Stopwatch, optimize_blocks
+from crest.base import BaseSet
 from .Datafile import Datafile
 from .Blockset import Blockset
 
@@ -20,6 +29,15 @@ from .Blockset import Blockset
 class Dataset(BaseSet):
     """Wraps a collection of Datafiles, thus loading multiple sources. 
     
+    Notes
+    -----
+    Any attributes created in __init__ (or in general, prior to 
+    Dataset.generate_samples) may not be available once generate_samples
+    is actually called. This is due to only pickling attributes initially
+    given to __init__, for both Dataset and Datafile. If modifications 
+    need to be made to the Dataset object or underlying Datafile objects,
+    they should be applied during the generate_samples function.
+
     Parameters
     ----------
     locations : Iterable[Datafile | Path | str | FSMap]
@@ -38,10 +56,11 @@ class Dataset(BaseSet):
         already passed in as a Datafile object.
     
     """
-    def __init__(self, locations: Iterable[Datafile|Path|str|FSMap], **kwargs):
+    def __init__(self, locations: Iterable[Union[Datafile, Path, str, FSMap]], **kwargs):
         self.container = list(map(partial(Datafile.load, **kwargs), locations))
-        assert(len(locations)), 'Must pass at least one object to init Dataset'
-
+        assert(len(self)), 'Must pass at least one object to init Dataset'
+        for i, datafile in enumerate(self): datafile.dataset_index = i
+        
 
     @cached_property
     def dtype(self):
@@ -53,8 +72,21 @@ class Dataset(BaseSet):
     def total_bytes(self) -> float:
         """ Estimate of the total input/output bytes of the data """
         inp_bytes = sum(self.data.nbytes)
-        out_bytes = float(self.dtype.itemsize) * sum(map(np.prod, self.shape))
-        return inp_bytes + out_bytes
+        itemsizes = self.dtype.itemsize
+        out_bytes = itemsizes * np.prod(self.shape.ix[:-1], 1, dtype=float)
+        assert((out_bytes > 0).all()), f'Arrays are too large to compute bytes'
+        return inp_bytes + out_bytes.sum()
+
+
+    @cached_property
+    def logger(self):
+        """ Create a logging object """
+        logger = logging.getLogger('Dataset')
+        if logger.hasHandlers():
+            logger.handlers.clear()
+        logger.addHandler(logging.StreamHandler())
+        logger.setLevel(logging.INFO)
+        return logger
 
 
     def align(self, a: str, *b):
@@ -64,9 +96,11 @@ class Dataset(BaseSet):
 
     def generate_samples(self, 
         blocksize : Number = 1e8,
+        numblocks : int | Collection[int] = 0,
         compute   : bool   = True,
         verbose   : bool   = True,
-        logger    : Callable = print,
+        optimize  : bool   = True,
+        logger    : Logger | None = None,
         save_path : str | Path | None = None,
     ):# -> da.Array | Iterator[Delayed]:
         """Generate the dask array containing all valid samples.
@@ -93,6 +127,11 @@ class Dataset(BaseSet):
             for the amount memory that will be used when computing a block, as 
             the actual amount used is dependent upon the number of matches that
             are found in the block and thus can vary significantly. 
+        numblocks : int 
+            Alternative to giving a blocksize value. If numblocks > 0, the 
+            requested number of blocks is the target block total. While the 
+            exact number of blocks is not always possible to create, an attempt
+            is made to get as close as possible to the requested value.
         compute   : bool
             Whether the lazy dask array of Sample objects should be computed 
             and returned, or just a list of the `dask.delayed.Delayed` tasks 
@@ -101,6 +140,10 @@ class Dataset(BaseSet):
             method can be called on each to independently compute the blocks. 
         verbose   : bool
             Whether logs should be shown when preparing and generating samples.
+        optimize  : bool
+            Whether dask.optimize should be used on the full task graph. This
+            can speed up access when batching data, but incurs a higher cost
+            when initially generating sample blocks. 
         logger    : Callable
             Logging function used when `verbose=True`. This is `print` by 
             default, but an actual logging function like `logging.info` can be
@@ -115,61 +158,165 @@ class Dataset(BaseSet):
             found (if `compute=True`, the default); or a list of the Delayed
             task objects that correspond to the individual block computations.
 
-
-        TODO: 
-            - implement test(s) for merging chunks (i.e. not enough elements in chunk for overlaps) 
-            - switch Block coordinate grids to use vectors instead (though perhaps handle both?)
-                - vectors by default for reduced memory usage, but may want to keep dense representation
-                  handling in order to allow skewed grids 
-            * diagnose changing sample number based on block count
-
         """
-        self.logger = logger 
+        if logger is not None:
+            self.__dict__['logger'] = logger
 
         # In order to avoid overlapping logs with multiple processes,
         # we accumulate all log text and log only once at the end
-        if verbose: 
-            log_sep = ''.join(['_']*60) + '\n'
-            dat_sep = ''.join(['-']*60)
-            log_txt = f'\n{log_sep}\nCurrent data:\n{dat_sep}'
-            for c in self.container:
-                log_txt += f'\n\n{c.data}'
-            log_txt += f'\n\n{dat_sep}\n\nPreparing data...\n'
+        log_sep = ''.join(['_']*60) + '\n'
+        dat_sep = ''.join(['-']*60)
+        log_txt = f'\n{log_sep}\nCurrent data:\n{dat_sep}'
+        for c in self.container:
+            log_txt += f'\n\n{c.data}'
+        log_txt += f'\n\n{dat_sep}\n\nPreparing data...\n'
 
         # Capture stdout to log appropriately
         try:     
             with redirect_stdout(io.StringIO()) as buffer:
-
                 # Ensure all Datafiles are aware of all dimensions
                 # i.e. create virtual dimensions where necessary
                 self.ensure_dims( set.union(*map(set, self.dims)) )
 
-                # Rechunk the data to the requested blocksize
-                self.autochunk(blocksize, verbose)
-
                 # Create the delayed sample blocks
-                samples = self.create_blocks(verbose)
+                samples = self.create_blocks(blocksize, numblocks, verbose, optimize)
+        except: 
+            verbose = True
+            raise
 
         finally: 
             # Log the accumulated text prior to starting block computation
-            if verbose: logger(log_txt + buffer.getvalue() + log_sep)
+            if verbose: self.logger.info(log_txt + buffer.getvalue() + log_sep)
 
         # Find all samples in parallel across the created blocksets
         if compute:
             with nullcontext() if not verbose else ProgressBar():
-                if verbose: logger('\nFinding all valid samples...')
-                samples = da.hstack( da.compute(*samples) )
+                if verbose: self.logger.info('\nFinding all valid samples...')
+                samples = da.hstack( da.compute(*[s() for s in samples]) )
             
-            if verbose: logger(f'\nFound {len(samples):,} samples')
+            if verbose: self.logger.info(f'\nFound {len(samples):,} samples')
             if save_path is not None:
                 Dataset.save(samples, save_path)
         return samples 
 
 
 
+    def create_blocks(self, 
+        blocksize : Number = 1e8,
+        numblocks : int | Collection[int] | None = 0,
+        verbose   : bool = False,
+        optimize  : bool = True,
+    ) -> list:
+        """Block data into the requested configuration.
+
+        Parameters
+        ----------
+        blocksize : Number
+            Number of bytes that should be allocated to each block and worked
+            on in parallel (default=1e8; 100MB). Note that this is just a proxy
+            for the amount memory that will be used when computing a block, as 
+            the actual amount used is dependent upon the number of matches that
+            are found in the block and thus can vary significantly. 
+        numblocks : int 
+            Alternative to giving a blocksize value. If numblocks > 0, the 
+            requested number of blocks is the target block total. While the 
+            exact number of blocks is not always possible to create, an attempt
+            is made to get as close as possible to the requested value.
+        verbose   : bool
+            Whether logs should be shown when preparing and generating samples.
+        optimize  : bool
+            Whether dask.optimize should be used on the full task graph. This
+            can speed up access when batching data, but incurs a higher cost
+            when initially generating sample blocks. 
+        
+        Returns
+        -------
+        list
+            List of delayed Blockset.find_matches functions.
+
+        """
+        # Attempt to automatically block the data based on total block count
+        if isinstance(numblocks, int):
+            self.autochunk(blocksize, numblocks, verbose)
+
+        # Either block the data to an exact number per dimension (e.g. [1,5,9])
+        # or try to automatically find a reasonable common blocking scheme 
+        # based on the scheme currently used across all Datafiles
+        else:
+            blocks = numblocks or np.gcd.reduce(self.numblocks, axis=0)[:-1]
+
+            # Attempt to automatically determine a target block size
+            # TODO: fix issue when window_depth > elements per block
+            if (numblocks is None) and (max(blocks) == 1) and (max(self.size) > 100):
+                blocks  = [1] * len(blocks)
+                n_dim   = min(len(blocks), 2)
+                maxim   = np.min(self.shape, axis=0)[:-1]
+                indices = np.argpartition(maxim, -n_dim)[-n_dim:]
+
+                def max_block(shapes, start=None):
+                    """ Return the maximum valid block size for all shapes """
+                    check = lambda n: np.ceil(shapes / np.ceil(shapes / n)) == n
+                    if start is None:
+                        start = int(shapes.min())
+                        if check(start).all(): return start
+                    start = start or (np.ceil(shapes/2)).min()
+                    while (start > 1) and not check(start).all(): start -= 1
+                    return int(start)
+
+                for i in range(n_dim):
+                    shapes = np.array([shp[indices[i]] for shp in self.shape])
+                    blocks[indices[i]] = max_block(shapes, 10)
+
+            if verbose:
+                print(f'\tcurrent blocks: {self.numblocks}')
+                print(f'\t target blocks: {blocks}')
+
+            # Update Datafile chunks to create the required number of blocks
+            chunks = self.update_blocks(blocks)
+            if verbose: 
+                if any(chunks): print(f'\trechunked with: {chunks}')
+                print(f'\t result blocks: {self.numblocks[0][:-1]}')
+
+        # Get the current number of blocks
+        chunks  = self.chunks.ix[:-1]
+        current = self.numblocks.ix[:-1]
+        blocks  = np.array(current[0])
+        assert(all(((current == blocks) | self.virtual).map(all))), current
+
+        # Calculate required overlaps for each Datafile
+        max_res = np.nanmax(self.max_resolution, axis=0)
+        idx_res = np.nanargmax(self.max_resolution, axis=0)
+        skipdim = idx_res == np.arange(len(self))[:, None]
+        overlap = self.calculate_overlap(max_res, dimension_blks=blocks, _map=[skipdim])
+
+        if verbose: 
+            lbl = lambda dims, ov: str({dims[k]: v for k,v in ov.items()})
+            ind = '\n                '
+            txt = ind + ind.join(map(lbl, self.dims, overlap))
+            print(self.align('Overlaps', txt))
+
+            nbytes = (self.total_bytes / np.prod(blocks)) / 1e6
+            nelems = sum(map(np.prod, [list(map(np.mean, c)) for c in chunks]))
+            print('\nResults:\n  ' + '\n  '.join([
+                f'Split into {np.prod(blocks)} total block(s)',
+                f'~{nbytes:,.1f} MB/block'.replace('.0',''),
+                f'~{nelems:,.0f} items/block'
+            ]))
+
+        # Create a list of Blocksets, where each Blockset 
+        # contains exactly one Block from each Datafile
+        prepped    = self.apply_overlap(optimize=optimize, _map=[overlap])
+        create_set = dask.delayed(partial(Blockset, logger=self.logger)) 
+        blocksets  = map(create_set, zip(*prepped, strict=True))
+        matches    = map(lambda bset: bset.find_matches, blocksets)
+        return list(matches)
+
+
+
     def autochunk(self, 
         blocksize : Number = 1e8, 
-        verbose   : bool = False,
+        numblocks : int    = 0,
+        verbose   : bool   = False,
     ) -> None:
         """Attempt to automatically chunk/block the data.
         
@@ -196,15 +343,20 @@ class Dataset(BaseSet):
             for the amount memory that will be used when computing a block, as 
             the actual amount used is dependent upon the number of matches that
             are found in the block and thus can vary significantly. 
+        numblocks : int 
+            Alternative to giving a blocksize value. If numblocks > 0, the 
+            requested number of blocks is the target block total. While the 
+            exact number of blocks is not always possible to create, an attempt
+            is made to get as close as possible to the requested value.
         verbose   : bool
             Whether logs should be shown when preparing and generating samples.
 
         """
         # Close (over-)estimate for the targeted number of blocks per dimension
         # (inp bytes + (estimated) out bytes) / blocksize = number of blocks
-        tgt_block = int(np.ceil(self.total_bytes / blocksize))
-        exp_round = lambda n: round(np.exp(n * np.ceil(np.log(tgt_block))))
-        if verbose: print(self.align('Target block total', f'{tgt_block:,}'))
+        if numblocks>0: tgt_blks = numblocks 
+        else:           tgt_blks = int(np.ceil(self.total_bytes / blocksize))
+        if verbose: print(self.align('Target block total', f'{tgt_blks:,}'))
 
         # Maximum number of blocks the data could theoretically be split into, 
         # while still maintaining the required number of elements along each 
@@ -213,127 +365,24 @@ class Dataset(BaseSet):
         data_obj = self.data, self.window_total
         req_blks = map(required, map(zip, self.dims, self.virtual), *data_obj)
         max_blks = np.min(list(req_blks), axis=0).astype(int)
+        cur_blks = self.numblocks.ix[:-1]
         assert(np.isfinite(max_blks).all()), f'Invalid max block size: {max_blks}'
         assert(min(max_blks) > 0), f'Requested window larger than data: {self.shape}'
-        if verbose: print(self.align('Max valid blocks', max_blks))
 
-        # Exponential rounding scheme
-        # blocks = list(map(exp_round, max_blks / max_blks.sum()))
-
-        # Get the initial state, which is the minimum between the current 
-        # dataset(s) states and the maximum allowable size
-        curr = self.numblocks.ix[:-1]
-        init = np.min([np.lcm.reduce(curr, axis=0), max_blks], axis=0)
-        seen = set()
-        best = {}
-        if verbose: print(self.align('Current block sizes', list(curr)))
-
-        def optimize(state, skipdims=[]):
-            """ Use a greedy approach to optimize the number of blocks per
-                axis, attempting to get as close as possible to the targeted
-                total number of blocks without dividing them along non-integer
-                boundaries (as this would duplicate / discard far more data
-                when generating blocks). Integer boundaries are maintained by 
-                using only integer multiples of the original block structure. 
-            """
-            # Store the initial block state we're searching from
-            state_tuple = best[abs(tgt_block - np.prod(state))] = tuple(state)
-
-            # Iteratively add multiples of the original block sizes until we
-            # reach the total block target, or we encounter a state seen before
-            while (state_tuple not in seen) and (np.prod(state) != tgt_block):
-
-                # If the current block combination has been seen already,
-                # we don't need to try and optimize with it again
-                seen.add(state_tuple)
-
-                # The order of preference for steps that increase or decrease 
-                # block size depends on the direction to the total target size
-                order = 1 if np.prod(state) < tgt_block else -1
-
-                # Each axis can step up or down, but must fulfill the condition
-                # 0 < new size < max. If the preferred step direction fails, we
-                # can instead use the alternative direction choice as backup
-                st1,st2 = [init * inc_dec for inc_dec in [1,-1][::order]]
-                isvalid = lambda new_state: (0<new_state)&(new_state<=max_blks)
-                backups = np.where(isvalid(state + st2), st2, np.nan)
-                stepdir = np.where(isvalid(state + st1), st1, backups)
-
-                # Helpers:
-                # - keep the step choice if finite and not part of skipdims
-                # - swap a given index in the state with a new value
-                # - calculate the difference between target and the new state 
-                keep = lambda i,s: (i not in skipdims) and np.isfinite(s)
-                swap = lambda i,s: [v + s*(j==i) for j,v in enumerate(state)]
-                diff = lambda i,s: (i, abs(tgt_block - np.prod(swap(i, s))))
-
-                # Calculate distance to the target for each valid state option
-                options = [diff(*s) for s in enumerate(stepdir) if keep(*s)]
-                if len(options) == 0: break
-
-                # Select the state which minimizes distance to the target
-                idx, option = min(options, key=lambda i_o: i_o[1])
-                state[idx] += stepdir[idx]
-                state_tuple = best[option] = tuple(state)
-
-            seen.add(state_tuple)
-
-        # First optimize using the current blocks as the initial state
-        optimize(init.copy())
-
-        # Then if we're increasing the number of blocks, optimize with a new
-        # state for each axis in the data (increasing the blocks to the max
-        # targeted/allowed size for each respective axis)
-        if np.prod(init) < tgt_block:
-            for i, c in enumerate(init):
-                targeted = tgt_block // np.prod(init)
-                allowed  = max_blks[i] // c
-                incstate = init.copy()
-                incstate[i] *= max(1, min(targeted, allowed))
-                optimize(incstate)
-
-        # Otherwise the current number of blocks needs to be decreased along
-        # one or more dimensions (which is done by evenly combining existing
-        # blocks using their prime factors)
-        # The way this is currently set up will artificially limit the lower
-        # end of block sizes, as only 2,3,5 are used as (single) divisors.
-        # Eventually we need to remove this limit to allow more control over
-        # blocks via blocksize.
-        else: 
-            for dim in range(len(init)):
-                primefac = [[f for f in [2, 3, 5] if c%f == 0] for c in init]
-                skipdims = set()
-                decstate = init.copy() 
-
-                # Reduce the number of blocks as much as necessary, iterating
-                # repeatedly over axes until either the number of blocks fall
-                # below the target or we run out of prime factors
-                while np.prod(decstate) > tgt_block:
-                    for factor in primefac[dim]:
-                        if (decstate[dim] % factor) == 0:
-                            decstate[dim] = init[dim] // primefac[dim].pop(0)
-                            skipdims.add(dim)
-                            break    
-                        else: primefac[dim].pop(0)
-
-                    dim = (dim + 1) % len(decstate)
-                    if max(map(len, primefac)) == 0: break
-
-                # Any axes which are reduced need to be skipped over when 
-                # optimizing, as it would otherwise allow non-integer multiples
-                # with respect to the original block sizes
-                optimize(decstate, skipdims)
+        if verbose: 
+            print(self.align('Max valid blocks', max_blks))
+            print(self.align('Current block sizes', list(cur_blks)))
 
         # Bin the data into histograms with the specified number of blocks
         # in order to get the final chunk sizes
-        blocks = best[min(best)]
+        blocks = optimize_blocks(cur_blks, tgt_blks, max_blks)
         virtual= lambda x: (x.values.size == 1) and np.isnan(x.values[0])
         rm_nan = lambda blk, dat: list(range(blk)) if virtual(dat) else dat
         binner = lambda blk, dat: np.histogram(rm_nan(blk, dat), int(blk))[0]
         mapper = lambda dim, dat: map(binner, blocks, [dat[d] for d in dim])
         chunks = list(map(list, map(mapper, self.dims, self.data)))
         assert(len(set(map(len, chunks))) == 1), chunks
-        
+
         def merge(chunks, w_size):
             """
             Histogram can create bins containing fewer than `window depth` 
@@ -363,46 +412,6 @@ class Dataset(BaseSet):
         assert(all(len(set(map(len, c))) == 1 for c in zip(*chunks))), chunks
         if verbose: print(self.align('Created blocks', blocks))
         self.update_chunks(_map=[chunks])
-
-
-
-    def create_blocks(self, verbose: bool = False):
-        # Get the current number of blocks
-        chunks  = self.chunks.ix[:-1]
-        current = self.numblocks.ix[:-1]
-        blocks  = np.array(current[0])
-        assert(all(((current == blocks) | self.virtual).map(all))), current
-
-        # Calculate required overlaps for each Datafile
-        max_res = np.nanmax(self.max_resolution, axis=0)
-        idx_res = np.nanargmax(self.max_resolution, axis=0)
-        skipdim = idx_res == np.arange(len(self))[:, None]
-        overlap = self.calculate_overlap(max_res, _map=[skipdim])
-        if verbose: 
-            lbl = lambda dims, ov: str({dims[k]: v for k,v in ov.items()})
-            ind = '\n                '
-            txt = ind + ind.join(map(lbl, self.dims, overlap))
-            print(self.align('Overlaps', txt))
-
-        # Apply the required overlaps to each Datafile
-        prepped = self.apply_overlap(_map=[overlap])
-        blksize = (self.total_bytes / np.prod(blocks)) / 1e6
-        element = sum(map(np.prod, [list(map(np.mean, c)) for c in chunks]))
-
-        if verbose: 
-            print('\nResults:\n  ' + '\n  '.join([
-                f'Split into {np.prod(blocks)} total block(s)',
-                f'~{blksize:,.1f} MB/block'.replace('.0',''),
-                f'~{element:,.0f} items/block'
-            ]))
-        # return [(lambda: dask.delayed(Blockset(p, logger=getattr(self, 'logger', print)).find_matches)()) 
-        #         for p in zip(*prepped, strict=True)]
-
-        # Create a list of Blocksets, where each Blockset 
-        # contains exactly one Block from each Datafile
-        blocksets = map(dask.delayed(Blockset), zip(*prepped, strict=True))
-        matches   = map(lambda bset: bset.find_matches(), blocksets)
-        return list(matches)
 
 
 
@@ -448,3 +457,39 @@ class Dataset(BaseSet):
         assert(Path(filename).exists()), f'{filename} does not exist'
         with Path(filename).open('rb') as f:
             return pkl.load(f)
+
+
+
+    def cache(self, 
+        numblocks : Collection[int], 
+        overwrite : bool = False, 
+        cache_dir : Path | str  = '.',
+    ):
+        """Cache all Datafiles in new zarr databases for faster access.
+
+        Parameters
+        ----------
+        numblocks : Collection[int]
+            Number of blocks along each dimension which the data should
+            be chunked into.
+        overwrite : bool
+            Flag indicating whether already cached data should be overwritten.
+            If False, metadata (but not the data values themselves) are checked
+            against the cached data to verify it is the same. This does not
+            verify that the data itself is the same, and so changing e.g. one
+            of the preprocessor function definitions, might result in the wrong 
+            data being used. 
+        cache_dir : Path | str
+            Location for the cached data to be stored. By default, data is 
+            cached in `./Cache`. 
+
+        """
+        with Stopwatch(f'Cached {len(self)} Datafiles'):
+            # Rechunk the data first
+            self.generate_samples(**{
+                'numblocks' : numblocks, 
+                'compute'   : False, 
+                'verbose'   : False,
+                'optimize'  : False,
+            })
+            self._cache(overwrite, cache_dir, _delay=False)

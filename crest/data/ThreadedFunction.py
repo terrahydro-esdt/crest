@@ -44,33 +44,50 @@ class ThreadedFunction(set):
         threads  : int = 3,
         capacity : int = 6,
         timeout  : Number | None = 0.01, 
-        exitflag : Event  | None = None,
+        exitflag : Event  | None | Callable = None,
+        exitset  : Event  | None | Callable = None,
         logger   : Logger | None = None,
     ):
         super().__init__()
         self.function = function
         self.threads  = threads
-        self.capacity = capacity
+        self.capacity = capacity if threads >= 1 else 1
         self.timeout  = timeout 
         self.logger   = logger or getLogger(function.__name__)
-        self.exitflag = exitflag or Event()
+
+        _event = Event()
+        self.exitflag = getattr(exitflag or _event, 'is_set', exitflag)
+        self.exitset  = getattr(exitset or exitflag or _event, 'set', exitset or _event.set)
 
         # Count of total tasks submitted, and thread pool
+        self._items = []
         self._total = 0
         self._pool  = ThreadPoolExecutor(**{
             'max_workers'        : threads, 
             'thread_name_prefix' : function.__name__,
-        })
+        }) if threads > 0 else None
+    
+
+    def __next__(self): 
+        if self.threads > 0: raise NotImplementedError
+        if len(self):
+            args, kwargs = self._items.pop()
+            self.pop()
+            return self._execute(*args, **kwargs)
 
 
     def __iter__(self):
         """ Retrieve completed tasks if there are any available, remove them
             from the task set, and return in the order they were submitted. """
-        try: 
-            done, _ = wait(self, self.timeout, FIRST_COMPLETED)
-            self.difference_update(done)
-            yield from sorted(done, key=lambda d: d.order)
-        except TimeoutError: pass
+        if self.threads < 1:
+            for i in range(len(self._items)):
+                yield next(self)
+        else:
+            try: 
+                done, _ = wait(self, self.timeout, FIRST_COMPLETED)
+                self.difference_update(done)
+                yield from sorted(done, key=lambda d: d.order)
+            except TimeoutError: pass
 
 
     def __call__(self, *args, **kwargs):
@@ -91,30 +108,33 @@ class ThreadedFunction(set):
           can be checked by calling len on the ThreadedFunction object.
 
         """   
+        if self._pool is None:
+            self._items.append( [args, kwargs] )
+            self.add(self._total)
+            self._total += 1
+            return
+
         try: 
             # Wait for capacity in the task set or exit to be signaled
-            loops = 0
-            while (not self.exitflag.is_set()) and self.is_full():
+            loops = 1
+            while (not self.exitflag()) and self.is_full():
                 time.sleep(0.5) 
                 if loops % 10 == 0:
                     self.logger.debug(f'Waiting to add more {self.name} tasks')
                 loops += 1 
 
             # If exit not signaled, submit the job and track its order
-            if not self.exitflag.is_set(): 
+            if not self.exitflag(): 
                 future = self._pool.submit(self._execute, *args, **kwargs)
                 future.order = self._total
                 self._total += 1
                 self.add(future)
             else: 
                 self.close()
-                raise StopIteration
 
-        except StopIteration: raise
         except Exception as e:
             if 'new futures after shutdown' not in str(e):
                 msg = f'Exception in __call__: {e}\n{traceback.format_exc()}'
-                print(msg)
                 self.logger.error(msg)
                 self.close()
 
@@ -133,12 +153,12 @@ class ThreadedFunction(set):
         """ Attempt to gracefully clean up the background threads """
         # Need to wrap _everything_ in try/except since we may be in __del__
         def exit():
-            try: self.exitflag.set()
-            except: pass
-            try: self._pool.shutdown(wait=False, cancel_futures=True)
-            except: pass        
+            try:    self.exitset()
+            except Exception as e: self.logger.debug(f'Exception in exitset: {e}')
+            try:    self._pool.shutdown(wait=False, cancel_futures=True)
+            except Exception as e: self.logger.debug(f'Exception in pool.shutdown: {e}')
         try:
-            with Stopwatch(f'Finished closing {self.name} pool', self.logger.info):
+            with Stopwatch(f'Closed {self.name} pool', self.logger.debug):
                 exit()
         except: exit()
 
@@ -146,18 +166,17 @@ class ThreadedFunction(set):
     def _execute(self, *args, **kwargs):
         """ Log any errors which result when calling the function """
         try: 
-            with Stopwatch(f'\tCompleted {self.name}', self.logger.info):
+            if self.exitflag(): return
+            with Stopwatch(f'\tCompleted {self.name}', self.logger.debug):
                 return self.function(*args, **kwargs)
 
-        except StopIteration: self.close()
         except Exception as e:
-            if 'new futures after shutdown' not in str(e):
-                msg = f'Exception in {self.name}: {e}\n{traceback.format_exc()}'
-                print(msg)
+            if 'cannot schedule new futures' not in str(e):
+                msg = f'Exception in {self.name}: {type(e)}\n{e}\n{traceback.format_exc()}'
                 self.logger.error(msg)
                 self.close()
                 raise
 
         finally: 
-            if self.exitflag.is_set():
+            if self.exitflag():
                 self.close()

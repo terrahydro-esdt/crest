@@ -3,8 +3,9 @@ import numpy as np
 
 from crest.base.BaseSet import BaseSet
 
-
-intset  = BaseSet([1,2,3,6,5,4])
+# Test inheritance as well as BaseSet itself
+class IntSet(BaseSet): pass
+intset  = IntSet([1,2,3,6,5,4])
 strset  = BaseSet(['a b c', 'd.e.f'])
 
 
@@ -14,6 +15,7 @@ def test_len():
 
 
 def test_iter():
+    # Test iterating over the BaseSet
     sets = [
         (intset, [1, 2, 3, 6, 5, 4]),
         (strset, ['a b c', 'd.e.f']),
@@ -23,7 +25,7 @@ def test_iter():
             assert(b == e)
 
 
-def test_getattr():
+def test_function():
     # Test mapping a function with no arguments
     output = intset.bit_length()
     expect = [1, 2, 2, 3, 3, 3]
@@ -33,6 +35,8 @@ def test_getattr():
     expect = ['A B C', 'D.E.F']
     assert(output == expect)
 
+
+def test_function_args():
     # Test mapping a function with an argument
     output = intset.__add__(1)
     expect = [2, 3, 4, 7, 6, 5]
@@ -42,6 +46,19 @@ def test_getattr():
     expect = ['1 a b c 2', '1 d.e.f 2']
     assert(output == expect)
 
+
+def test_operator():
+    # Test mapping with special operators
+    output = intset + 1
+    expect = [2, 3, 4, 7, 6, 5]
+    assert(output == expect)
+
+    output = strset + ' 1'
+    expect = ['a b c 1', 'd.e.f 1']
+    assert(output == expect)
+
+
+def test_mapping():
     # Test mapping a function with one argument per element
     output = intset + [0, 1, 2, 0, 0, 0]
     expect = [1, 3, 5, 6, 5, 4]
@@ -126,6 +143,7 @@ def test_sort():
 
 
 def test_homogeneity():
+    # Ensure homogeneity of set elements is enforced
     with pytest.raises(TypeError): container = BaseSet([1,2,'a'])
     with pytest.raises(TypeError): container = BaseSet([[], 'a'])
     

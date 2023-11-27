@@ -1,19 +1,14 @@
-from .BaseModel import BaseModel
-from .BaseModel import ImproperModelError
-from .TensorGraph import TensorGraph
-from ..data.loading.Dataset import Dataset
-from ..data.loading.StructuredDataset import StructuredDataset
-from ..data.Batcher import Batcher
-from tensorflow.keras import Input
-from tensorflow.keras import Model as KerasModel
-from numpy import concatenate
 from contextlib import nullcontext
-import numpy as np
-from keras.callbacks import Callback
-import traceback
-from ..utils.Metrics import Metrics
 
-from ..utils.Metrics import Metrics
+import tensorflow as tf 
+import numpy as np
+import warnings
+
+from crest.utils import Metrics
+from crest.data.loading import Dataset, StructuredDataset
+from crest.data import Batcher
+from .BaseModel import BaseModel, ImproperModelError
+from .TensorGraph import TensorGraph
 
 
 class Model(BaseModel):
@@ -21,23 +16,22 @@ class Model(BaseModel):
     
     Parameters
     ----------
-    
-    TensorGraph : The HierarchalTensorGraph
+    graph: TensorGraph
+        The Hierarchal TensorGraph
     
     """
 
-    def __init__(self,
-                 TensorGraph : TensorGraph,
-                 **kwargs):
-        self.TensorGraph = TensorGraph
+    def __init__(self, graph: TensorGraph, **kwargs):
+        self.graph = graph
         self.model = None
-        self.name = TensorGraph.name
-        self.inputs = {k : Input(type_spec=v)  if not v is None else 
-                       None for k,v in self.TensorGraph.inputs.items()}
-        self.outputs = self.TensorGraph(self.inputs)
+        self.name  = graph.name
+        self.inputs = {k: tf.keras.Input(type_spec=v, name=k) if not v is None else 
+                       None for k,v in self.graph.inputs.items()}
+        self.outputs = self.graph(self.inputs)
         self.metric = Metrics()
         
-    def _make_batcher(self,dataset,**kwargs) -> Batcher:
+
+    def _make_batcher(self, dataset, **kwargs) -> Batcher:
         """
         Makes a Batcher 
         
@@ -61,30 +55,51 @@ class Model(BaseModel):
         if isinstance(dataset,(Dataset,StructuredDataset)):
             return Batcher(dataset,**kwargs)
             
-        message = 'Cannot make a Batcher form dataset. It must be either a Dataset, StructuredDataset, '
+        message = f'Cannot make a Batcher from {type(dataset)}: it must be either a Dataset, StructuredDataset, '
         message += 'Batcher, or dictionary.'
         raise ImproperModelError(message)
+
         
-    def build(self,**kwargs):
-        '''
-        builds and compiles the Keras model. Inputs and outputs
-        are set as specified in TensorGraph.
+    def build(self, _internal=False, **kwargs):
+        """ Builds Keras model """
+        if not _internal: 
+            warnings.warn('Use Model.compile instead of Model.build')
+            return self.compile(**kwargs)
+        self.model = tf.keras.Model(inputs=self.inputs, outputs=self.outputs)
+        
+        # Explicitly set model output_names for correct logging labels
+        if isinstance(self.outputs, dict):
+            self.model.output_names = sorted(self.outputs)
+
+
+    def compile(self, show_summary : bool = False, **kwargs):
+        """
+        Builds and compiles the Keras model. Inputs and outputs
+        are set as specified in `self.graph`.
 
         Parameters
         ----------
+        show_summary : bool
+            Whether to show the model summary after compilation.
+        **kwargs 
+            args passed as keras.Model.compile(kwargs)
 
-        kwargs : args passed as keras.Model.compile(kwargs)
-
-        '''
-
+        """
         # Check kwargs for metrics locally defined
         if ('metrics' in kwargs):
             metrics = self.metric.get_callbacks(kwargs['metrics'])
             kwargs['metrics'] = metrics
             print(metrics)
 
-        self.model = KerasModel(inputs=self.inputs, outputs=self.outputs)
+        self.build(_internal=True)
         self.model.compile(**kwargs)
+
+        # Verify there are trainable weights in this model
+        no_trainable = len(self.model.trainable_weights) <= 0
+        if show_summary or no_trainable:
+            self.model.summary(line_length=200)
+        assert(not no_trainable), 'No trainable parameters in model'
+
 
     def fit(self, dataset : Dataset | Batcher | StructuredDataset, **kwargs):
         """
@@ -140,7 +155,7 @@ class Model(BaseModel):
             self.model.fit(data,**kwargs)
 
     
-    def predict(self, dataset : Dataset | Batcher | dict, coords=[], **kwargs) -> dict:
+    def predict(self, dataset: Dataset | Batcher | dict, coords=[], **kwargs) -> dict:
         """
         Make predictions with the model.
         
@@ -197,7 +212,7 @@ class Model(BaseModel):
                 
                 if pred:
                     for key in pred_batch.keys():
-                        pred[key] = concatenate([pred[key],pred_batch[key]])
+                        pred[key] = np.concatenate([pred[key],pred_batch[key]])
                 if not pred: 
                     pred = pred_batch               
         return pred
@@ -238,7 +253,7 @@ class Model(BaseModel):
         
         if pred:
             for key in pred_batch.keys():
-                pred[key] = concatenate([pred[key],pred_batch[key]])
+                pred[key] = np.concatenate([pred[key],pred_batch[key]])
         if not pred: 
             pred = pred_batch
             
@@ -352,13 +367,14 @@ class Model(BaseModel):
         
         if pred:
             for key in pred_batch.keys():
-                pred[key] = concatenate([pred[key],pred_batch[key]])
+                pred[key] = np.concatenate([pred[key],pred_batch[key]])
         if not pred: 
             pred = pred_batch
             
         return pred
 
-    def evaluate(self, dataset : Dataset | Batcher | StructuredDataset | dict, **kwargs) -> dict:
+
+    def evaluate(self, dataset: Dataset | Batcher | StructuredDataset | dict, **kwargs) -> dict:
         """
         Evaluate the performance of the fitter
         

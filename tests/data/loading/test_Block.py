@@ -1,9 +1,9 @@
 import pytest
+import dask.array as da 
 import xarray as xr 
 import numpy as np 
-import dask.array as da 
 
-from crest.data.loading.Block import Block
+from crest.data.loading import Block
 
 
 nan = np.nan 
@@ -29,7 +29,8 @@ example_coords = np.array([
 example_block = Block(**{
     'data'          : da.from_array(np.rollaxis(example_data, 0, 3)),
     'coords'        : da.from_array(np.rollaxis(example_coords, 0, 3)),
-    'mask'          : da.from_array(np.rollaxis(np.zeros_like(example_data, dtype=bool), 0, 3)),
+    'inbound_mask'  : da.from_array(np.rollaxis(np.ones_like(example_data, dtype=bool), 0, 3)),
+    'overlap_mask'  : da.from_array(np.rollaxis(np.zeros_like(example_data, dtype=bool), 0, 3)),
     'dims'          : ['x', 'y'],
     'original_dims' : (['x','y','features'], ['var_1']),
     'resolution'    : [1., 0.1],
@@ -191,7 +192,8 @@ be resolved whenever the next version is released.
 example_block_sparse = Block(**{
     'data'          : da.from_array(example_data_sparse),
     'coords'        : da.from_array(example_coords_sparse),
-    'mask'          : da.from_array(np.rollaxis(np.zeros_like(example_data, dtype=bool), 0, 3)),
+    'inbound_mask'  : da.from_array(np.rollaxis(np.ones_like(example_data, dtype=bool), 0, 3)),
+    'overlap_mask'  : da.from_array(np.rollaxis(np.zeros_like(example_data, dtype=bool), 0, 3)),
     'dims'          : ['x', 'y'],
     'original_dims' : (['x','y','features'], ['var_1']),
     'resolution'    : [1., 0.1],

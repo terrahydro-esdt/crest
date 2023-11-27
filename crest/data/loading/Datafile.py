@@ -1,23 +1,32 @@
-from collections.abc import Collection
+from dask.diagnostics import ProgressBar
+from collections.abc import Collection, Iterator, Callable
 from collections import defaultdict as dd
 from fsspec.mapping import FSMap
 from functools import cached_property, partial, cache
 from itertools import starmap, product
 from numbers import Number, Integral as Int
 from pathlib import Path
+from logging import Logger
+from typing import Union 
 
 import dask.array as da
 import xarray as xr
+import pandas as pd 
 import numpy as np
+import warnings
+import hashlib
+import typing
+import shutil
 import zarr
 import math
+import dask 
 
-from ...base.BaseAbstract import BaseAbstract
+from crest.base import BaseAbstract
 from .Block import Block
 from .Blockset import Blockset
 
 # Bool type which allows numpy bools as well
-Bool = bool | np.bool_
+Bool = Union[bool, np.bool_]
 
 
 class Datafile(BaseAbstract):
@@ -65,6 +74,25 @@ class Datafile(BaseAbstract):
         NaN in the `data`. Note that np.NaN and its integer representation
         (i.e. -2147483648) are always treated as NaN, regardless of this
         parameter.
+    preprocessors : list[Callable]
+        List of functions that are applied to the data (lazily) upon loading.
+        For example, a function could be given which filters the data based
+        on the value of a feature. The function signature should be::
+
+            def function(datafile: Datafile, data: xr.Dataset) -> xr.Dataset
+        
+        where the current datafile object will be given as the first parameter
+        (to allow interacting with features, extent, etc.); and the data itself
+        as the second parameter (as the opened xr.Dataset object). Any 
+        modifications should be applied to the data object inside the function,
+        and that data object then used as the return value of the function.
+        Example::
+
+            def filter_soilmoisture(datafile, data: xr.Dataset):
+                return data.where(data['soil_moisture'] >= 0.02)
+
+        Note that any functions given must be picklable if multiprocessing is
+        used with the CREST Batcher class (thus lambda functions are invalid).
     **kwargs
         Any additional kwargs are passed into xr.open_zarr when loading the
         given `location` (assuming it is not already an xr.Dataset object).
@@ -91,12 +119,13 @@ class Datafile(BaseAbstract):
 
 
     def __init__(self,
-        location      : Path | str | FSMap | xr.Dataset,
+        location      : Union[Path, str, FSMap, xr.Dataset],
         features      : list[str]                        = [],
         extent        : dict[str, Collection]            = {},
         window_depth  : dict[str, Int | Collection[Int]] = {},
         valid_percent : dict[str | tuple[str], Number]   = {},
         invalid_value : object                           = [],
+        preprocessors : list[Callable]                   = [],
         **kwargs
     ):
         self.location = location
@@ -106,46 +135,63 @@ class Datafile(BaseAbstract):
         self._window_depth  = window_depth.copy()
         self._valid_percent = valid_percent.copy()
         self._invalid_value = invalid_value
-        self._virtual_dims  = {}
+        self.preprocessors  = preprocessors
+        self.dataset_index  = 0 
+
+        # Store initialization parameter names for pickling
+        self._init_keys = list(self.__dict__) + ['_init_keys']
+
+        # Verify all given parameters are valid
         self._validate_parameters()
 
 
     def __getattr__(self, attr: str):
         """ Allow calls to be passed to the underlying xarray/dask object """
-        # Prevent recursive loop when there is an AttributeError in data/dask
-        if attr in ['data', 'dask']: return self.__getattribute__(attr)
+        if hasattr(Datafile, attr): return self.__getattribute__(attr)
 
         # Prevent recursive loop when pickling objects
-        if attr not in ['__getstate__', '__setstate__']:
-            if hasattr(self.data, attr): return getattr(self.data, attr)
-            if hasattr(self.dask, attr): return getattr(self.dask, attr)
+        if attr not in ['data', 'dask', '__getstate__', '__setstate__']:
+            try:
+                if hasattr(self.data, attr): return getattr(self.data, attr)
+                if hasattr(self.dask, attr): return getattr(self.dask, attr)
+            except: return self.__getattribute__(attr)
         return self.__getattribute__(attr)
 
 
     def __getstate__(self):
-        return {
-            'location' : self.location,
-            'features' : self.features,
-            'extent'   : self.extent,
-            '_kwargs'  : self._kwargs,
-            '_window_depth'  : self._window_depth,
-            '_valid_percent' : self._valid_percent,
-            '_invalid_value' : self._invalid_value,
-            '_virtual_dims'  : {},
-        }
+        """ Ensure unpickle-able objects are not included """
+        return {key: getattr(self, key) for key in self._init_keys}
 
 
-    def __setstate__(self, d):
-        self.__dict__.update(d)
+    def __repr__(self) -> str:
+        return f'Datafile[{self.label}]'
 
 
     @cached_property
     def _raw_data(self):
         """ Only read the zarr once necessary """
-        # If the given location isn't already an xr.Dataset, open it
         if isinstance(self.location, xr.Dataset):
-            return self.location
-        return xr.open_zarr(self.location, **self._kwargs)
+            raw = self.location
+        else:
+            # If the given location isn't already an xr.Dataset, open it
+            if not isinstance(self.location, FSMap):
+                location = zarr.DirectoryStore(self.location)
+            else: location = self.location
+            raw = xr.open_zarr(location, **self._kwargs)
+
+        # Handle the summary statistics 
+        if 'summary' in raw:
+
+            # If no extents are changed / preprocessors applied, raw_data statistics
+            # will be the same as data statistics
+            if not (len(self.preprocessors) or len(self.extent)):
+                self.__dict__['summary'] = raw['summary']
+            raw = raw.drop_vars(['summary', 'features', 'statistics'], errors='ignore')
+
+            # Set datetime dtype back to np.datetime64
+            if hasattr(raw, 'datetime') and np.issubdtype(raw.datetime.dtype, np.float64):
+                raw = raw.assign_coords(datetime=pd.to_datetime(raw.datetime))
+        return raw 
 
 
     @cached_property
@@ -153,8 +199,15 @@ class Datafile(BaseAbstract):
         """ Loaded xarray object """
         data = self._raw_data
 
+        # Apply any preprocessing functions
+        for func in self.preprocessors:
+            data = func(self, data)
+
         # Select only requested features
         data = data[self.features or data.keys()]
+
+        # Remove summary statistics
+        data = data.drop_vars(['summary', 'features', 'statistics'], errors='ignore')
 
         # Select only requested coordinates
         data = data.sel({k: slice(*ext) for k, ext in self.extent.items()})
@@ -175,17 +228,94 @@ class Datafile(BaseAbstract):
         # Convert to a DataArray and ensure data is backed by dask
         data = data.to_array('features').chunk({})
 
+        # Add Datafile configuration to the attributes
+        if 'Datafile.config' not in data.attrs:
+            data.attrs.update({
+                'Datafile.config'      : self.config,
+                'Datafile.config_hash' : self.config_hash,
+            })
+
         # Save the original coordinates for later return values
-        self.original_dims = (list(data.coords.keys()), data.features.to_numpy())
+        self.original_dims = (list(data.coords), data.features.to_numpy())
 
         # Transpose dimensions so they are in the correct order, and return
-        return data.transpose(*self.dims, ...)
+        order = sorted(set(data.coords) - {'features'})
+        return data.transpose(*order, ...)
+
+
+    @cached_property
+    def summary(self) -> xr.DataArray:
+        """ Return summary statistics for data """
+        # Ensure cached summary data is used if available
+        self._raw_data
+        if 'summary' in self.__dict__:
+            return self.__dict__['summary']
+
+        data  = self.data.to_dataset('features')
+        extra = dd(int, {'null' : data.isnull().sum})
+        stats = ['mean', 'std', 'min', 'max'] + list(extra)
+        coord = xr.Variable('statistics', stats) 
+        value = lambda k: getattr(data, k, extra[k])().to_array('features')
+        return xr.concat(map(value, stats), coord)
+
+
+    @property
+    def dask(self) -> da.Array:
+        """ DaskArray reference held by the xr.DataArray """
+        return self.data.data
+
+
+    @property
+    def name(self) -> str:
+        """ Return a name for this Datafile using the location if possible """
+        if isinstance(self.location, (Path, str)):
+            loc = Path(self.location)
+            if 'Cache' in loc.parts and len(loc.stem) == len(self.config_hash):
+                return f'{loc.parent.stem}_{loc.stem[:4]}'
+            return loc.stem
+        return f'{type(self.location).__name__}_{self.config_hash[:4]}'
+
+
+    @property
+    def label(self) -> str:
+        """ Label is the combination of Dataset index and Datafile name """
+        return f'{self.dataset_index}:{self.name}'
+
+
+    @property
+    def config(self) -> dict[str, str]:
+        """ JSON serializable representation of the Datafile configuration """
+        def f_repr(f):
+            """ Get the name of the function, and a hash of its bytecode """
+            name = getattr(f, '__name__', str(f))
+            try: code = hashlib.sha256(f.__code__.co_code).hexdigest()
+            except Exception as code: pass
+            return f'{name}: {code}'
+
+        config = dict(self.__getstate__())
+        config['preprocessors'] = list(map(f_repr, config['preprocessors']))
+        return {k: str(v) for k,v in config.items()}
+
+
+    @property
+    def config_hash(self) -> str:
+        """ Hash of the config dictionary, to use as a condensed label """
+        return hashlib.sha256(str(self.config).encode('utf-8')).hexdigest()
 
 
     @cached_property
     def dims(self) -> list[str]:
         """ Ordered coordinate dimensions """
-        return sorted(self._raw_data.coords.keys())
+        return sorted(set(self.data.coords) - {'features'})
+
+
+    @cached_property
+    def _virtual_dims(self) -> dict:
+        """ Maps {Dimension key : number of blocks} for virtual dimensions.
+            A dimension is virtual when it does not exist in this Datafile,
+            but does exist in other Datafiles that this Datafile is combined
+            with in a Dataset. """
+        return dict()
 
 
     @property
@@ -197,15 +327,13 @@ class Datafile(BaseAbstract):
     @cached_property
     def dtype(self) -> np.dtype:
         """ Create a composite datatype based on shapes of the data windows """
-        sizes  = {'features': len(self.features or self._raw_data.keys())} 
-        sizes |= self.window_total
-        d_type = max(self._raw_data.dtypes.values())
-        c_type = max(self._raw_data.coords.dtypes.values())
+        sizes = {'features': len(self.data.features)} 
+        sizes|= self.window_total
+        ctype = lambda dim: (dim, self.data[dim].dtype, (sizes[dim],))
         return np.dtype(
-            [('values', d_type, tuple(sizes.values()))] + 
-            [('coords', np.dtype(
-                [(dim, c_type, (size,)) for dim, size in sizes.items()])
-        )] )
+            [('values', self.data.dtype, tuple(sizes.values()))] +
+            [('coords', np.dtype(list(map(ctype, sizes))))]
+        )
 
 
     @cached_property
@@ -253,12 +381,15 @@ class Datafile(BaseAbstract):
     @cached_property
     def resolution(self) -> list:
         """ Coordinate resolution per axis.
-            For example:
+            
+            For example::
+
                 [1,2,3] -> resolution of 1
                 [3,6,9] -> resolution of 3
 
             If resolutions are non-uniform across a given axis, instead
-            return the full resolution vector for each axis:
+            return the full resolution vector for each axis::
+            
                 [1,3,6,10,20] -> resolution of [2,3,4,10]
 
             Note that if _any_ axes are non-uniform, vectors are returned for
@@ -301,12 +432,6 @@ class Datafile(BaseAbstract):
         return coords
 
 
-    @property
-    def dask(self) -> da.Array:
-        """ DaskArray reference held by the xr.DataArray """
-        return self.data.data
-
-
     def ensure_dims(self, dims: set[str]) -> None:
         """ Ensure any missing dimensions are added as virtual dimensions """
         missing = dims - set(self.dims)
@@ -328,6 +453,7 @@ class Datafile(BaseAbstract):
     def calculate_overlap(self,
         max_resolution : Collection,
         skip_dimension : Collection[Bool],
+        dimension_blks : Collection | None = None,
     ) -> dict[Int, Int]:
         """Calculate the required block overlap for the given max resolutions.
 
@@ -359,18 +485,21 @@ class Datafile(BaseAbstract):
             aren't all the same length.
 
         """
-        def calculate(dim, res, max_res, skip):
+        def calculate(dim, res, max_res, skip, blocks):
             if not self.is_uniform:
                 # Using mean/median here would be better for performance,
                 # but could miss some matches due to too little overlap
                 res = res.min() 
 
-            total = self.window_depth[dim].sum()
-            size  = self.window_depth[dim].max()
-            size += 0 if skip or (res==0) else ((max_res/2) / res)
+            if blocks > 1:
+                total = self.window_depth[dim].sum()
+                size  = self.window_depth[dim].max()
+                size += 0 if skip or (res==0) else ((max_res/2) / res)
+            else: size = 0
             return (self.dims.index(dim), math.ceil(np.nan_to_num(size)))
 
-        args = [self.dims, self.resolution, max_resolution, skip_dimension]
+        blks = dimension_blks if dimension_blks is not None else [2] * len(self.dims)
+        args = [self.dims, self.resolution, max_resolution, skip_dimension, blks]
         if len(set(map(len, args))) > 1:
             raise ValueError(f'Args not all the same length: {args}')
         return dict(map(calculate, *args))
@@ -482,6 +611,7 @@ class Datafile(BaseAbstract):
     def apply_overlap(self,
         overlaps : dict[Int, Int] | Int,
         boundary : dict[Int, Number] | Number | str = np.nan,
+        optimize : bool = True,
     ):# -> Iterator[Block]:
         """Create a Blockset containing Blocks with the overlap applied.
 
@@ -498,6 +628,10 @@ class Datafile(BaseAbstract):
             'nearest', 'none', or an array value (so that value will fill
             the boundary). For more information, see the dask documentation:
             https://docs.dask.org/en/stable/generated/dask.array.overlap.overlap.html
+        optimize : bool
+            Whether dask.optimize should be used on the full task graph. This
+            can speed up access when batching data, but incurs a higher cost
+            when initially generating sample blocks.
 
         Notes
         -----
@@ -507,11 +641,15 @@ class Datafile(BaseAbstract):
         chunk size will still generate correct results, but this may not be
         the case in general - needs further testing. It appears the failure mode
         is when there needs to be more than one chunk included in the overlap,
-        on the interior of the array:
+        on the interior of the array::
+
             [[1,2], [3,4], [5,6], [7,8]] with an overlap of 3 would generate:
             [[nan, nan, nan, 1, 2, 3, 4], [1,2,3,4,5,6], [3,4,5,6,7,8], ...]
-        instead of the expected:
+        
+        instead of the expected::
+        
             [[nan, nan, nan, 1, 2, 3, 4, 5], [nan, 1, 2, 3, 4, 5, 6, 7], ...]
+        
         because the third element requires an additional chunk.
         A common case where this does not fail is when the last chunk is too
         small, as the nan filling will correctly include the required number
@@ -548,7 +686,7 @@ class Datafile(BaseAbstract):
 
         def set_id(array):
             """ Set all values in a block equal to its own block id """
-            f = lambda x, block_id: np.full_like(x, get_id(block_id), dtype='int32')
+            f = lambda x, block_id: np.full_like(x, get_id(block_id), 'int32')
             return array.map_blocks(f, dtype='int32')
 
         def mask_id(array):
@@ -558,10 +696,14 @@ class Datafile(BaseAbstract):
 
         # Ensure name=False to avoid hashing all values in the array
         to_darray = partial(da.from_array, name=False)
+        
+        # Create mask indicating out-of-bound elements in each block
+        inbound_mask = np.ones(shapes + (1,), dtype=bool)
+        inbound_mask = to_darray(inbound_mask, chunks + ((1,),))
 
         # Create mask indicating overlapped elements in each block
-        mask = np.zeros(shapes + (1,), dtype=bool)
-        mask = set_id( to_darray(mask, chunks + ((1,),)) )
+        overlap_mask = np.zeros(shapes + (1,), dtype=bool)
+        overlap_mask = set_id( to_darray(overlap_mask, chunks + ((1,),)) )
 
         # Clip block extents to avoid duplication
         # extents = [max(c)+o*2 for c,o in zip(self.chunks, overlaps.values())]
@@ -569,32 +711,35 @@ class Datafile(BaseAbstract):
         # Create overlapping blocks, tiling virtual dimensions where necessary
         virtual = [self._virtual_dims.get(d, 1) for d in self.dims] + [1]
         repeat  = partial(da.tile, reps=virtual)
+        daskopt = lambda x: dask.optimize(x)[0] if optimize else x
+        blocker = lambda x: daskopt(repeat(x)).blocks
         overlap = partial(dask_overlap, **{
             'depth'         : overlaps,
             'boundary'      : boundary,
             'allow_rechunk' : False,
         })
 
-        # Separate data/coords/mask into independent blocks
-        d_blocks = repeat( overlap(self.dask) ).blocks
-        c_blocks = repeat( overlap(self.coord_array) ).blocks
-        m_blocks = repeat( mask_id(overlap(mask)) ).blocks
-
-        # Ensure we're generating the same number of blocks for all grids
-        is_equal = lambda a: np.prod(a) == np.prod(blocks)
-        assert(is_equal(d_blocks.shape[:-1])), [d_blocks.shape, blocks]
-        assert(is_equal(c_blocks.shape[:-1])), [c_blocks.shape, blocks]
-        assert(is_equal(m_blocks.shape[:-1])), [m_blocks.shape, blocks]        
+        # Separate data/coords/masks into independent blocks
+        d_blocks = blocker( overlap(self.dask) )
+        c_blocks = blocker( overlap(self.coord_array) )
+        i_blocks = blocker( overlap(inbound_mask, boundary=0) )
+        o_blocks = blocker( mask_id(overlap(overlap_mask, boundary=-1)) )
 
         # Define args/kwargs for the Block objects that will be created
-        block_grids = [d_blocks, c_blocks, m_blocks]
+        block_grids = [d_blocks, c_blocks, i_blocks, o_blocks]
         block_kwarg = {
             'dims'          : self.dims,
             'original_dims' : self.original_dims,
             'window_depth'  : self.window_depth,
             'valid_percent' : self.valid_percent,
             'invalid_value' : self.invalid_value,
+            'label'         : self.label,
         }
+
+        # Ensure we're generating the same number of blocks for all grids
+        is_equal = lambda a: np.prod(a) == np.prod(blocks)
+        b_shapes = [block.shape[:-1] for block in block_grids]
+        assert(all(map(is_equal, b_shapes))), [blocks, b_shapes]     
 
         # Non-uniform coordinate grids use different resolutions in each block
         if not self.is_uniform:
@@ -621,9 +766,73 @@ class Datafile(BaseAbstract):
         else: block_kwarg['resolution'] = self.resolution 
 
         # Returns list of functions to allow lazy creation of the Block objects
-        gen_block = lambda i: Block(*[g[i] for g in block_grids], **block_kwarg)
-        lazy_func = lambda i: cache(lambda: gen_block(i))
+        gen_block = lambda i: (lambda: Block(*[g[i] for g in block_grids], **block_kwarg))
+        lazy_func = gen_block#lambda i: cache(lambda: gen_block(i))
         return map(lazy_func, product(*map(range, blocks)))
+
+
+    def _cache(self, 
+        overwrite : bool = False, 
+        cache_dir : Path | str  = '.',
+    ):
+        """Cache data in a new zarr database for faster access.
+
+        Parameters
+        ----------
+        overwrite : bool
+            Flag indicating whether already cached data should be overwritten.
+            If False, metadata (but not the data values themselves) are checked
+            against the cached data to verify it is the same. This does not
+            verify that the data itself is the same, and so changing e.g. one
+            of the preprocessor function definitions, might result in the wrong 
+            data being used. 
+        cache_dir : Path | str
+            Location for the cached data to be stored. By default, data is 
+            cached in `./Cache`. 
+
+        """
+        data = self.data.to_dataset('features')
+        dest = Path(cache_dir, 'Cache', self.name, f'{self.config_hash}.zarr')
+        dest.parent.mkdir(exist_ok=True, parents=True)
+
+        # Erase virtual dimensions
+        for dim in data.coords:
+            if dim in [d for d,v in zip(self.dims, self.virtual) if v]:
+                data = data.isel({dim: 0}, drop=True)
+
+        # Include summary statistics
+        data['summary'] = self.summary
+
+        # Verify cached data is equivalent
+        if (not overwrite) and dest.exists():
+            try: 
+                with xr.open_zarr(dest) as cache:
+                    overwrite = not all(
+                        getattr(data, attr) == getattr(cache, attr)
+                        for attr in ['dims', 'attrs', 'nbytes', 'chunksizes']
+                    ) and bool(xr.align(data, cache, join='exact'))
+            except: overwrite = True
+
+        # Reinitialize this Datafile with the new cache
+        # Anything handled by the cache (e.g. extent) can be dropped
+        config = self.__getstate__()
+        config.update({
+            'location'      : dest,
+            'features'      : [],
+            'extent'        : {},
+            'preprocessors' : [],
+        })
+        self.__dict__.clear()
+        self.__dict__.update(config)
+
+        # Write the data to the destination
+        if overwrite or (not dest.exists()):
+            if dest.exists(): shutil.rmtree(dest)
+            print(f'\nCaching {self.name}...')
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore')
+                with ProgressBar(): data.to_zarr(dest)
+        else: print(f'Cache exists for {self.name}')
 
 
     def _validate_parameters(self) -> None:
@@ -642,7 +851,6 @@ class Datafile(BaseAbstract):
         if not isinstance(self.location, (xr.Dataset, FSMap)):
             if not Path(self.location).exists():
                 raise FileNotFoundError(f'File not found: {self.location}')
-            self.location = zarr.DirectoryStore(self.location)
 
         # elif isinstance(self.location, FSMap):
         #     if not self.location.fs.exists(self.location.root):
