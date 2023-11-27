@@ -1,7 +1,9 @@
-from collections.abc import Collection
+from collections.abc import Collection, Callable
 from functools import cached_property, reduce
 from itertools import starmap
 from numbers import Number, Integral as Int
+from logging import Logger 
+from typing import Union 
 
 import dask.array as da 
 import bottleneck as bn
@@ -9,10 +11,9 @@ import xarray as xr
 import pandas as pd
 import numpy as np 
 
-from ...base.BaseAbstract import BaseAbstract
+from crest.base import BaseAbstract
+from crest.utils import Stopwatch
 
-from dask.diagnostics import Profiler, ResourceProfiler, CacheProfiler
-import pickle as pkl
 
 class Block(BaseAbstract):
     """Class which wraps a dask block. 
@@ -23,9 +24,12 @@ class Block(BaseAbstract):
         Dask Array object containing the data within the block.
     coords        : da.Array
         Dask Array object containing the coordinates which define the block.
-    mask          : da.Array
+    inbound_mask  : da.Array
+        Dask Array object indicating which elements are inside the bounds
+        of the data (i.e. not padding). Note virtual dims are always in-bound.
+    overlap_mask  : da.Array
         Dask Array object indicating which elements are part of an overlapped
-        chunks (True), vs part of the original center chunk (False).
+        chunk (True), vs part of the original center chunk (False).
     dims          : Collection[str]
         Dimension names, ordered the same as the `data` axes.
     original_dims : Collection
@@ -58,43 +62,78 @@ class Block(BaseAbstract):
     def __init__(self, 
         data          : da.Array,
         coords        : da.Array,
-        mask          : da.Array,
-        resolution    : Collection | da.Array,
+        inbound_mask  : da.Array,
+        overlap_mask  : da.Array,
+        resolution    : Union[Collection, da.Array],
         dims          : Collection[str],
         original_dims : Collection,
         window_depth  : dict[str, np.ndarray] = {},#dict[str, np.ndarray[Int]] = {},
         valid_percent : dict[tuple[str], Number]   = {},
         invalid_value : Collection[object]         = [],
         block_count   : int                        = 1,
+        block_index   : int                        = 0,
+        label         : str                        = '',
     ):
-        self._data   = data
-        self._coords = coords
-        self._mask   = mask
-        self.dims    = dims
+        self._data    = data
+        self._coords  = coords
+        self._inbound = inbound_mask
+        self._overlap = overlap_mask
+        self.dims     = dims
+        self.label    = label
         self.original_dims = original_dims
         self._resolution   = resolution
         self.window_depth  = window_depth
         self.valid_percent = valid_percent
         self.invalid_value = invalid_value
         self.block_count   = block_count
+        self.block_index   = block_index
+
+        # Shape sanity checks
+        arrays = [data, coords, inbound_mask, overlap_mask]
+        shapes = [v.shape[:-1] for v in arrays]
+        assert(len(set(shapes)) == 1), shapes
+        assert(set(map(len, shapes)) == {len(dims)}), [shapes, dims]
+
+
+    def __repr__(self) -> str:
+        return f'Block[{self.label}]'
+
+
+    @cached_property
+    def benchmark(self):
+        """ Return a Stopwatch function for benchmarking """
+        debug = print if not hasattr(self, 'logger') else self.logger.debug
+        return lambda label, log=debug: Stopwatch(
+            prefix=f'\t\t\t{self}.{label}',
+            logger=log,
+            silent=not hasattr(self, 'logger'),
+        )
 
 
     @cached_property
     def data(self) -> np.ndarray:
         """ Only compute dask data array upon first use """
-        return self._data.compute()
+        with self.benchmark(f'data {self._data.shape}'):
+            return self._data.compute()
 
 
     @cached_property
     def coords(self) -> np.ndarray:
         """ Only compute dask coords array upon first use """
-        return self._coords.compute()
+        with self.benchmark(f'coords {self._coords.shape}'):
+            return self._coords.compute()
 
 
     @cached_property
-    def mask(self) -> np.ndarray:
+    def inbound_mask(self) -> np.ndarray:
         """ Only compute dask mask array upon first use """
-        return self._mask.compute()
+        return self._inbound.compute()
+
+
+    @cached_property
+    def overlap_mask(self) -> np.ndarray:
+        """ Only compute dask mask array upon first use """
+        return self._overlap.compute()
 
 
     @cached_property
@@ -109,12 +148,25 @@ class Block(BaseAbstract):
         sizes = {'features': self._data.shape[-1]} | self.window_total
         return np.dtype(
             [('values', self._data.dtype, tuple(sizes.values()))] + 
-            [('coords', np.dtype(
-                [(dim, self._coords.dtype, (size,)) for dim, size in sizes.items()])
+            [('coords', np.dtype([
+                (dim, self._coords.dtype, (size,))
+                for dim, size in sizes.items() ])
         )] )
 
 
-    @cached_property
+    @property
+    def shape(self) -> tuple[int]:
+        """ Shape for all dimensions, excluding the feature dimension """
+        return self._coords.shape[:-1]
+
+
+    @property
+    def ndim(self) -> int:
+        """ Number of dimensions, excluding the feature dimension """
+        return len(self.dims)
+
+
+    @property
     def axes(self) -> dict[str, Int]:
         """ {Dimension key: axis number} """
         return {dim: i for i, dim in enumerate(self.dims)}
@@ -136,7 +188,7 @@ class Block(BaseAbstract):
         # some timing tests to see if using an API equivalent to dense (as 
         # is currently implemented) results in any slowdown / memory issues. 
 
-        def window_count(valid: np.ndarray, keys_pct: tuple): 
+        def window_count(valid: np.ndarray, keys_pct: tuple) -> np.ndarray: 
             """ Calculate the number of elements in the N-d rolling window """
             keys, percent = keys_pct
             
@@ -155,8 +207,8 @@ class Block(BaseAbstract):
             valid_window = view[:, counts >= (percent * n_total)][:, None]
             valid[valid] = (idxs[..., None] == valid_window).all(0).any(-1)
             return valid 
-            # return idxs[ counts >= (percent * n_total) ]
 
+        # return idxs[ counts >= (percent * n_total) ]
         # Create a mask indicating valid elements, and extract indices 
         data  = self.data.data 
         valid = ~self.invalid(data)
@@ -164,7 +216,7 @@ class Block(BaseAbstract):
 
         # Remove indices outside of coordinate bounds (except virtual)
         inbound = np.isfinite(self.coords)
-        inbound|= np.isnan(self.coords).all(tuple(range(self.coords.ndim - 1)))
+        inbound|= np.isnan(self.coords).all(tuple(range(self.ndim)))
         return self.data.coords[:, valid & inbound.all(-1).flatten()][:-1].T
         # return valid & inbound.all(-1).flatten()
 
@@ -174,70 +226,65 @@ class Block(BaseAbstract):
         """ Determine indices for all valid sample windows in the block """
         if self.sparse: return self.valid_windows_sparse
 
-        def moving_sum(invalid: np.ndarray, key: str) -> np.ndarray:
+        def moving_sum(invalid: np.ndarray, keys_pct: tuple) -> np.ndarray:
             """ Fast moving sum using bottleneck """
-            if np.issubdtype(invalid.dtype, bool): moving_sum.expon = 0
-            else:                                  moving_sum.expon+= 1
+            if invalid.all(): return invalid
 
-            axis = self.axes[key]
-            size = self.window_total[key]
-            exp  = moving_sum.expon
+            keys, percent = keys_pct
+            
+            n_total = np.prod([self.window_total[k] for k in keys])
+            maximum = int((1-percent) * n_total)
 
-            # Calculate window offets and padding
-            offsets = [slice(None)] * axis + [slice(size - 1, None)]
-            padding = [(0,0)] * invalid.ndim 
-            padding[axis] = self.window_depth[key]
+            # Multiple axes can be used to define a combined valid percent 
+            # e.g. {(ax1, ax2): 0.8} -> combination of the two must have 80% valid
+            for exp, key in enumerate(keys):
+                axis = self.axes[key]
+                size = self.window_total[key]
 
-            # Pad the invalid mask in order to center the window
-            invalid = invalid.astype('int32') # Bottleneck is faster w/ int
-            invalid = np.pad(invalid, padding, constant_values=size ** exp)
-            invalid = bn.move.move_sum(invalid, size, axis=axis)
+                # Calculate window offets and padding
+                offsets = (slice(None),) * axis + (slice(size - 1, None),)
+                padding = [(0,0)] * invalid.ndim 
+                padding[axis] = self.window_depth[key]
 
-            # Offset the new invalid elements so that the window is centered
-            return invalid[tuple(offsets)]
+                # Pad the invalid mask in order to center the window
+                invalid = invalid.astype('int32') # Bottleneck is faster w/ int
+                invalid = np.pad(invalid, padding, constant_values=size ** exp)
 
-        # Create a boolean mask indicating invalid elements
-        invalid = self.invalid()
+                # Offset the new invalid elements so that the window is centered
+                invalid = bn.move.move_sum(invalid, size, axis=axis)[offsets]
+            return invalid > maximum
 
-        # Calculate the running invalid mask by iterating over valid percents
-        for keys, percent in self.valid_percent.items():   
-            if (~invalid).any():         
-                n_total = np.prod([self.window_total[k] for k in keys])
-                maximum = int((1-percent) * n_total)
-                invalid = reduce(moving_sum, keys, invalid) > maximum
+        # Create mask indicating invalid elements, checking shortcuts first
+        total_percent = round(sum(self.valid_percent.values()), 5)
 
-        # Allowing overlapped elements to be window centers is complicated:
-        # in some cases, it's necessary in order to get all valid matchups;
-        # in other cases, it causes duplicates. It's unclear whether there's
-        # a universal way to avoid duplicates but still grab all valid samples.
-        # The current attempt to address this issue is to allow overlap centers
-        # when there are multiple blocks to match up, but disallow when there
-        # is only a single block. Uncertain at the moment whether this solves 
-        # the root issue. 
-        # Two motivating examples:
-        # [1, 2, 3, 4] | [5] -> window of (2,0) -> allowing overlap centers
-        #    creates duplicate of [3, 4, 5] 
-        # [0] | [5] | [10]; [1, 2, 3] | [4, 5, 6] | [7, 8, 9] -> window of (2,0)
-        #    disallowing overlap centers misses matchups like [5]+[5,6,7] 
+        # If 0% of elements need to be valid, we can just return the indices
+        if total_percent == 0:
+            return np.indices(self.shape).reshape((self.ndim, -1))
 
-        # Mask out overlapped elements, as they cannot be window centers
-        if self.block_count == 1: invalid |= self.mask
+        # If all elements in window must be valid, we can collapse the features
+        elif total_percent >= len(self.valid_percent):
+            invalid = self.invalid().any(-1, keepdims=True)
 
-        # Offset the final mask indices in order to center the window
-        # offset  = np.array([[self.window_depth[dim][0]] for dim in self.dims], dtype='int32')
+        # Otherwise, we need to mask independently before collapsing features
+        else: invalid = self.invalid()
 
-        # Mask indices are already centered
-        indices = np.array(np.where((~invalid).all(-1)), dtype='int32')
+        # Calculate the running invalid mask over all dimensions
+        invalid = reduce(moving_sum, self.valid_percent.items(), invalid)
 
-        # Remove indices outside of coordinate bounds (except virtual)
-        inbound = np.isfinite( self.coords[tuple(indices)] )
-        inbound|= np.isnan(self.coords).all(tuple(range(self.coords.ndim - 1)))
-        return indices[:, inbound.all(1)]
+        # Mask overlapped elements, as they cannot be window centers
+        if self.block_index == 0: 
+            invalid |= self.overlap_mask
+
+        # Mask elements outside the bounds of the data (except virtual)
+        invalid |= ~self.inbound_mask
+
+        # Collapse feature dimension, since all features must be valid
+        return np.array(np.where((~invalid).all(-1)), dtype='int32')
 
 
     @cached_property
     def valid_coords(self) -> np.ndarray:
-        """ Retrieve the coordinate values for the valid locations """
+        """ Coordinate values for the valid locations """
         # if self.sparse:
             # return self.coords.data.reshape(-1, self.coords.shape[-1])[self.valid_windows]
         return self.coords[tuple(self.valid_windows)]
@@ -245,7 +292,7 @@ class Block(BaseAbstract):
 
     @cached_property
     def valid_data(self) -> np.ndarray:
-        """ Retrieve the center data values for the valid locations """
+        """ Center data values for the valid locations """
         # if self.sparse:
         #     return self.data.data.reshape(-1, self.data.shape[-1])[self.valid_windows]
         return self.data[tuple(self.valid_windows)]
@@ -253,7 +300,7 @@ class Block(BaseAbstract):
 
     @cached_property
     def valid_resolution(self) -> np.ndarray:
-        """ Retrieve resolution for the valid location, parsing left/right if necessary """
+        """ Resolution for valid locations, parsing left/right if necessary """
         if self.is_uniform: 
             return np.array(self.resolution)
 
@@ -279,7 +326,7 @@ class Block(BaseAbstract):
         return not isinstance(self._resolution[0], da.Array)
 
 
-    def invalid(self, data: np.ndarray | None = None):
+    def invalid(self, data: Union[np.ndarray, None] = None):
         """Element-wise mask of invalid values in the given array.
 
         Parameters
@@ -315,9 +362,9 @@ class Block(BaseAbstract):
     def cleanup(self):
         """ Delete cached objects to free memory; uncertain whether
             this is actually necessary, and may cause minor slowdowns """
-        # for key in ['valid_coords', 'valid_windows', 'data', 'coords']:
-        #     if key in self.__dict__:
-        #         del self.__dict__[key]
+        for key in ['valid_coords', 'valid_windows', 'data', 'coords']:
+            if key in self.__dict__:
+                del self.__dict__[key]
 
     
     def extract(self, matches: np.ndarray):# -> dict[Int, xr.Dataset]:

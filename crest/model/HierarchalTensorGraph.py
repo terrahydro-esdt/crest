@@ -1,12 +1,16 @@
+from collections.abc import Callable
 from functools import cache
-import networkx as nx
+from typing import Union
 from copy import deepcopy
+
+# networkx breaks numpy if it's not also loaded, due to nx.lazy_import modifying sys modules
+import numpy as np 
+import networkx as nx
 import marshal, base64
 import traceback
-from .TensorGraph import TensorGraph
-from .TensorGraph import ImproperTensorGraphError
+
+from .TensorGraph import TensorGraph, ImproperTensorGraphError
 from .graphs.NetworkXGraph import NetworkXGraph
-from typing import Union
 
 
 class HierarchalTensorGraph(TensorGraph):
@@ -35,7 +39,7 @@ class HierarchalTensorGraph(TensorGraph):
        in the graph. If name is None, it will default to 
        ['name', '__name__', '__qualname__']. 
 
-    node : callable, optional
+    node : Callable, optional
        A callable function to initalize a HTG. If set, a
        single node (basenode) HTG is created.
 
@@ -47,7 +51,12 @@ class HierarchalTensorGraph(TensorGraph):
 
     """
 
-    def __init__(self, node: callable = None, name: str = None, inputs: dict = {}, outputs: dict = {}):
+    def __init__(self, 
+        node    : None | Callable = None, 
+        name    : None | str = None, 
+        inputs  : dict = {}, 
+        outputs : dict = {},
+    ):
 
         self.name = name or HierarchalTensorGraph.get_name(node)
         self.node = node or self
@@ -89,7 +98,7 @@ class HierarchalTensorGraph(TensorGraph):
         self.__dict__ = d
 
     @staticmethod
-    def serialize_callable(node: callable):
+    def serialize_callable(node: Callable):
         """
 
         Serialize the node object based on the type we have inferred.
@@ -97,7 +106,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         Parameters
         ----------
-        obj : callable, extends HierarchalTensorGraph | Marshal
+        obj : Callable, extends HierarchalTensorGraph | Marshal
              The object from which we determine node type.
 
         """
@@ -160,7 +169,7 @@ class HierarchalTensorGraph(TensorGraph):
             raise ImproperTensorGraphError(
                 f'Need deserialize function for base-node type')
 
-    def equals(self, node: callable) -> bool:
+    def equals(self, node: Callable) -> bool:
         """ Check if the given node is the same as this node """
 
         if (self.node and self.node.is_empty):
@@ -264,7 +273,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         Parameters
         ----------
-        obj : callable, HierarchalTensorGraph
+        obj : Callable, HierarchalTensorGraph
              The object from which to get the name
 
         """
@@ -276,7 +285,12 @@ class HierarchalTensorGraph(TensorGraph):
             return value or str(obj)
         return HierarchalTensorGraph.get_name(value)
 
-    def rename_io(self, inputs_map: dict = None, outputs_map: dict = None, node: str | tuple = None):
+
+    def rename_io(self, 
+        inputs_map  : None | dict = None, 
+        outputs_map : None | dict = None, 
+        node        : None | str | tuple  | TensorGraph = None,
+    ):
         """ 
             Sets any renaming of input/output tensors needed.
 
@@ -304,6 +318,7 @@ class HierarchalTensorGraph(TensorGraph):
             if not isinstance(outputs_map, dict):
                 raise ImproperTensorGraphError('outputs_map must be a dict')
             self[node]._outputs_map = outputs_map
+
 
     def search(self, name: str, partial: bool = False) -> dict:
         """
@@ -373,19 +388,16 @@ class HierarchalTensorGraph(TensorGraph):
         """
         return HierarchalTensorGraph(lambda x: x, name)
 
-    def get_node(self, node: Union[str, callable]) -> 'HierarchalTensorGraph':
-        """
-        Wrap the given node in a HTG and add to its graph if necessary.
+    def get_node(self, node: Union[str, Callable, TensorGraph]) -> 'HierarchalTensorGraph':
+        """Wrap the given node in a HTG and add to its graph if necessary.
 
         Parameters
         ----------
         node : str, callable, or HTG
-            - If a callable is passed, it is wrapped into a HTG and added to
-            the graph if it doesn't yet exist.
-            - If a string is passed, the HTG (which must already exist in
-            the graph) is returned.
-            - If a HTG is passed, it is added to the graph if it doesn't yet
-            exist.
+            If a callable is passed, it is wrapped into a HTG and added to
+            the graph if it doesn't yet exist. If a string is passed, the HTG 
+            (which must already exist in the graph) is returned. If a HTG is passed, 
+            it is added to the graph if it doesn't yet exist.
 
         Returns
         -------
@@ -401,6 +413,7 @@ class HierarchalTensorGraph(TensorGraph):
             - If node is not callable, a string, or a HierarchalTensorGraph
 
         """
+
         if not (isinstance(node, str) or isinstance(node, HierarchalTensorGraph) or callable(node)):
             message = f'node must be either callable, a string, or a HierarchalTensorGraph'
             raise ImproperTensorGraphError(message)
@@ -461,23 +474,22 @@ class HierarchalTensorGraph(TensorGraph):
 
         return node
 
-    def add_node(self, node: Union[callable, 'HierarchalTensorGraph']):
+    def add_node(self, node: Union[Callable, TensorGraph]):
         """
         Add a node to the HierarchalTensorGraph.
 
         Parameters
         ----------
-        node : callable, or HierarchalTensorGraph
-            - If a callable is passed, it is wrapped into an HTG and added to
-            the graph if it doesn't yet exist.
-            - If an HTG is passed, it is added to the graph if it doesn't yet
-            exist.
+        node : Callable, or HierarchalTensorGraph
+            If a callable is passed, it is wrapped into an HTG and added to
+            the graph if it doesn't yet exist. Otherwise, if an HTG is passed, 
+            it is added to the graph if it doesn't yet exist.
 
         Raises
         -------
-
         ImproperTensorGraphError
-            -if not callable or a HierarchalTensorGraph
+            If not callable or a HierarchalTensorGraph.
+
         """
 
         if not (callable(node) or isinstance(node, HierarchalTensorGraph)):
@@ -537,7 +549,7 @@ class HierarchalTensorGraph(TensorGraph):
         message = f'Unrecognized node type. Must be of type str, callable, or HierarchalTensorGraph'
         raise ImproperTensorGraphError(message)
 
-    def add_edge(self, source: Union[str, callable], target: Union[str, callable], **attr):
+    def add_edge(self, source: Union[str, Callable], target: Union[str, Callable], **attr):
         """
 
         Add an edge between the source and target nodess.
@@ -545,10 +557,10 @@ class HierarchalTensorGraph(TensorGraph):
         Parameters
         ----------
 
-        source : str, callable, HierarchalTensorGraph
+        source : str, Callable, HierarchalTensorGraph
              The source from which to begin the edge
 
-        target : str, callable, HierarchalTensorGraph
+        target : str, Callable, HierarchalTensorGraph
              The sink from which to end the edge
 
         Raises
@@ -600,9 +612,9 @@ class HierarchalTensorGraph(TensorGraph):
             self.add_edge(*i)
 
     def __repr__(self):
-        return f'HierarchalTensorGraph("{self.name}", id={id(self)}) '
+        return f'HierarchalTensorGraph("{self.name}", id={id(self)})'
 
-    def __getitem__(self, path: str | tuple) -> 'HierarchalTensorGraph':
+    def __getitem__(self, path: str | tuple | TensorGraph) -> 'HierarchalTensorGraph':
         """ Retrieve the node which has the given name from our graph
 
         Parameters
@@ -658,7 +670,7 @@ class HierarchalTensorGraph(TensorGraph):
             raise ImproperTensorGraphError(
                 f'node with path = {path} not in graph.')
 
-    def __contains__(self, path: str | tuple) -> bool:
+    def __contains__(self, path: str | tuple | TensorGraph) -> bool:
         """ Check if a node with the given name is in our graph.
 
         Parameters

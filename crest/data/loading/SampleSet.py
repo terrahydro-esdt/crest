@@ -1,9 +1,11 @@
 from collections.abc import Collection
+from typing import Union
+
 import xarray as xr
 import numpy as np 
 
-from ...base.BaseSet import BaseSet
-from ...utils.partial_product import partial_product
+from crest.base import BaseSet
+from crest.utils import partial_product
 from .Sample import Sample
 
 
@@ -18,12 +20,14 @@ class SampleSet(BaseSet):
     the last minute - as the memory footprint of several lists is much smaller
     than the cartesian product of those lists.
     
-    The raw data windows used to initialize this object can be understood as:
+    The raw data windows used to initialize this object can be understood as::
+
         [ 
           [Datafile_1 window_1, Datafile_1 window_2, ...], # Datafile_1 windows
           [Datafile_2 window_1, Datafile_2 window_2, ...], # Datafile_2 windows
           ...
         ]
+
     where a Datafile window is the window of data extracted from a given
     Datafile, using the given window_depth definitions (e.g. 3 x 3 x 2 
     window [latitude x longitude x time]).
@@ -51,6 +55,7 @@ class SampleSet(BaseSet):
         Samples rather than a single SampleSet object.
 
     """
+    
     def __init__(self, 
         windows   : Collection[Collection],
         singleton : bool = False,
@@ -87,7 +92,7 @@ class SampleSet(BaseSet):
         return np.sum(self.n_samples)
 
     
-    def __getitem__(self, idx) -> Sample | np.ndarray:#[Sample]:
+    def __getitem__(self, idx) -> Union[Sample, np.ndarray]:#[Sample]:
         """Performs the lazy cartesian product over data windows.
         
         Notes

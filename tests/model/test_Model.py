@@ -1,12 +1,13 @@
 import pytest
+import numpy as np
+
 from tensorflow.keras.layers import Dense, Dropout
 from tensorflow.keras import Sequential
 from tensorflow import TensorSpec
-from crest import HierarchalTensorGraph
-from crest import Model
-import numpy as np
-from crest.data.loading.StructuredDataset import StructuredDataset
-from crest.data.Batcher import Batcher
+
+from crest import HierarchalTensorGraph, Model
+from crest.data.loading import StructuredDataset
+from crest.data import Batcher
 
 
 # Temporary workaround for Heisenbug:
@@ -46,7 +47,7 @@ def test_Model():
 
     # Build and fit the Model
     model = Model(htg)
-    model.build(**{
+    model.compile(**{
         'optimizer': 'Adam',
         'loss': 'mean_absolute_error'
     })
@@ -117,7 +118,7 @@ def test_model_exhaust():
 
     # Build and fit the Model
     model = Model(htg)
-    model.build(**{
+    model.compile(**{
         'optimizer': 'Adam',
         'loss': 'mean_absolute_error'
     })

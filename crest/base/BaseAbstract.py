@@ -1,10 +1,15 @@
+from collections.abc import Callable
+from functools import partial
 from itertools import starmap
 from typing import get_args, get_origin, _type_repr
 from typing import Union, Iterator, TypeVar
 from types import UnionType
 from abc import ABCMeta, ABC
 
+import weakref
 import inspect
+import code
+
 
 
 def type_repr(val=None, T=None, _maxdepth=4):
@@ -16,9 +21,13 @@ def type_repr(val=None, T=None, _maxdepth=4):
 
     # Recurse on val if it's iterable (and not a str)
     if hasattr(val, '__iter__') and not isinstance(val, str) and _maxdepth:
-        try:    ele_types = type_repr(next(iter(val)), T, _maxdepth-1)
-        except: ele_types = '?'
-        container = f'{container}[{ele_types}]'
+        recurse = partial(type_repr, T=T, _maxdepth=_maxdepth-1)
+        try:
+            item = next(iter(getattr(val, 'items', lambda: val)()))
+            if hasattr(val, 'items'): ele_type = ', '.join(map(recurse, item))
+            else:                     ele_type = recurse(item)
+        except:                       ele_type = '?'
+        return f'{container}[{ele_type}]'
     return container
 
 
@@ -92,81 +101,120 @@ class EnsureTypes:
     underlying object attributes when a callable object is wrapped.
 
     """
-    def __init__(self, cls, f):
-        self.cls = cls
-        self.f = f 
+    def __init__(self, cls_obj: 'BaseAbstract', callable_obj: Callable):
+        self._cls_repr = repr(cls_obj)
+        self._callable = callable_obj
+
 
     def __repr__(self): 
-        return self.cls.__repr__()
+        return f'{self._cls_repr}.{self._callable.__code__.co_name}'
+
 
     def __call__(self, *args, **kwargs):
         """ Wrap the function with an explicit type checker """
-        f = self.f
-        if not hasattr(f, '__code__'): return f(*args, **kwargs)
 
         # Extract the function parameters and respective annotations
-        f_name   = f.__code__.co_name
-        f_params = f.__code__.co_varnames 
-        f_types  = f.__annotations__
-        keywords = inspect.getcallargs(f, *args, **kwargs)
+        function = self._callable
+        annotate = function.__annotations__
+        keyvalue = inspect.getcallargs(function, *args, **kwargs)
+        keyvalue|= {'return': function(*args, **kwargs)}
 
-        def check_type(key, value):
-            """ Verify types match their annotations """
-            if key in f_types and not istype(value, f_types[key]):
-                require = type_repr(T=f_types[key])
-                actual  = type_repr(value)
-                message = f'{self.cls}.{f_name} parameter "{key}" must be'
-                message+= f' of type {require}, but found type {actual}'
-                raise TypeError(message)
-            return value
+        # Iterate over all parameters and verify types match the annotations
+        [self.verify_type(value, annotate[key], f'{self} parameter "{key}"')
+            for key, value in keyvalue.items() if key in annotate]
+        return keyvalue['return']
 
-        # Iterate over all of the function parameters and check types
-        list(starmap(check_type, keywords.items()))
-        return check_type('return', f(*args, **kwargs))
 
     def __getattr__(self, attr):
-        """ Pass through attribute lookups to the underlying object """
-        if attr == '__call__':
-            return self 
-        return getattr(self.f, attr)
+        """ Pass through attribute lookups to the underlying callable """
+        return self if attr == '__call__' else getattr(self._callable, attr)
 
 
-class BaseMeta(ABCMeta):
-    """ Metaclass for class name string representation. """
-    def __str__(self):  return f"<class '{self.__name__}'>"
-    def __repr__(self): return f"<class '{self.__name__}'>"
+    @classmethod
+    def wrap(cls, obj, obj_attr):
+        """ Wrap the object attribute if valid, and return it otherwise """
+        # 1) not EnsureTypes; 2) callable; 3) not bytecode; 4) annotated
+        if (  not isinstance(obj_attr, cls)
+              and callable(obj_attr)
+              and hasattr(obj_attr, '__code__')
+              and getattr(obj_attr, '__annotations__', {})):
+            return cls(obj, obj_attr)
+        return obj_attr
+
+
+    @classmethod
+    def verify_type(cls, obj, annotation, label):
+        """ Raise TypeError if obj type does not match the given annotation """
+        try: invalid_type = not istype(obj, annotation)
+        except TypeError: raise TypeError(f'{label} annotation ' +
+            f'"{annotation}" is not a valid type annotation')
+
+        if invalid_type:
+            req = type_repr(T=annotation)
+            typ = type_repr(obj)
+            msg = f'{label} must be of type {req}, but found type {typ}'
+            raise TypeError(msg)
+
+
+
+class BaseAbstract(ABC):
+    """ Base class for any other 'Base' classes. """
+    def __repr__(self): 
+        return self.__class__.__name__
+
+
+    def __getattribute__(self, name):
+        """ Provides type checking for class functions that use annotations """
+        attr = object.__getattribute__(self, name)
+        return attr if name.startswith('__') else EnsureTypes.wrap(self, attr)
 
 
     def __new__(cls, *args, **kwargs):
-        """ Wrap __init__ with type checking """
-        cls = super().__new__(cls, *args, **kwargs)
-        ini = cls.__init__
-
-        def __init__(self, *args, **kwargs):
-            EnsureTypes(cls, ini)(self, *args, **kwargs)
-        setattr(cls, '__init__', __init__)
-        return cls
+        """ Called whenever a new inheriting class object is instantiated """
+        # Store a weakref of the object to allow tracking object persistance
+        obj = super().__new__(cls)
+        cls._refs[id(obj)] = obj
+        return obj
 
 
-class BaseAbstract(ABC, metaclass=BaseMeta):
-    """ Base class for any other 'Base' classes. """
-    def __str__(self):  return self.__class__.__name__
-    def __repr__(self): return self.__class__.__name__
+    def __init_subclass__(cls, *args, **kwargs):
+        """ Called when an inheriting class is defined.
+            Wraps __init__ with type checking, and allows 
+            __post_init__ functions in inheriting classes.
+        """
+        def init_decorator(init):
+            def __init__(self, *args, **kwargs):
+                init(self, *args, **kwargs)
+                # Only call for the final __init__ in the inheritance stack
+                if type(self) is cls: self.__post_init__()
+            return __init__
+
+        type_checked = EnsureTypes.wrap(cls, cls.__init__)
+        cls.__init__ = init_decorator(type_checked)
+        cls._refs = weakref.WeakValueDictionary()
 
 
-    def __getattribute__(self, attr):
-        """ Provides type checking for class functions that use annotations """
-        f = object.__getattribute__(self, attr)
-        if attr[:2] == '__': return f 
-        if isinstance(f, EnsureTypes): return f 
+    def __post_init__(self):
+        """ Allows inheriting classes to define a function that runs after
+            the __init__ method; mainly useful for Base classes to force
+            children to perform some operations after initialization """
+        pass
 
-        # If this is a function, check types for the given inputs
-        return EnsureTypes(self, f) if callable(f) else f
-    
 
     @classmethod
     def load(cls, obj, *args, **kwargs):
         """ Wrap an object with the parent class if it isn't already one """
-        if not isinstance(obj, cls):
-            obj = cls(obj, *args, **kwargs)
-        return obj
+        return obj if isinstance(obj, cls) else cls(obj, *args, **kwargs)
+
+
+    @classmethod
+    def interactive(cls):
+        """ Start an interactive shell wherever this function is called """
+        caller = inspect.currentframe().f_back
+        code.InteractiveConsole(caller.f_globals | caller.f_locals).interact()
+
+
+    @classmethod
+    def verify_type(cls, obj, annotation, label=''):
+        """ Allow a class to verify arbitrarily complex types manually """
+        EnsureTypes.verify_type(obj, annotation, label or f'{cls}: {obj}')

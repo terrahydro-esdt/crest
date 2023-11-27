@@ -16,8 +16,10 @@ class StructuredDataset:
     -----
     A StructuredDataset can provide data much faster to the Batcher than the 
     more generalized Dataset class, but has two important constraints:
-      - must be able to fit in memory
-      - all features are aligned along the first dimension (i.e. n_samples)
+
+    - must be able to fit in memory
+    - all features are aligned along the first dimension (i.e. n_samples)
+    
     In general, data which can be passed as-is to a machine learning model
     would adhere to these constraints (e.g. MNIST).
 

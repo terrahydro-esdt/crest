@@ -28,14 +28,6 @@ crest.model.HierarchalTensorGraph module
    :undoc-members:
    :show-inheritance:
 
-crest.model.Metrics module
---------------------------
-
-.. automodule:: crest.model.Metrics
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 crest.model.Model module
 ------------------------
 

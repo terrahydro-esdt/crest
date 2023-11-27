@@ -1,14 +1,13 @@
+import dask.array as da
+import xarray as xr
+import pandas as pd
+import numpy as np
 import shutil
 import random
 import pytest
-import numpy as np
-import pandas as pd
-import xarray as xr
-import dask.array as da
 
-from crest.data.loading.Dataset import Dataset
-from crest.data.loading.Datafile import Datafile
-from crest.archiver.Archiver import Archiver
+from crest.data.loading import Dataset, Datafile
+from crest.archiver import Archiver
 
 
 np.random.seed(1)

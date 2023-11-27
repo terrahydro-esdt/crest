@@ -20,6 +20,14 @@ crest.utils.find\_neighbors module
    :undoc-members:
    :show-inheritance:
 
+crest.utils.Metrics module
+--------------------------
+
+.. automodule:: crest.utils.Metrics
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 crest.utils.partial\_product module
 -----------------------------------
 

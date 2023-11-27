@@ -1,8 +1,12 @@
 from collections.abc import Collection, Iterator
+from collections import defaultdict as dd
+from tlz import merge_with, dissoc
+
 import xarray as xr 
 import numpy as np 
+import warnings 
 
-from ...base.BaseAbstract import BaseAbstract 
+from crest.base import BaseAbstract 
 
 
 # Inheriting from BaseAbstract nearly triples the time for loading batches
@@ -33,8 +37,7 @@ class Sample:#(BaseAbstract):
 
     """
     def __init__(self, data: Collection[dict], dtype=object):
-        self._data = data
-        self._dict = [dict(zip(d['coords']['features'], d['data'])) for d in data]
+        self.container = data
         self.dtype = dtype
         self.cache = {}
 
@@ -61,15 +64,15 @@ class Sample:#(BaseAbstract):
 
     def __len__(self) -> int:
         """ Return the number of items in the collection """
-        return len(self._data)
+        return len(self.container)
 
 
-    def _load(self, idx) -> xr.Dataset:
+    def _load(self, idx: int) -> xr.Dataset:
         """ Instantiate the xarray object from the raw data dict """
         # Annoying process to get xarray to order coords/features properly
         # Necessary in order to remove (1,) dimensions from the data in block.py,
         # but keep them in the xarray object. Need to rewrite this to be more robust
-        data  = dict(self._data[idx])
+        data  = dict(self.container[idx])
         order = data['order']
         attrs = data.get('attrs', {})
         dims  = data['dims'][1:]
@@ -78,7 +81,7 @@ class Sample:#(BaseAbstract):
         data  = [(dims, d) for d in data['data']]
         feat  = coord.pop('features')
         return xr.Dataset(dict(zip(feat, data)), coord, attrs).transpose(*order[1:])[list(order[1:])+list(feat)]
-        # return xr.DataArray(**self._data[idx]).to_dataset('features')
+        # return xr.DataArray(**dissoc(self.container[idx], 'order')).to_dataset('features')
 
 
     @property
@@ -88,17 +91,62 @@ class Sample:#(BaseAbstract):
 
 
     @property
+    def dims(self) -> list:
+        """ All dimensions, in the same order as the original data dims """
+        order = lambda item: [o for o in item['order'] if o in item['coords']]
+        union = [o for item in self.container for o in order(item)]
+        return sorted(set(union), key=union.index)
+
+
+    @property
+    def coords(self) -> dict[list]:
+        """ Coords for all items; {dim: [item0_dim, item1_dim, ...]} """
+        coords = [item['coords'] for item in self.container]
+        return {dim: [c[dim] for c in coords if dim in c] for dim in self.dims}
+
+
+    @property
+    def coords_avg(self) -> dict[list]:
+        """ Coords for all items; {dim: [item0_dim, item1_dim, ...]} """
+        coords = [item['coords'] for item in self.container]
+        is_num = lambda v: np.issubdtype(v.dtype, np.number)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return {dim: np.nanmean([c[dim].mean() for c in coords if dim in c and is_num(c[dim])]) for dim in self.dims}
+
+
+    @property
+    def data(self) -> dict[list]:
+        """ Data for all items; {feature: [item0_feature, ...]} """
+        to_dict = lambda d: dict(zip(d['coords']['features'], d['data']))
+        i_dicts = [to_dict(item) for item in self.container]
+        return self.coords | merge_with(list, *i_dicts)
+
+
+    @property
     def features(self) -> list:
         """ All available features """
-        return [f for d in self._dict for f in d]
+        return [f for d in self.container for f in d['coords']['features']]
     
 
     def to_list(self, features: list | None = None) -> list:
         """ Extract the requested features into a list """
-        data = [d[f] for f in (features or d) for d in self._dict if f in d]
-        assert(len(data) == len(features or data)), \
-            f'Missing / duplicate features: {len(features)} vs {len(data)}'
-        return data 
+        data = self.data
+        vals = []
+
+        for feature in (features or self.features):
+
+            # Allow selecting feature from specific container item when there
+            # are duplicates; e.g. 'latitude.2' is latitude from container[2]
+            if isinstance(feature, str):
+                feature, *index = (feature+'.0').split('.')
+                vals.append(data[feature][int(index[0])])
+            else: vals.append(data[feature][0])
+
+        assert(len(vals) == len(features or vals)), \
+            f'Missing / duplicate features: {len(vals)} vs {len(features)}\n'+\
+            f'Expected: {features}'
+        return vals 
 
 
     def to_array(self, features: list | None = None) -> np.ndarray:
@@ -108,5 +156,5 @@ class Sample:#(BaseAbstract):
 
     def to_dict(self, features: list | None = None) -> dict:
         """ Extract the requested features into a dictionary """
-        if features is None: features = [k for d in self._dict for k in d]
+        if features is None: features = self.features
         return dict(zip(features, self.to_list(features)))

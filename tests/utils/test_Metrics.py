@@ -1,8 +1,9 @@
 import pytest
-from crest.utils.Metrics import Metrics
 import numpy as np
 import xarray as xr
 import tensorflow as tf
+
+from crest.utils import Metrics
 
 
 def sample_simple_data():

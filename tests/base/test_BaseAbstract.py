@@ -1,38 +1,12 @@
 from itertools import product
-from typing import _type_repr, Dict, List, Union, Optional, TypeVar, Iterator
-from copy import deepcopy
-from abc import abstractmethod
+from typing import Dict, List, Union, Optional, TypeVar
+from abc import abstractmethod 
 
 import pytest
 import re
 
-import sys
-print(sys.path)
-
-import crest
-import pkgutil
-
-modualList = []
-for importer, modname, ispkg in pkgutil.iter_modules(crest.__path__):
-    modualList.append(modname)
-
-print(modualList)
-
-from crest.base.BaseAbstract import BaseAbstract
-
-def type_repr(val=None, T=None):
-    """ Recursive type representation """
-    if isinstance(val, Iterator): val = deepcopy(val)
-    if isinstance(T, str):        return T
-    if T is not None:             return _type_repr(T)
-    container = _type_repr(type(val)).split('.')[-1]
-
-    # Recurse on T if it's iterable (and not a str)
-    if hasattr(val, '__iter__') and not isinstance(val, str):
-        try:    ele_types = type_repr(next(iter(val)))
-        except: ele_types = '?'
-        container = f'{container}[{ele_types}]'
-    return container
+from crest.base.BaseAbstract import type_repr
+from crest.base import BaseAbstract
 
 
 def error(param, expected, found):

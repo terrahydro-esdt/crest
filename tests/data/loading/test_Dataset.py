@@ -1,15 +1,15 @@
 from collections import defaultdict as dd
 from functools import partial
 from itertools import zip_longest
+
 import dask.array as da
 import xarray as xr
+import numpy as np
 import pytest
 import dask # Added for patch with forking error
-import numpy as np
 
-from crest.data.loading.Dataset import Dataset
-from crest.data.loading.Datafile import Datafile
-from crest.utils.synthetic_data import synthetic_data
+from crest.data.loading import Dataset, Datafile
+from crest.utils import synthetic_data
 from .Dataset_config import configs
 
 
@@ -217,7 +217,7 @@ class TestDataset:
 
     def test_autochunk_min(self, synthetic):
         """ Test automatically chunking data with small blocksize """
-        synthetic.autochunk(blocksize=1e4, verbose=True)
+        synthetic.autochunk(numblocks=560, verbose=True)
         assert((np.array(synthetic.numblocks) == np.array([
             [14, 40, 30],
             [14, 40,  5],
@@ -229,19 +229,19 @@ class TestDataset:
 
     def test_autochunk_mid(self, synthetic):
         """ Test automatically chunking data with mid blocksize """
-        synthetic.autochunk(blocksize=1e7, verbose=True)
+        synthetic.autochunk(numblocks=40, verbose=True)
         assert((np.array(synthetic.numblocks) == np.array([
-            [4, 10, 30],
-            [4, 10,  5],
-            [1, 10,  5],
-            [1, 10,  3],
-            [4, 10,  1],
+            [2, 20, 30],
+            [2, 20,  5],
+            [1, 20,  5],
+            [1, 20,  3],
+            [2, 20,  1],
         ])).all()), synthetic.numblocks
 
 
     def test_autochunk_max(self, synthetic):
         """ Test automatically chunking data with large blocksize """
-        synthetic.autochunk(blocksize=1e16, verbose=True)
+        synthetic.autochunk(numblocks=4, verbose=True)
         assert((np.array(synthetic.numblocks) == np.array([
             [1, 4, 30],
             [1, 4,  5],
@@ -253,8 +253,7 @@ class TestDataset:
 
     def test_create_blocks(self, synthetic):
         """ Test creating the Block objects """
-        synthetic.autochunk(blocksize=1e16, verbose=True)
-        blocks = synthetic.create_blocks(verbose=True)
+        blocks = synthetic.create_blocks(numblocks=4, verbose=True)
         assert(len(blocks) == 4), len(blocks)
 
 
