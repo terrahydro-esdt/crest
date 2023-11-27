@@ -1,5 +1,5 @@
 import pytest
-from crest.crest.utils.Metrics import Metrics
+from crest.utils.Metrics import Metrics
 import numpy as np
 import xarray as xr
 import tensorflow as tf

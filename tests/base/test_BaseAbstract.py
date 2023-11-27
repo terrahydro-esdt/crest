@@ -18,7 +18,7 @@ for importer, modname, ispkg in pkgutil.iter_modules(crest.__path__):
 
 print(modualList)
 
-from crest.crest.base.BaseAbstract import BaseAbstract
+from crest.base.BaseAbstract import BaseAbstract
 
 def type_repr(val=None, T=None):
     """ Recursive type representation """

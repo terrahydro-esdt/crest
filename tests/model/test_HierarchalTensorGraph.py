@@ -1,11 +1,11 @@
 import pytest
 from .helpers import *
 from crest import HierarchalTensorGraph
-from crest.crest.model.TensorGraph import ImproperTensorGraphError
+from crest.model.TensorGraph import ImproperTensorGraphError
 from math import exp
 import cloudpickle as pickle
 import json, os
-from crest.crest import ROOT_PATH
+from crest import ROOT_PATH
 root_path = os.path.join(ROOT_PATH.as_posix(), os.path.join('..', 'tests'))
 
 def test_basenode():

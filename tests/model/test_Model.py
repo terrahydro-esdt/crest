@@ -5,8 +5,8 @@ from tensorflow import TensorSpec
 from crest import HierarchalTensorGraph
 from crest import Model
 import numpy as np
-from crest.crest.data.loading.StructuredDataset import StructuredDataset
-from crest.crest.data.Batcher import Batcher
+from crest.data.loading.StructuredDataset import StructuredDataset
+from crest.data.Batcher import Batcher
 
 
 # Temporary workaround for Heisenbug:

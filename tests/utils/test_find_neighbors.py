@@ -1,6 +1,6 @@
 import numpy as np 
 
-from crest.crest.utils.find_neighbors import find_neighbors
+from crest.utils.find_neighbors import find_neighbors
 
 
 def make2d(arr): 

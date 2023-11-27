@@ -2,8 +2,7 @@ from functools import update_wrapper
 from itertools import product
 
 import numpy as np
-
-from crest.crest.utils.partial_product import partial_product
+from crest.utils.partial_product import partial_product
 
 
 # Number of times to execute tests on random data 

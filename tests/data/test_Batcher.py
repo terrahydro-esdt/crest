@@ -6,10 +6,10 @@ import string
 import dask 
 import time 
 
-from crest.crest.data.Batcher import Batcher
-from crest.crest.data.loading.Dataset import Dataset
-from crest.crest.data.loading.Datafile import Datafile
-from crest.crest.data.loading.Sample import Sample
+from crest.data.Batcher import Batcher
+from crest.data.loading.Dataset import Dataset
+from crest.data.loading.Datafile import Datafile
+from crest.data.loading.Sample import Sample
 
 
 @pytest.mark.parametrize('batch_size', (1, 10, 100))
