@@ -1,4 +1,4 @@
-from crest.crest.data.loading.StructuredDataset import StructuredDataset
+from crest.data.loading.StructuredDataset import StructuredDataset
 from urllib.request import urlretrieve
 import os
 
