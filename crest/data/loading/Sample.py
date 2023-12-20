@@ -1,6 +1,6 @@
 from collections.abc import Collection, Iterator
 from collections import defaultdict as dd
-from tlz import merge_with, dissoc
+from tlz import merge_with
 
 import xarray as xr 
 import numpy as np 
@@ -69,19 +69,7 @@ class Sample:#(BaseAbstract):
 
     def _load(self, idx: int) -> xr.Dataset:
         """ Instantiate the xarray object from the raw data dict """
-        # Annoying process to get xarray to order coords/features properly
-        # Necessary in order to remove (1,) dimensions from the data in block.py,
-        # but keep them in the xarray object. Need to rewrite this to be more robust
-        data  = dict(self.container[idx])
-        order = data['order']
-        attrs = data.get('attrs', {})
-        dims  = data['dims'][1:]
-        coord = dict(data['coords'])
-        coord = {k:coord[k] for k in order if k in coord}
-        data  = [(dims, d) for d in data['data']]
-        feat  = coord.pop('features')
-        return xr.Dataset(dict(zip(feat, data)), coord, attrs).transpose(*order[1:])[list(order[1:])+list(feat)]
-        # return xr.DataArray(**dissoc(self.container[idx], 'order')).to_dataset('features')
+        return xr.DataArray(**self.container[idx]).to_dataset('features')
 
 
     @property
@@ -93,16 +81,14 @@ class Sample:#(BaseAbstract):
     @property
     def dims(self) -> list:
         """ All dimensions, in the same order as the original data dims """
-        order = lambda item: [o for o in item['order'] if o in item['coords']]
-        union = [o for item in self.container for o in order(item)]
+        union = [o for item in self.container for o in item['coords']]
         return sorted(set(union), key=union.index)
 
 
     @property
     def coords(self) -> dict[list]:
         """ Coords for all items; {dim: [item0_dim, item1_dim, ...]} """
-        coords = [item['coords'] for item in self.container]
-        return {dim: [c[dim] for c in coords if dim in c] for dim in self.dims}
+        return merge_with(list, *[item['coords'] for item in self.container])
 
 
     @property
@@ -111,7 +97,7 @@ class Sample:#(BaseAbstract):
         coords = [item['coords'] for item in self.container]
         is_num = lambda v: np.issubdtype(v.dtype, np.number)
         with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
+            warnings.simplefilter('ignore')
             return {dim: np.nanmean([c[dim].mean() for c in coords if dim in c and is_num(c[dim])]) for dim in self.dims}
 
 
@@ -133,15 +119,14 @@ class Sample:#(BaseAbstract):
         """ Extract the requested features into a list """
         data = self.data
         vals = []
-
-        for feature in (features or self.features):
+        for feature_index in (features or self.features):
 
             # Allow selecting feature from specific container item when there
-            # are duplicates; e.g. 'latitude.2' is latitude from container[2]
-            if isinstance(feature, str):
-                feature, *index = (feature+'.0').split('.')
+            # are duplicates; e.g. 'latitude@2' is latitude from container[2]
+            if isinstance(feature_index, str) and feature_index not in data:
+                feature, *index = (feature_index+'@0').split('@')
                 vals.append(data[feature][int(index[0])])
-            else: vals.append(data[feature][0])
+            else: vals.append(data[feature_index][0])
 
         assert(len(vals) == len(features or vals)), \
             f'Missing / duplicate features: {len(vals)} vs {len(features)}\n'+\
