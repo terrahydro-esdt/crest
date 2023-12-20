@@ -37,7 +37,7 @@ class Blockset(BaseSet):
         self.logger  = logger or logging.getLogger('Blockset')
         self.timing  = timing and (logger is not None)
         self.shuffle = shuffle
-        
+
         # Set block count for all blocks
         for i, block in enumerate(self.container):
             block.block_count = len(self.container)
@@ -110,7 +110,7 @@ class Blockset(BaseSet):
         # Return if there aren't any matches
         if counts.size < 1: return da.from_array(meta)
 
-        with self.benchmark('_group_matches'):
+        with self.benchmark(f'_group_matches (shape={matches.shape} | Task MB={task_bytes/1e6:.0f})'):
             matches, divisions, lengths = self._group_matches(matches, counts, task_bytes)
         
         # Create a dask dataframe first, then transform into a dask
@@ -124,9 +124,9 @@ class Blockset(BaseSet):
         }).to_dask_array(lengths=list(lengths), meta=meta)
 
 
-    def _parse(self, matches, singleton: bool = False) -> SampleSet:
+    def _parse(self, matches: Collection[np.ndarray], singleton: bool = False) -> SampleSet:
         """ Parse a match into the relevant SampleSet of data """
-        with self.benchmark('_parse.extract'):
+        with self.benchmark(f'_parse.extract (shape={matches[0].shape})'):
             windows = self.extract(_map=[matches]) # Extract data windows
             # ordered = self.sort(container=windows) # Return to original ordering
         return SampleSet(list(zip(*windows)), singleton, self.dtype)
