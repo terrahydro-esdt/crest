@@ -546,6 +546,9 @@ class Datafile(BaseAbstract):
             Or, if procedure fails and the new blocks do not match the request.
 
         """
+        # Add 1 for any unspecified dims (except features)
+        numblocks = list(numblocks) + [1] * (len(self.dask.numblocks) - (len(numblocks)+1))
+
         # Update virtual_dims to track the requested number of blocks
         is_virtual = lambda dim: dim[0] in self._virtual_dims
         dim_block  = list(zip(self.dims, numblocks))
@@ -598,6 +601,9 @@ class Datafile(BaseAbstract):
             Or, if procedure fails and the new blocks do not match the request.
 
         """        
+        # Add -1 for any unspecified dims (except features)
+        chunksize = list(chunksize) + [-1] * (len(self.dask.chunks) - (len(chunksize)+1))
+
         # Update virtual_dims to track the requested number of blocks
         is_virtual = lambda dim: dim[0] in self._virtual_dims
         calc_block = lambda s,c: getattr(c, '__len__', lambda: s//c)()
