@@ -108,6 +108,7 @@ class ThreadedFunction(set):
           can be checked by calling len on the ThreadedFunction object.
 
         """   
+        continuous = kwargs.pop('continuous', False)
         if self._pool is None:
             self._items.append( [args, kwargs] )
             self.add(self._total)
@@ -118,6 +119,8 @@ class ThreadedFunction(set):
             # Wait for capacity in the task set or exit to be signaled
             loops = 1
             while (not self.exitflag()) and self.is_full():
+                if continuous: return 
+
                 time.sleep(0.5) 
                 if loops % 10 == 0:
                     self.logger.debug(f'Waiting to add more {self.name} tasks')

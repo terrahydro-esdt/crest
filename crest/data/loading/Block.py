@@ -232,19 +232,19 @@ class Block(BaseAbstract):
 
             keys, percent = keys_pct
             
-            n_total = np.prod([self.window_total[k] for k in keys])
+            n_total = np.prod([self.window_total.get(k, 1) for k in keys])
             maximum = int((1-percent) * n_total)
 
             # Multiple axes can be used to define a combined valid percent 
             # e.g. {(ax1, ax2): 0.8} -> combination of the two must have 80% valid
             for exp, key in enumerate(keys):
                 axis = self.axes[key]
-                size = self.window_total[key]
+                size = self.window_total.get(key, 1)
 
                 # Calculate window offets and padding
                 offsets = (slice(None),) * axis + (slice(size - 1, None),)
                 padding = [(0,0)] * invalid.ndim 
-                padding[axis] = self.window_depth[key]
+                padding[axis] = self.window_depth.get(key, (0,0))
 
                 # Pad the invalid mask in order to center the window
                 invalid = invalid.astype('int32') # Bottleneck is faster w/ int
@@ -387,10 +387,11 @@ class Block(BaseAbstract):
         """
         ravel   = lambda v: getattr(v, 'ravel', lambda: v)()
         indices = tuple(np.unique([j for i in matches for j in ravel(i)]))
+        samples = len(indices)
 
         # Create arrays for the left and total window depths
-        lower = np.array([self.window_depth[k][0] for k in self.dims])
-        total = np.array([self.window_total[k]    for k in self.dims])
+        lower = np.array([self.window_depth[k][0]    for k in self.dims])
+        total = np.array([self.window_total.get(k,1) for k in self.dims])
         ndims = len(self.dims)
 
         # Calculate the lower and upper bounds for each window dimension
@@ -402,12 +403,8 @@ class Block(BaseAbstract):
         orig_dims = ['features'] + [d for d in orig_dims if d != 'features']
 
         # Initialize the final result dict with all globally applicable values
-        full_dims = self.dims + ['features']
-        dim_order = np.array(list(map(full_dims.index, orig_dims))) + 1
-        xr_kwargs = {
-            'dims'  : [d for d in orig_dims if self.window_total.get(d,2) > 1],
-            'order' : orig_dims,
-        } | ({
+        keep_dims = [f for f in self.dims if f in orig_dims] + ['features']
+        xr_kwargs = {'dims': orig_dims} | ({
             'attrs' : {'resolution': dict(zip(self.dims, self.resolution))}
         } if self.is_uniform else {})
 
@@ -422,7 +419,7 @@ class Block(BaseAbstract):
         def gen_coords(coords: np.ndarray) -> dict[str, np.ndarray]:
             """ Generate a coordinates vector dictionary for xarray """
             coord_vectors = starmap(collapse, enumerate(coords.T))
-            return dict(zip(self.dims, coord_vectors)) | {'features': features}
+            return dict(zip(keep_dims, coord_vectors)) | {'features': features}
 
         def gen_xr_dict(data: np.ndarray, coords: np.ndarray) -> dict:
             """ Generate the xr.Dataset dict for given data/coord windows """
@@ -430,16 +427,22 @@ class Block(BaseAbstract):
 
         # Expand the bounds so they can be broadcast over the full data/coords
         windows = tuple(starmap(expand, enumerate(bounds, 1)))
-        assert(len(windows[0]) == len(indices)), [len(windows), len(indices)]
+        assert(len(windows[0]) == samples), [len(windows), samples]
 
-        # Transpose data to the correct order, and remove dimensions of size 1
+        # Extract windows and drop virtual dimensions 
         # Note: SegFault/Access violation here is likely an issue with data
-        #       that is cached on disk; try removing the cache to resolve. 
-        data = self.data[windows].transpose((0,)+tuple(dim_order))
-        keep = tuple(s for s in data.shape[2:] if s > 1)
-        data = data.reshape(data.shape[:2] + keep)
+        #       that is cached on disk; try removing the cache to resolve.
+        shapes = tuple(s for s,d in zip(total, self.dims) if d in orig_dims)
+        data   =   self.data[windows].reshape((samples,) + shapes + (len(features),))
+        coords = self.coords[windows].reshape((samples,) + shapes + (len(self.dims),))
+        
+        # Remove virtual dimension from coordinate features
+        coords = coords[..., sorted(map(self.dims.index, orig_dims[1:]))]
+
+        # Transpose data to the correct order (offset by 1)
+        data = data.transpose(tuple(map((['']+keep_dims).index, ['']+orig_dims)))
 
         # Extract final window dictionaries to use for Sample initialization 
-        coords  = map(gen_coords, self.coords[windows])
+        coords  = map(gen_coords, coords)
         windows = dict(zip(indices, map(gen_xr_dict, data, coords)))
         return [[windows[i] for i in np.atleast_1d(idx)] for idx in matches]

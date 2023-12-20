@@ -28,14 +28,16 @@ class Blockset(BaseSet):
 
     """
     def __init__(self, 
-        blocks : Collection[Block] | Collection[Callable], 
-        logger : logging.Logger | None = None,
-        timing : bool = True,
+        blocks  : Collection[Block] | Collection[Callable], 
+        logger  : logging.Logger | None = None,
+        timing  : bool = True,
+        shuffle : bool = False,
     ):
         self.container = [getattr(b, '__call__', lambda: b)() for b in blocks]
-        self.logger = logger or logging.getLogger('Blockset')
-        self.timing = timing and (logger is not None)
-
+        self.logger  = logger or logging.getLogger('Blockset')
+        self.timing  = timing and (logger is not None)
+        self.shuffle = shuffle
+        
         # Set block count for all blocks
         for i, block in enumerate(self.container):
             block.block_count = len(self.container)
@@ -98,6 +100,7 @@ class Blockset(BaseSet):
                     self.valid_coords, 
                     self.valid_resolution,
                     logger=self.logger if self.timing else None,
+                    shuffle=self.shuffle,
                 )
 
             complete_time = time.time() - timer.start['time']

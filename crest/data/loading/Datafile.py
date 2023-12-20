@@ -188,9 +188,9 @@ class Datafile(BaseAbstract):
                 self.__dict__['summary'] = raw['summary']
             raw = raw.drop_vars(['summary', 'features', 'statistics'], errors='ignore')
 
-            # Set datetime dtype back to np.datetime64
-            if hasattr(raw, 'datetime') and np.issubdtype(raw.datetime.dtype, np.float64):
-                raw = raw.assign_coords(datetime=pd.to_datetime(raw.datetime))
+            # Set datetime dtype back to np.datetime64 if it was previously converted
+            if hasattr(raw, 'datetime') and np.issubdtype(raw.datetime.dtype, np.float32):
+                raw = raw.assign_coords(datetime=raw.datetime.astype('datetime64[m]'))
         return raw 
 
 
@@ -210,12 +210,14 @@ class Datafile(BaseAbstract):
         data = data.drop_vars(['summary', 'features', 'statistics'], errors='ignore')
 
         # Select only requested coordinates
-        data = data.sel({k: slice(*ext) for k, ext in self.extent.items()})
+        data = data.sel({k: slice(*ext) for k, ext in self.extent.items() 
+                        if k in data and k not in self._virtual_dims})
 
         # Cast datetimes to float
         for key in data.coords:
             if np.issubdtype(data[key].dtype, np.datetime64):
-                data = data.assign_coords({key: data[key].astype('float64')})
+                data = data.assign_coords({key: (data[key].astype('float64')/6e10).astype('float32')})
+            elif key in ['latitude', 'longitude']: data = data.assign_coords({key: data[key].astype('float32')})
 
         # Cast int/uint/etc. to float in order to allow NaN values
         for key in data:
@@ -236,7 +238,10 @@ class Datafile(BaseAbstract):
             })
 
         # Save the original coordinates for later return values
-        self.original_dims = (list(data.coords), data.features.to_numpy())
+        self.original_dims = (
+            [c for c in data.coords if c not in self._virtual_dims], 
+            data.features.to_numpy(),
+        )
 
         # Transpose dimensions so they are in the correct order, and return
         order = sorted(set(data.coords) - {'features'})
@@ -256,7 +261,17 @@ class Datafile(BaseAbstract):
         stats = ['mean', 'std', 'min', 'max'] + list(extra)
         coord = xr.Variable('statistics', stats) 
         value = lambda k: getattr(data, k, extra[k])().to_array('features')
-        return xr.concat(map(value, stats), coord)
+        stats = xr.concat(map(value, stats), coord).to_dataset('statistics')
+
+        # Compute percentiles as a group for efficiency
+        stats[['p25', 'median', 'p75']] = xr.apply_ufunc(
+            lambda x: da.percentile(x.ravel(), [25, 50, 75], internal_method='tdigest'),
+            data, **{
+                'dask'             : 'allowed',
+                'input_core_dims'  : [list(data.dims)],
+                'output_core_dims' : [['statistics']],
+            }).to_array('features').to_dataset('statistics')
+        return stats.to_array('statistics')
 
 
     @property
@@ -398,7 +413,7 @@ class Datafile(BaseAbstract):
 
         """
         get_vec = lambda d: np.diff(d) if len(d) > 1 else np.zeros(1)
-        vectors = [get_vec(self.data[dim]).round(5) for dim in self.dims]
+        vectors = [get_vec(self.data[dim]).astype(float).round(5) for dim in self.dims]
         uniform = lambda vec: (vec.max()-vec.min()) < 1e-3
         setattr(self, 'is_uniform', all(map(uniform, vectors)))
 
@@ -423,7 +438,7 @@ class Datafile(BaseAbstract):
     @property
     def coord_array(self) -> da.Array:
         """ Coordinate meshgrid wrapped with dask """
-        coords = [self.data[dim].values for dim in self.dims]
+        coords = [self.data[dim].values.astype(np.float32) for dim in self.dims]
         array  = partial(da.from_array, name=False)
         coords = map(array, coords, self.dask.chunks)
         coords = da.meshgrid(*coords, indexing='ij')
@@ -771,6 +786,20 @@ class Datafile(BaseAbstract):
         return map(lazy_func, product(*map(range, blocks)))
 
 
+    def reset(self, **kwargs): 
+        """ Reset Datafile state to remove cached properties.
+        
+        Parameters
+        ----------
+        **kwargs
+            Any __init__ parameters that should be updated in the config state.
+
+        """
+        config = self.__getstate__() | kwargs
+        self.__dict__.clear()
+        self.__dict__.update(config)
+
+
     def _cache(self, 
         overwrite : bool = False, 
         cache_dir : Path | str  = '.',
@@ -804,26 +833,23 @@ class Datafile(BaseAbstract):
         data['summary'] = self.summary
 
         # Verify cached data is equivalent
-        if (not overwrite) and dest.exists():
-            try: 
-                with xr.open_zarr(dest) as cache:
-                    overwrite = not all(
-                        getattr(data, attr) == getattr(cache, attr)
-                        for attr in ['dims', 'attrs', 'nbytes', 'chunksizes']
-                    ) and bool(xr.align(data, cache, join='exact'))
-            except: overwrite = True
+        # if (not overwrite) and dest.exists():
+        #     try: 
+        #         with xr.open_zarr(dest) as cache:
+        #             overwrite = not all(
+        #                 getattr(data, attr) == getattr(cache, attr)
+        #                 for attr in ['dims', 'attrs', 'nbytes', 'chunksizes']
+        #             ) and bool(xr.align(data, cache, join='exact'))
+        #     except: overwrite = True
 
         # Reinitialize this Datafile with the new cache
         # Anything handled by the cache (e.g. extent) can be dropped
-        config = self.__getstate__()
-        config.update({
+        self.reset(**{
             'location'      : dest,
             'features'      : [],
             'extent'        : {},
             'preprocessors' : [],
         })
-        self.__dict__.clear()
-        self.__dict__.update(config)
 
         # Write the data to the destination
         if overwrite or (not dest.exists()):
@@ -831,7 +857,7 @@ class Datafile(BaseAbstract):
             print(f'\nCaching {self.name}...')
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore')
-                with ProgressBar(): data.to_zarr(dest)
+                with ProgressBar(): data.to_zarr(dest, encoding={})
         else: print(f'Cache exists for {self.name}')
 
 

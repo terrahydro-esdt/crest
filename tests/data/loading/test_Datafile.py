@@ -75,7 +75,7 @@ class TestDatafile:
             np.array([example_coord[uniform]['coord_0']] * 3),
             np.array([example_coord[uniform]['coord_1']] * 3).T,
         ])
-        assert((output == target).all()), f'{output}\n{target}\n'
+        assert(np.allclose(output, target)), f'{output}\n{target}\n'
 
 
     def test_calculate_overlap(self, datafile: list[Datafile], uniform: int):

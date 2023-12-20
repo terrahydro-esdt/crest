@@ -239,6 +239,7 @@ def find_neighbors(
     method      : str   = 'brute',
     allow_empty : bool  = False,
     use_implode : bool  = False,
+    shuffle     : bool  = False,
     logger      : logging.Logger | None = None,
     **kwargs,
 ) -> (np.ndarray, np.ndarray):
@@ -320,6 +321,9 @@ def find_neighbors(
         representation. Takes slightly longer to run, but can significantly
         reduce memory requirements in some cases. See the `implode` method 
         for further details.
+    shuffle : bool
+        If True, shuffle the table before returning (only applicable for
+        method='brute').
 
     **kwargs
         Additional keywords are passed to sklearn.neighbors.BallTree.
@@ -621,6 +625,11 @@ def find_neighbors(
 
         # Lexigraphic sort to have consistent return order
         table = table[np.lexsort(table.T[::-1])].T
+
+        if shuffle:
+            i = np.arange(table.shape[1])
+            np.random.shuffle(i)
+            table = table[:,i]
 
     if use_implode:
         table = implode(table)
