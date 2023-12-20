@@ -102,6 +102,7 @@ class Dataset(BaseSet):
         optimize  : bool   = True,
         shuffle   : bool   = False,
         logger    : Logger | None = None,
+        loglevel  : int | None = None,
         save_path : str | Path | None = None,
     ):# -> da.Array | Iterator[Delayed]:
         """Generate the dask array containing all valid samples.
@@ -151,6 +152,9 @@ class Dataset(BaseSet):
             Logging function used when `verbose=True`. This is `print` by 
             default, but an actual logging function like `logging.info` can be
             given instead.
+        loglevel  : int | None
+            Log level that should be used by the logger, e.g. logging.INFO. If
+            None is given, the default level set by the logger is used.  
         save_path : str | Path | None
             Save the generated sample array to a pickle file at the given path.
 
@@ -164,7 +168,9 @@ class Dataset(BaseSet):
         """
         if logger is not None:
             self.__dict__['logger'] = logger
-
+        if loglevel is not None:
+            self.logger.setLevel(loglevel)
+            
         # In order to avoid overlapping logs with multiple processes,
         # we accumulate all log text and log only once at the end
         log_sep = ''.join(['_']*60) + '\n'
