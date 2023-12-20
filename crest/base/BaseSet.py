@@ -1,5 +1,5 @@
 from collections.abc import Collection, Callable, Iterator
-from itertools import zip_longest, starmap
+from itertools import zip_longest, starmap, compress
 from operator import itemgetter
 from typing import TypeVar, Any
 
@@ -90,8 +90,15 @@ class BaseSet(BaseAbstract):
 
     def __getitem__(self, idx: Any) -> T:
         """ Get an element in the container """
+        # Wrap the sliced container in a new BaseSet 
         if isinstance(idx, slice):
             return self.__class__(self.container[idx])
+
+        # Allow selecting via a collection of ints or bools
+        if hasattr(idx, '__len__'):
+            if all(isinstance(i,int) and not isinstance(i,bool) for i in idx):
+                return self.__class__([self[i] for i in idx])
+            return self.__class__(list(compress(self, idx)))
         return self.container[idx]
     
 
