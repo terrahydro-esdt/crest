@@ -154,7 +154,7 @@ class Model(BaseModel):
             self.model.fit(data,**kwargs)
 
     
-    def predict(self, dataset: Dataset | Batcher | dict, coords=[], **kwargs) -> dict:
+    def predict(self, dataset: Dataset | StructuredDataset | Batcher | dict, coords=[], **kwargs) -> dict:
         """
         Make predictions with the model.
         
@@ -259,7 +259,7 @@ class Model(BaseModel):
         return pred
 
 
-    def predict_exhaust(self, dataset : Dataset | Batcher | dict, coords=[], **kwargs) -> dict:
+    def predict_exhaust(self, dataset : Dataset | StructuredDataset | Batcher | dict, coords=[], **kwargs) -> dict:
         """
         Make predictions with the model.
         
