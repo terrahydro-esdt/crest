@@ -89,7 +89,6 @@ class Model(BaseModel):
         if ('metrics' in kwargs):
             metrics = self.metric.get_callbacks(kwargs['metrics'])
             kwargs['metrics'] = metrics
-            print(metrics)
 
         self.build(_internal=True)
         self.model.compile(**kwargs)
@@ -98,7 +97,7 @@ class Model(BaseModel):
         no_trainable = len(self.model.trainable_weights) <= 0
         if show_summary or no_trainable:
             self.model.summary(line_length=200)
-        assert(not no_trainable), 'No trainable parameters in model'
+        if no_trainable: print('\nWARNING: No trainable parameters in model\n')
 
 
     def fit(self, dataset : Dataset | Batcher | StructuredDataset, **kwargs):
