@@ -50,11 +50,14 @@ class StructuredDataset:
     """
 
     def __init__(self, 
-        *data  : np.ndarray, 
+        *data  : np.ndarray | dict, 
         labels : list[str] = [],
         chunks : int = -1,
         blocks : int = 1,
     ):
+        if (len(data) == 1) and isinstance(data[0], dict):
+            labels, data = zip(*data[0].items())
+
         self.data   = data 
         self.labels = labels or list(map(str, range(len(data))))
         self.chunks = chunks
@@ -113,10 +116,9 @@ class StructuredDataset:
     @cached_property
     def _lazy_array(self) -> da.Array:
         """ Transform data into a lazy dask array of Samples """
-        sample  = np.frompyfunc(self._to_sample, nin=self.features, nout=1)
-        data    = np.empty((self.features, self.samples), dtype=object)
-        data[:] = list(map(list, self.data))
-        return da.from_array(sample(*data), chunks=self.chunks, name=False, inline_array=True)
+        data    = np.empty((self.samples,), dtype=object)
+        data[:] = list(map(self._to_sample, *self.data))
+        return da.from_array(data, chunks=self.chunks, name=False, inline_array=True)
 
 
     @cached_property
@@ -131,7 +133,7 @@ class StructuredDataset:
 
     def generate_samples(self, *args, compute=False, **kwargs):
         """ Mimics the returned values of Dataset.generate_samples """
-        return self._lazy_array if compute else self._delayed_blocks
+        return self._lazy_array.compute() if compute else self._delayed_blocks
         if compute: return self._lazy_array
 
         # Blocks need to be delayed objects which produce lazy Sample arrays,

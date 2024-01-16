@@ -6,10 +6,12 @@ from typing import Union, Iterator, TypeVar
 from types import UnionType
 from abc import ABCMeta, ABC
 
+import linecache
+import traceback
 import weakref
 import inspect
 import code
-
+import os
 
 
 def type_repr(val=None, T=None, _maxdepth=4):
@@ -208,10 +210,118 @@ class BaseAbstract(ABC):
 
 
     @classmethod
-    def interactive(cls):
-        """ Start an interactive shell wherever this function is called """
-        caller = inspect.currentframe().f_back
-        code.InteractiveConsole(caller.f_globals | caller.f_locals).interact()
+    def interactive(cls, env={}, style='monokai'):
+        """ Start an interactive console wherever this function is called """
+
+        def get_context(frame, n_lines=20):
+            """ Get code context at given frame """
+            info = inspect.getframeinfo(frame)
+            name = info.filename
+            line = info.lineno + 1
+            size = len(str(line-1))
+
+            getline = lambda i: f'{i:<{size}}{linecache.getline(name, i)}'
+            context = f'{name}:{line-1} called interactive:'
+            divider = ''.join(['-']*len(context))
+            srccode = ''.join(map(getline, range(max(0, line-n_lines), line)))
+            return '\n'.join(['', divider, context, '', srccode, divider, ''])
+
+        # Include variables from the frame this function was called in
+        callframe = inspect.currentframe().f_back
+        variables = callframe.f_globals | callframe.f_locals | env
+
+        # Define flag to indicate exception in the console
+        global forcestop
+        forcestop = False 
+
+        # Show code context as the console banner
+        try:                   
+            banner = get_context(callframe)
+
+            # Add syntax highlighting
+            try:
+                from pygments import highlight
+                from pygments.lexers import Python3Lexer
+                from pygments.styles import get_style_by_name
+                from pygments.formatters import Terminal256Formatter
+                srcfmt = Terminal256Formatter(style=get_style_by_name(style))
+                banner = highlight(banner, Python3Lexer(), srcfmt)
+            except ImportError: pass
+        except Exception as e: banner = f'Error retrieving code context: {e}'
+
+        try:   
+            # Import readline if available to pull interpreter command history
+            import readline, rlcompleter
+            variables = locals() | variables
+
+            # Allow tab completion
+            # https://tiswww.case.edu/php/chet/readline/readline.html
+            readline.set_completer(rlcompleter.Completer(variables).complete)
+            readline.parse_and_bind('tab: complete')
+            
+            # Read previous command history
+            readline.read_history_file()
+
+            def follow_history(*args, **kwargs):
+                """ implements operate-and-get-next: allows successive commands
+                    from history to be selected (i.e. after navigating history
+                    and executing a command, the cursor will still be at the 
+                    same location in the console history) """
+
+                def _handle_exc(e):
+                    # if there's an exception, print info, set flag, and exit
+                    print(f'\n{traceback.format_exc()}\nException in ' +
+                          f'BaseAbstract.interactive.follow_history: {e}')
+                    global forcestop
+                    forcestop = True
+                    raise EOFError
+
+                def _set_cursor(index, *args, **kwargs):
+                    # Set the index and remove this function from the queue
+                    try:
+                        terminal = readline.rl.mode
+                        terminal._history.set_history_cursor(index)
+                        terminal.process_keyevent_queue.pop(-1)
+                        return terminal.process_keyevent(*args, **kwargs)
+                    except Exception as e: _handle_exc(e)
+
+                try:
+                    # Get the current index in history and total length
+                    terminal = readline.rl.mode # e.g. pyreadline3.modes.emacs
+                    hist_len = len(terminal._history.history)
+                    hist_idx = terminal._history.get_history_cursor() + 1
+
+                    # If we're examining somewhere in previous command history
+                    if hist_idx < hist_len:
+                        prev_cmd = terminal._history.get_history_item(hist_idx)
+                        curr_cmd = terminal.l_buffer.get_line_text()
+
+                        # If command is unchanged, keep history cursor at index
+                        if curr_cmd == prev_cmd:
+                            set_cursor = partial(_set_cursor, hist_idx - 1)
+                            terminal.process_keyevent_queue.append(set_cursor)
+                except Exception as e: _handle_exc(e)
+
+                # Otherwise just accept the line as usual
+                return terminal.accept_line(*args, **kwargs)
+
+            # Bind the enter key so that we can execute multiple commands
+            # from history without needing to press up for each command 
+            readline.rl.mode._bind_key('return', follow_history)
+
+        except ImportError: pass
+
+        # Start the console
+        banner += '\nCTRL-Z resumes execution, quit() halts execution'
+        try: code.InteractiveConsole(variables).interact(banner=banner)
+
+        # Ensure we write the command history after exiting
+        finally:
+            try:                   readline.write_history_file()
+            except Exception as e: print(f'Failed to write history: {e}')
+
+        # Raise a SystemExit if the exception flag was set while running
+        if forcestop: raise SystemExit
 
 
     @classmethod

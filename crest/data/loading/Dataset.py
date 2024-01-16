@@ -95,12 +95,14 @@ class Dataset(BaseSet):
 
 
     def generate_samples(self, 
-        blocksize : Number = 1e8,
+        blocksize : Number = 1e9,
         numblocks : int | Collection[int] = 0,
         compute   : bool   = True,
         verbose   : bool   = True,
         optimize  : bool   = True,
+        shuffle   : bool   = False,
         logger    : Logger | None = None,
+        loglevel  : int | None = None,
         save_path : str | Path | None = None,
     ):# -> da.Array | Iterator[Delayed]:
         """Generate the dask array containing all valid samples.
@@ -144,10 +146,15 @@ class Dataset(BaseSet):
             Whether dask.optimize should be used on the full task graph. This
             can speed up access when batching data, but incurs a higher cost
             when initially generating sample blocks. 
+        shuffle   : bool
+            To the extent possible, shuffle sample ordering.
         logger    : Callable
             Logging function used when `verbose=True`. This is `print` by 
             default, but an actual logging function like `logging.info` can be
             given instead.
+        loglevel  : int | None
+            Log level that should be used by the logger, e.g. logging.INFO. If
+            None is given, the default level set by the logger is used.  
         save_path : str | Path | None
             Save the generated sample array to a pickle file at the given path.
 
@@ -161,7 +168,9 @@ class Dataset(BaseSet):
         """
         if logger is not None:
             self.__dict__['logger'] = logger
-
+        if loglevel is not None:
+            self.logger.setLevel(loglevel)
+            
         # In order to avoid overlapping logs with multiple processes,
         # we accumulate all log text and log only once at the end
         log_sep = ''.join(['_']*60) + '\n'
@@ -179,7 +188,7 @@ class Dataset(BaseSet):
                 self.ensure_dims( set.union(*map(set, self.dims)) )
 
                 # Create the delayed sample blocks
-                samples = self.create_blocks(blocksize, numblocks, verbose, optimize)
+                samples = self.create_blocks(blocksize, numblocks, verbose, optimize, shuffle)
         except: 
             verbose = True
             raise
@@ -206,6 +215,7 @@ class Dataset(BaseSet):
         numblocks : int | Collection[int] | None = 0,
         verbose   : bool = False,
         optimize  : bool = True,
+        shuffle   : bool = False,
     ) -> list:
         """Block data into the requested configuration.
 
@@ -228,6 +238,8 @@ class Dataset(BaseSet):
             Whether dask.optimize should be used on the full task graph. This
             can speed up access when batching data, but incurs a higher cost
             when initially generating sample blocks. 
+        shuffle   : bool
+            To the extent possible, shuffle sample ordering.
         
         Returns
         -------
@@ -306,7 +318,7 @@ class Dataset(BaseSet):
         # Create a list of Blocksets, where each Blockset 
         # contains exactly one Block from each Datafile
         prepped    = self.apply_overlap(optimize=optimize, _map=[overlap])
-        create_set = dask.delayed(partial(Blockset, logger=self.logger)) 
+        create_set = dask.delayed(partial(Blockset, logger=self.logger, shuffle=shuffle)) 
         blocksets  = map(create_set, zip(*prepped, strict=True))
         matches    = map(lambda bset: bset.find_matches, blocksets)
         return list(matches)

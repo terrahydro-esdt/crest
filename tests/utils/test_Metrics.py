@@ -1,7 +1,7 @@
 import pytest
-import numpy as np
 import xarray as xr
 import tensorflow as tf
+import os, json
 
 from crest.utils import Metrics
 
@@ -218,3 +218,64 @@ def test_call_keras_metrics_complex():
     cmetrics = func(obs, pred)
 
     assert len(cmetrics.numpy()) > 1
+
+def test_save_load():
+    observed, predicted, _, _ = sample_simple_data()
+
+    mcrest = Metrics()
+    cmetrics = mcrest.nse(observed, predicted)
+    saved_dict = mcrest.to_json()
+    mcrest2 = Metrics.from_json(saved_dict)
+    cmetrics2 = mcrest2.nse(observed, predicted)
+
+    assert cmetrics == cmetrics2
+
+def test_save_load_file():
+    observed, predicted, _, _ = sample_simple_data()
+
+    mcrest = Metrics()
+    cmetrics = mcrest.nse(observed, predicted)
+    saved_dict = mcrest.to_json()
+
+    with open('test.json', 'w') as f:
+        f.write(saved_dict)
+
+    with open('test.json', 'r') as f:
+        saved_dict = f.read()
+        mcrest2 = Metrics.from_json(saved_dict)
+        cmetrics2 = mcrest2.nse(observed, predicted)
+
+        assert cmetrics == cmetrics2
+
+    os.remove('test.json')
+
+def test_save_load_complex():
+    observed, predicted, _, _ = sample_complex_data()
+
+    mcrest = Metrics()
+    cmetrics = mcrest.nse(observed, predicted)
+    saved_dict = mcrest.to_json()
+    mcrest2 = Metrics.from_json(saved_dict)
+    cmetrics2 = mcrest2.nse(observed, predicted)
+
+    assert cmetrics == cmetrics2
+
+def test_save_load_complex_file():
+    observed, predicted, _, _ = sample_complex_data()
+
+    mcrest = Metrics()
+    cmetrics = mcrest.nse(observed, predicted)
+    saved_dict = mcrest.to_json()
+
+    with open('test.json', 'w') as f:
+        f.write(saved_dict)
+
+    with open('test.json', 'r') as f:
+        saved_dict = f.read()
+        mcrest2 = Metrics.from_json(saved_dict)
+        cmetrics2 = mcrest2.nse(observed, predicted)
+
+        assert cmetrics == cmetrics2
+
+    os.remove('test.json')
+

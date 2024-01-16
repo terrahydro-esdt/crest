@@ -72,7 +72,7 @@ def test_features(batch_size, n_features, shape):
     d = batch[0].to_dict()
     assert(len(d) == n_features), f'{len(d)} vs {n_features}'
     shapes = [v.shape for v in d.values()]
-    assert(all(s == shape[:1] for s in shapes)), f'{shapes} vs {shape}'
+    assert(all(s == (shape[0], 1) for s in shapes)), f'{shapes} vs {shape}'
 
     # Test extracting feature dicts this time
     with Batcher(dataset, batch_size=batch_size, workers=0, features=[]) as batches:
@@ -81,7 +81,7 @@ def test_features(batch_size, n_features, shape):
     assert(isinstance(batch, dict)), type(batch)
     assert(len(batch) == n_features), f'{len(batch)} vs {n_features}'
     shapes = [v.shape for v in batch.values()]
-    target = (batch_size, shape[0])
+    target = (batch_size, shape[0], 1)
     assert(all(s == target for s in shapes)), f'{shapes} vs {target}'
 
     # Last, test extracting nested feature dicts

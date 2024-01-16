@@ -28,13 +28,15 @@ class Blockset(BaseSet):
 
     """
     def __init__(self, 
-        blocks : Collection[Block] | Collection[Callable], 
-        logger : logging.Logger | None = None,
-        timing : bool = True,
+        blocks  : Collection[Block] | Collection[Callable], 
+        logger  : logging.Logger | None = None,
+        timing  : bool = True,
+        shuffle : bool = False,
     ):
         self.container = [getattr(b, '__call__', lambda: b)() for b in blocks]
-        self.logger = logger or logging.getLogger('Blockset')
-        self.timing = timing and (logger is not None)
+        self.logger  = logger or logging.getLogger('Blockset')
+        self.timing  = timing and (logger is not None)
+        self.shuffle = shuffle
 
         # Set block count for all blocks
         for i, block in enumerate(self.container):
@@ -98,6 +100,7 @@ class Blockset(BaseSet):
                     self.valid_coords, 
                     self.valid_resolution,
                     logger=self.logger if self.timing else None,
+                    shuffle=self.shuffle,
                 )
 
             complete_time = time.time() - timer.start['time']
@@ -107,7 +110,7 @@ class Blockset(BaseSet):
         # Return if there aren't any matches
         if counts.size < 1: return da.from_array(meta)
 
-        with self.benchmark('_group_matches'):
+        with self.benchmark(f'_group_matches (shape={matches.shape} | Task MB={task_bytes/1e6:.0f})'):
             matches, divisions, lengths = self._group_matches(matches, counts, task_bytes)
         
         # Create a dask dataframe first, then transform into a dask
@@ -121,9 +124,9 @@ class Blockset(BaseSet):
         }).to_dask_array(lengths=list(lengths), meta=meta)
 
 
-    def _parse(self, matches, singleton: bool = False) -> SampleSet:
+    def _parse(self, matches: Collection[np.ndarray], singleton: bool = False) -> SampleSet:
         """ Parse a match into the relevant SampleSet of data """
-        with self.benchmark('_parse.extract'):
+        with self.benchmark(f'_parse.extract (shape={matches[0].shape})'):
             windows = self.extract(_map=[matches]) # Extract data windows
             # ordered = self.sort(container=windows) # Return to original ordering
         return SampleSet(list(zip(*windows)), singleton, self.dtype)
