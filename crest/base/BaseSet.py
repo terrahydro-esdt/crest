@@ -1,5 +1,5 @@
 from collections.abc import Collection, Callable, Iterator
-from itertools import zip_longest, starmap
+from itertools import zip_longest, starmap, compress
 from operator import itemgetter
 from typing import TypeVar, Any
 
@@ -90,8 +90,15 @@ class BaseSet(BaseAbstract):
 
     def __getitem__(self, idx: Any) -> T:
         """ Get an element in the container """
+        # Wrap the sliced container in a new BaseSet 
         if isinstance(idx, slice):
             return self.__class__(self.container[idx])
+
+        # Allow selecting via a collection of ints or bools
+        if hasattr(idx, '__len__'):
+            if all(isinstance(i,int) and not isinstance(i,bool) for i in idx):
+                return self.__class__([self[i] for i in idx])
+            return self.__class__(list(compress(self, idx)))
         return self.container[idx]
     
 
@@ -173,8 +180,8 @@ class BaseSet(BaseAbstract):
             valid = lambda v: len(v) in [0, len(__objs)]
             items = _map + list(_kwmap.values())
             assert(all(map(valid, items))), \
-                f'{self} has {len(__objs)} items, but items passed via' + \
-                f' _map/_kwmap had sizes {map(len, items)}: {_map} | {_kwmap}'
+                f'{self} has {len(__objs)} items, but items passed via _map'+ \
+                f'/_kwmap had sizes {list(map(len, items))}: {_map} | {_kwmap}'
 
             create_dict = lambda v: dict(zip(_kwmap.keys(), v))
             get_outputs = lambda f, k, *a: f(*(args+a), **(kwargs|k))

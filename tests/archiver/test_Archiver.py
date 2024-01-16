@@ -83,7 +83,7 @@ _PREDICTIONS['latitude'] = np.repeat(
 _PREDICTIONS['longitude'] = np.repeat(
     np.random.choice(_DF2.data['longitude'], (3,)), 6)
 _PREDICTIONS['datetime'] = np.repeat(
-    np.random.choice(_DF2.data['datetime'], (9,)), 2)
+    np.random.choice(_DF2.data['datetime'], (9,)), 2).astype(np.float64)
 _PREDICTIONS['var2_pred'] = np.random.random((18,))
 
 
@@ -309,6 +309,7 @@ def test_aggregate():
                 }
 
     cond_list = []
+
     for k in a.keys():
         cond_list.append(np.allclose(np.sort(a[k]), np.sort(expected[k])))
 

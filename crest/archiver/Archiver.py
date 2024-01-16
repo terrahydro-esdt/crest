@@ -180,7 +180,7 @@ class Archiver(BaseAbstract):
                             
                             for cor, val in current_res.items():
                                 if val != 0.:
-                                    coord_array = d.coords[cor].to_numpy()
+                                    coord_array = d.coords[cor].to_numpy().astype(np.float64)
                                     if val < finest_resolution[cor]:
                                         finest_resolution[cor] = val
                                         finest_coordinate[cor] = coord_array

@@ -154,7 +154,10 @@ class Datafile(BaseAbstract):
             try:
                 if hasattr(self.data, attr): return getattr(self.data, attr)
                 if hasattr(self.dask, attr): return getattr(self.dask, attr)
-            except: return self.__getattribute__(attr)
+            except AttributeError: return self.__getattribute__(attr)
+            except Exception as e1: 
+                try: return self.__getattribute__(attr)
+                except Exception as e2: raise e1 from e2 
         return self.__getattribute__(attr)
 
 
@@ -188,9 +191,9 @@ class Datafile(BaseAbstract):
                 self.__dict__['summary'] = raw['summary']
             raw = raw.drop_vars(['summary', 'features', 'statistics'], errors='ignore')
 
-            # Set datetime dtype back to np.datetime64
-            if hasattr(raw, 'datetime') and np.issubdtype(raw.datetime.dtype, np.float64):
-                raw = raw.assign_coords(datetime=pd.to_datetime(raw.datetime))
+            # Set datetime dtype back to np.datetime64 if it was previously converted
+            if hasattr(raw, 'datetime') and np.issubdtype(raw.datetime.dtype, np.float32):
+                raw = raw.assign_coords(datetime=raw.datetime.astype('datetime64[m]'))
         return raw 
 
 
@@ -210,20 +213,14 @@ class Datafile(BaseAbstract):
         data = data.drop_vars(['summary', 'features', 'statistics'], errors='ignore')
 
         # Select only requested coordinates
-        data = data.sel({k: slice(*ext) for k, ext in self.extent.items()})
+        data = data.sel({k: slice(*ext) for k, ext in self.extent.items() 
+                        if k in data and k not in self._virtual_dims})
 
-        # Cast datetimes to float
-        for key in data.coords:
-            if np.issubdtype(data[key].dtype, np.datetime64):
-                data = data.assign_coords({key: data[key].astype('float64')})
-
-        # Cast int/uint/etc. to float in order to allow NaN values
-        for key in data:
-            dtype = data[key].dtype
-            if np.issubdtype(dtype, np.number):
-                if not np.issubdtype(dtype, np.floating):
-                    min_dtype = np.promote_types(dtype, np.float16)
-                    data[key] = data[key].astype(min_dtype)
+        # Store original data dtypes - all coords are converted to float in 
+        # Datafile._typed_data. In order to allow datetime64 to fit float32,
+        # we convert datetime values to datetime64[m] (i.e. minute resolution)
+        dtypes = {k: T if not np.issubdtype(T := data[k].dtype, np.datetime64)
+                    else 'datetime64[m]' for k in list(data)+list(data.coords)}
 
         # Convert to a DataArray and ensure data is backed by dask
         data = data.to_array('features').chunk({})
@@ -235,8 +232,12 @@ class Datafile(BaseAbstract):
                 'Datafile.config_hash' : self.config_hash,
             })
 
-        # Save the original coordinates for later return values
-        self.original_dims = (list(data.coords), data.features.to_numpy())
+        # Save the original coordinates/dtypes for later return values
+        self.original_dims = (
+            [c for c in data.coords if c not in self._virtual_dims], 
+            data.features.to_numpy(),
+            dtypes,
+        )
 
         # Transpose dimensions so they are in the correct order, and return
         order = sorted(set(data.coords) - {'features'})
@@ -256,13 +257,54 @@ class Datafile(BaseAbstract):
         stats = ['mean', 'std', 'min', 'max'] + list(extra)
         coord = xr.Variable('statistics', stats) 
         value = lambda k: getattr(data, k, extra[k])().to_array('features')
-        return xr.concat(map(value, stats), coord)
+        stats = xr.concat(map(value, stats), coord).to_dataset('statistics')
+
+        # Compute percentiles as a group for efficiency
+        stats[['p25', 'median', 'p75']] = xr.apply_ufunc(
+            lambda x: da.percentile(x.ravel(), [25, 50, 75], internal_method='tdigest'),
+            data, **{
+                'dask'             : 'allowed',
+                'input_core_dims'  : [list(data.dims)],
+                'output_core_dims' : [['statistics']],
+            }).to_array('features').to_dataset('statistics')
+        return stats.to_array('statistics')
+
+
+    @property
+    def _typed_data(self) -> xr.DataArray:
+        """ Data/coords converted to float types """
+        data = self.data
+
+        # Cast int/uint/etc. to float in order to allow NaNs
+        # for key in data.features:
+        if np.issubdtype(data.dtype, np.number):
+            if not np.issubdtype(data.dtype, np.floating):
+                data = data.astype( np.promote_types(data.dtype, np.float16) )
+
+        # Coordinates must have uniform type, so we cast to float32
+        # Note: datetime64 are converted to datetime64[m] (minute resolution)
+        for key in data.coords:
+            if key != 'features':
+                if np.issubdtype(data[key].dtype, np.datetime64):
+                    data = data.assign_coords({key: data[key].astype('float64')/6e10})
+                data = data.assign_coords({key: data[key].astype('float32')})
+        return data
 
 
     @property
     def dask(self) -> da.Array:
         """ DaskArray reference held by the xr.DataArray """
-        return self.data.data
+        return self._typed_data.data
+    
+
+    @property
+    def dask_coords(self) -> da.Array:
+        """ Coordinate meshgrid wrapped with dask """
+        todask = partial(da.from_array, name=False)
+        coords = (self._typed_data[d].values for d in self.dims)
+        c_dask = map(todask, coords, self.dask.chunks)
+        c_grid = da.meshgrid(*c_dask, indexing='ij')
+        return da.stack(c_grid, axis=-1).rechunk({-1:-1})
 
 
     @property
@@ -398,7 +440,7 @@ class Datafile(BaseAbstract):
 
         """
         get_vec = lambda d: np.diff(d) if len(d) > 1 else np.zeros(1)
-        vectors = [get_vec(self.data[dim]).round(5) for dim in self.dims]
+        vectors = [get_vec(self._typed_data[dim]).round(5) for dim in self.dims]
         uniform = lambda vec: (vec.max()-vec.min()) < 1e-3
         setattr(self, 'is_uniform', all(map(uniform, vectors)))
 
@@ -418,18 +460,6 @@ class Datafile(BaseAbstract):
         If we have uniform grids, this will just be the resolution
         itself; otherwise it will be the maximum along each vector """
         return [np.atleast_1d(r).max() for r in self.resolution]
-
-
-    @property
-    def coord_array(self) -> da.Array:
-        """ Coordinate meshgrid wrapped with dask """
-        coords = [self.data[dim].values for dim in self.dims]
-        array  = partial(da.from_array, name=False)
-        coords = map(array, coords, self.dask.chunks)
-        coords = da.meshgrid(*coords, indexing='ij')
-        coords = da.stack(coords, axis=-1)
-        coords = coords.rechunk({-1:-1})
-        return coords
 
 
     def ensure_dims(self, dims: set[str]) -> None:
@@ -531,6 +561,9 @@ class Datafile(BaseAbstract):
             Or, if procedure fails and the new blocks do not match the request.
 
         """
+        # Add 1 for any unspecified dims (except features)
+        numblocks = list(numblocks) + [1] * (len(self.dask.numblocks) - (len(numblocks)+1))
+
         # Update virtual_dims to track the requested number of blocks
         is_virtual = lambda dim: dim[0] in self._virtual_dims
         dim_block  = list(zip(self.dims, numblocks))
@@ -583,6 +616,9 @@ class Datafile(BaseAbstract):
             Or, if procedure fails and the new blocks do not match the request.
 
         """        
+        # Add -1 for any unspecified dims (except features)
+        chunksize = list(chunksize) + [-1] * (len(self.dask.chunks) - (len(chunksize)+1))
+
         # Update virtual_dims to track the requested number of blocks
         is_virtual = lambda dim: dim[0] in self._virtual_dims
         calc_block = lambda s,c: getattr(c, '__len__', lambda: s//c)()
@@ -721,7 +757,7 @@ class Datafile(BaseAbstract):
 
         # Separate data/coords/masks into independent blocks
         d_blocks = blocker( overlap(self.dask) )
-        c_blocks = blocker( overlap(self.coord_array) )
+        c_blocks = blocker( overlap(self.dask_coords) )
         i_blocks = blocker( overlap(inbound_mask, boundary=0) )
         o_blocks = blocker( mask_id(overlap(overlap_mask, boundary=-1)) )
 
@@ -771,6 +807,20 @@ class Datafile(BaseAbstract):
         return map(lazy_func, product(*map(range, blocks)))
 
 
+    def reset(self, **kwargs): 
+        """ Reset Datafile state to remove cached properties.
+        
+        Parameters
+        ----------
+        **kwargs
+            Any __init__ parameters that should be updated in the config state.
+
+        """
+        config = self.__getstate__() | kwargs
+        self.__dict__.clear()
+        self.__dict__.update(config)
+
+
     def _cache(self, 
         overwrite : bool = False, 
         cache_dir : Path | str  = '.',
@@ -804,26 +854,23 @@ class Datafile(BaseAbstract):
         data['summary'] = self.summary
 
         # Verify cached data is equivalent
-        if (not overwrite) and dest.exists():
-            try: 
-                with xr.open_zarr(dest) as cache:
-                    overwrite = not all(
-                        getattr(data, attr) == getattr(cache, attr)
-                        for attr in ['dims', 'attrs', 'nbytes', 'chunksizes']
-                    ) and bool(xr.align(data, cache, join='exact'))
-            except: overwrite = True
+        # if (not overwrite) and dest.exists():
+        #     try: 
+        #         with xr.open_zarr(dest) as cache:
+        #             overwrite = not all(
+        #                 getattr(data, attr) == getattr(cache, attr)
+        #                 for attr in ['dims', 'attrs', 'nbytes', 'chunksizes']
+        #             ) and bool(xr.align(data, cache, join='exact'))
+        #     except: overwrite = True
 
         # Reinitialize this Datafile with the new cache
         # Anything handled by the cache (e.g. extent) can be dropped
-        config = self.__getstate__()
-        config.update({
+        self.reset(**{
             'location'      : dest,
             'features'      : [],
             'extent'        : {},
             'preprocessors' : [],
         })
-        self.__dict__.clear()
-        self.__dict__.update(config)
 
         # Write the data to the destination
         if overwrite or (not dest.exists()):
@@ -831,7 +878,7 @@ class Datafile(BaseAbstract):
             print(f'\nCaching {self.name}...')
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore')
-                with ProgressBar(): data.to_zarr(dest)
+                with ProgressBar(): data.to_zarr(dest, encoding={})
         else: print(f'Cache exists for {self.name}')
 
 

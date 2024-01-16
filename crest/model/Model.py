@@ -9,6 +9,7 @@ from crest.data.loading import Dataset, StructuredDataset
 from crest.data import Batcher
 from .BaseModel import BaseModel, ImproperModelError
 from .TensorGraph import TensorGraph
+from crest.model.TensorSpec import TensorSpec
 
 
 class Model(BaseModel):
@@ -25,8 +26,18 @@ class Model(BaseModel):
         self.graph = graph
         self.model = None
         self.name  = graph.name
-        self.inputs = {k: tf.keras.Input(type_spec=v, name=k) if not v is None else 
-                       None for k,v in self.graph.inputs.items()}
+
+        # Allow for TensorSpec to be converted to Keras Input
+        self.inputs = {}
+        for k,v in self.graph.inputs.items():
+            if (not v is None):
+                if (isinstance(v, TensorSpec)):
+                    v = v.keras
+                
+                self.inputs[k] = tf.keras.Input(type_spec=v, name=k)
+            else:
+                self.inputs[k] = None
+
         self.outputs = self.graph(self.inputs)
         self.metric = Metrics()
         
@@ -89,7 +100,6 @@ class Model(BaseModel):
         if ('metrics' in kwargs):
             metrics = self.metric.get_callbacks(kwargs['metrics'])
             kwargs['metrics'] = metrics
-            print(metrics)
 
         self.build(_internal=True)
         self.model.compile(**kwargs)
@@ -98,7 +108,7 @@ class Model(BaseModel):
         no_trainable = len(self.model.trainable_weights) <= 0
         if show_summary or no_trainable:
             self.model.summary(line_length=200)
-        assert(not no_trainable), 'No trainable parameters in model'
+        if no_trainable: print('\nWARNING: No trainable parameters in model\n')
 
 
     def fit(self, dataset : Dataset | Batcher | StructuredDataset, **kwargs):
@@ -155,7 +165,7 @@ class Model(BaseModel):
             self.model.fit(data,**kwargs)
 
     
-    def predict(self, dataset: Dataset | Batcher | dict, coords=[], **kwargs) -> dict:
+    def predict(self, dataset: Dataset | StructuredDataset | Batcher | dict, coords=[], **kwargs) -> dict:
         """
         Make predictions with the model.
         
@@ -260,7 +270,7 @@ class Model(BaseModel):
         return pred
 
 
-    def predict_exhaust(self, dataset : Dataset | Batcher | dict, coords=[], **kwargs) -> dict:
+    def predict_exhaust(self, dataset : Dataset | StructuredDataset | Batcher | dict, coords=[], **kwargs) -> dict:
         """
         Make predictions with the model.
         

@@ -139,7 +139,7 @@ def test_2d():
     coords = list(map(make2d, coords))
     expect = np.c_[list(map(make_nested, expect))]
     counts = np.array(counts)
-    out, c = find_neighbors(coords, radius=1, method='tree')
+    out, c = find_neighbors(coords, radius=1, method='tree', p=2)
     assert(equal(out, expect)), readable(out, expect)
     assert(equal(c,   counts)), readable(c,   counts)
 

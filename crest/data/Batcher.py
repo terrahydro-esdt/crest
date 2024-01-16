@@ -99,13 +99,21 @@ class Batcher:
         workers that can be active - as without duplication, the number of
         workers is limited to the number of blocks in the dataset (one block
         per worker).
-    blocksize : Number
+    continuous : bool
+        If True, dataset sampling is continuous rather than pausing once the
+        queue is filled with samples. In other words, the batcher will simply
+        discard blocks of samples if the queue is full, rather than waiting 
+        for room in the queue to add those samples. This allows more uniformly
+        random sampling of the overall data space when there are far more 
+        samples than the desired number of batches to be generated. Note that
+        repeat must be also be True for this setting to be used. 
+    blocksize  : Number
         Number of bytes that should be allocated to each block and worked
         on in parallel (default=1e8; 100MB). Note that this is just a proxy
         for the amount memory that will be used when computing a block, as 
         the actual amount used is dependent upon the number of matches that
         are found in the block and thus can vary significantly. 
-    numblocks : int 
+    numblocks  : int 
         Alternative to giving a blocksize value. If numblocks > 0, the 
         requested number of blocks is the target block total. While the 
         exact number of blocks is not always possible to create, an attempt
@@ -141,7 +149,8 @@ class Batcher:
         shuffle    : bool   = True,
         repeat     : bool   = False,
         duplicate  : bool   = False,
-        blocksize  : Number = 1e8,
+        continuous : bool   = False,
+        blocksize  : Number = 1e9,
         numblocks  : int    = 0,
         max_queue  : int    = 100,
         task_bytes : float  = 5e7,
@@ -157,6 +166,7 @@ class Batcher:
         self.shuffle    = shuffle
         self.repeat     = repeat
         self.duplicate  = duplicate
+        self.continuous = continuous and repeat
         self.blocksize  = blocksize
         self.numblocks  = numblocks
         self.max_queue  = max_queue
@@ -240,7 +250,10 @@ class Batcher:
 
         # Signal threads/workers to exit
         if '_exit_flag' in self.__dict__:
-            with handler: self._exit_flag.set()
+            # In certain situations, Event.set can deadlock
+            #  (see https://stackoverflow.com/a/73341335/22210498)
+            # Instead, we just delegate the flag set to another thread
+            with handler: threading.Thread(target=self._exit_flag.set).start()
         
         # Close background thread managers
         for key in ['_block_tasks', '_batch_tasks']:
@@ -253,11 +266,9 @@ class Batcher:
             # Discard any queue items if we need to close immediately
             if timeout == 0: self._queue.cancel_join_thread()
             else:
-                for _ in range(2):
-                    while not self._queue.empty():
-                        try: self._queue.get_nowait()
-                        except: break
-                    time.sleep(0.25)
+                while not self._queue.empty():
+                    try: self._queue.get_nowait()
+                    except: break
 
         # Delete cached attributes
         for key in ['_generator', '_queue']:
@@ -410,6 +421,7 @@ class Batcher:
                         'compute'   : False, 
                         'verbose'   : True, 
                         'logger'    : self._logger,
+                        'shuffle'   : self.shuffle,
                     })
                     timer.prefix = f'Generated {len(blocks)} dataset blocks'
             else: blocks = self.dataset
@@ -648,7 +660,7 @@ class Batcher:
 
             # Extract batches from blocks in the sample array
             while not self._exit and (idx := list(islice(order, task_blocks))):
-                self._batch_tasks( samples.blocks[idx] )
+                self._batch_tasks(samples.blocks[idx], continuous=self.continuous)
 
                 # Wait until the first batch is done, or signaled to exit
                 while not ((self._first or self._block_tasks.threads < 1) or self._exit):
@@ -1056,12 +1068,16 @@ class Batcher:
         ]
         log_format = logging.Formatter(' | '.join(format_key))
 
-        logger = logging.getLogger('Batcher')
+        logger = logging.getLogger(Path(self.logfile).name)
         if logger.hasHandlers():
             logger.handlers.clear()
 
+        # abseil hijacks the root logger
+        logger.propagate = False 
+
         # If a logfile is requested, use a file handler
         if self.logfile is not None:
+        
             # Add a handler for error logs that also prints to sys.stderr
             handler = logging.StreamHandler()
             handler.setLevel(logging.WARNING)

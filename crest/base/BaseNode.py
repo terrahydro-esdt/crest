@@ -1,12 +1,14 @@
 from collections.abc import Callable, Collection
 from functools import cached_property, partial
+from contextlib import contextmanager 
 from abc import abstractmethod
 from scipy import stats
 
 import matplotlib.pyplot as plt 
 import tensorflow as tf 
+import seaborn as sns
 import numpy as np
-import io 
+import warnings, io
 
 from crest.utils import classproperty
 from crest.base  import BaseAbstract
@@ -87,8 +89,23 @@ class BaseNode(BaseAbstract):
 
 
     @abstractmethod
-    def call(self, X):      
+    def call(self, X: dict[str, tf.Tensor]) -> dict[str, tf.Tensor]:      
+        """ Inheriting classes must define a `call` method, which takes
+            as input a dictionary of {feature name: Input Tensor}, and
+            returns a dictionary of {output feature: Output Tensor}. """
         raise NotImplementedError(f'{self}.call() must be implemented')
+
+
+    @classproperty
+    def input_spec(cls) -> dict[str, tf.TensorSpec]:
+        """ Convert input shape dictionary into TensorSpec objects """
+        return cls._generate_spec(cls.inputs)
+
+
+    @classproperty
+    def output_spec(cls) -> dict[str, tf.TensorSpec]:
+        """ Convert output shape dictionary into TensorSpec objects """
+        return cls._generate_spec(cls.outputs)
 
 
     @cached_property
@@ -106,8 +123,8 @@ class BaseNode(BaseAbstract):
     @property
     def losses(self) -> dict[str, Callable]:
         """ Return a dictionary of losses, one per output feature """
-        get_loss = lambda loss: tf.keras.losses.get(loss) \
-                            if isinstance(loss, (str, dict)) else loss 
+        get_loss = lambda loss: (loss if not isinstance(loss, (str, dict))
+                                      else tf.keras.losses.get(loss))
 
         if isinstance(self.loss, dict) and ('class_name' not in self.loss):
             losses = {k: get_loss(loss) for k, loss in self.loss.items()}
@@ -118,55 +135,49 @@ class BaseNode(BaseAbstract):
         # If pre/post processing added, need to allow calculating loss on
         # transformed model outputs rather than forcing the postprocessed
         if hasattr(self, 'postprocess') and self.transform_loss:
-            def loss_wrapper(key: str, loss_f: Callable):
+            def loss_wrapper(feature: str, loss_f: Callable):
                 """ Calculate loss on the raw model outputs (and preprocessed
                     ground truth), rather than the postprocessed outputs. """
+
                 def transform(y_true, y_pred):
                     def from_dict(z):
-                        try:    return z[key] if isinstance(z, dict) else z
-                        except: raise Exception(f'Expected key {key}: {z}')
+                        try:    return z[feature] if isinstance(z, dict) else z
+                        except: raise Exception(f'Expected key {feature}: {z}')
 
-                    keys  = ['shape', 'reduce_min', 'reduce_max']
-                    stats = lambda y:[f'{k}: {getattr(tf,k)(y)}' for k in keys]
+                    # Helper that gathers various data statistics to print
+                    stats = lambda y: [(k, getattr(tf, k)(y)) for k in [
+                        'shape', 'reduce_min', 'reduce_max', 'reduce_mean']]
 
-                    if self.debug:
-                        tf.print('\nPrior to transform:',
-                            '\ny_true', '\t'.join(stats(y_true)),
-                            '\ny_pred', '\t'.join(stats(y_pred)) )
+                    # Helper that logs a scatter plot via tensorboard
+                    image = lambda label, *y, **kw: tf.summary.image(label,
+                        tf.numpy_function(partial(scatter, **kw), y, tf.uint8))
 
-                    with tf.name_scope(''):
-                        gen_img = lambda *y, **kw: tf.numpy_function(partial(scatterplot, **kw), y, tf.uint8, stateful=False)
-                        tf.summary.image(f'{self}/{key}/postprocessed', gen_img(y_true, y_pred))
+                    if self.debug: tf.print('\nPrior to transform:',
+                        '\ny_true', *stats(y_true),
+                        '\ny_pred', *stats(y_pred))
 
-                    # Preprocess y_true features, and gather
-                    # model outputs prior to postprocessing
-                    y_true = from_dict( self.preprocess({key: y_true}) )
-                    y_pred = from_dict( self._call_output )
+                    # Create scatter plots both before and after postprocessing
+                    with tf.name_scope(''): 
+                        with tf.name_scope(f'{self}/{feature.replace("@",".")}'):
+                            # Preprocess y_true, and gather raw model outputs
+                            image('postprocessed', y_true, y_pred)
+                            tf.summary.histogram('postprocessed/y_true', y_true)
+                            tf.summary.histogram('postprocessed/y_pred', y_pred)
+                            y_true = from_dict(self.preprocess({feature:y_true}))
+                            y_pred = from_dict(self._call_output)
+                            tf.summary.histogram('transformed/y_true', y_true)
+                            tf.summary.histogram('transformed/y_pred', y_pred)
+                            image('transformed', y_true, y_pred, color='g')
 
-                    with tf.name_scope(''):
-                        tf.summary.image(f'{self}/{key}/transformed', gen_img(y_true, y_pred, color='g'))
+                    if self.debug: tf.print('\nAfter transform:',
+                        '\ny_true', *stats(y_true),
+                        '\ny_pred', *stats(y_pred),
+                        '\nloss:',  *stats(loss_f(y_true, y_pred)))
 
-                    if self.debug:
-                        tf.print('\nAfter transform:',
-                            '\ny_true', '\t'.join(stats(y_true)),
-                            '\ny_pred', '\t'.join(stats(y_pred)) )
-                        
                     return tf.reduce_mean( loss_f(y_true, y_pred) )
                 return transform
             return {k: loss_wrapper(k, loss_f) for k, loss_f in losses.items()}
         return losses
-
-
-    @classproperty
-    def input_spec(cls) -> dict[str, tf.TensorSpec]:
-        """ Convert input shape dictionary into TensorSpec objects """
-        return cls._generate_spec(cls.inputs)
-
-
-    @classproperty
-    def output_spec(cls) -> dict[str, tf.TensorSpec]:
-        """ Convert output shape dictionary into TensorSpec objects """
-        return cls._generate_spec(cls.outputs)
 
 
     @staticmethod
@@ -203,12 +214,14 @@ class BaseNode(BaseAbstract):
 
         # Instantiate graphs for each node to define input/output specs
         from crest.model import HierarchalTensorGraph as HTG
-        preprocess  = HTG(preprocess,  'preprocess',   i_spec, i_spec)
-        model       = HTG(call_output, f'{self}.call', i_spec, o_spec)
-        postprocess = HTG(postprocess, 'postprocess',  o_spec, o_spec)
+        preprocess  = HTG(preprocess,  'preprocess',  i_spec, i_spec)
+        model       = HTG(call_output, f'{self}.call',preprocess.outputs, o_spec)
+        postprocess = HTG(postprocess, 'postprocess', model.outputs, model.outputs)
 
         # Reset graph so that it isn't a base node
         self.graph.node = self.graph
+        self.graph.inputs = preprocess.inputs
+        self.graph.outputs = postprocess.outputs
 
         # Add new edges for pre-/post-processing
         self.graph.add_edges_from([
@@ -219,15 +232,41 @@ class BaseNode(BaseAbstract):
         ])
 
 
-    def _call(self, X):
-        """ Wraps self.call to store the output tensor in self._call_output """
-        self._call_output = self.call(getattr(X, 'copy', lambda: X)())
+    def _call(self, X, training=False):
+        """ Wraps self.call to provide data parsing / shape validation """
+        # Group features by source
+        X = getattr(X, 'copy', lambda: X)()
+        Y = {source: {k: X.pop(k) for k, coords in features.items()} 
+                for source, features in self.inputs.items()}
+        
+        # Wrap output(s) with output_spec dictionary if not already
+        out = self.call(Y | X)
+        if not isinstance(out, (dict, list, tuple)):
+            out = [out]
+        if isinstance(out, (list, tuple)):
+            if len(out) != len(self.output_spec):
+                raise Exception(f'Expected {len(self.output_spec)} outputs'
+                        + f' from {self}, but received {len(out)} value(s)')
+            out = dict(zip(self.output_spec.keys(), out))
+
+        def match_shape(feature):
+            """ Match output shapes to the respective output_spec shape """
+            squeezed  = tf.squeeze(out[feature])
+            tgt_shape = self.output_spec[feature].shape
+            rank_diff = tgt_shape.rank-tf.rank(squeezed)
+            extra_dim = tf.ones(tf.math.abs(rank_diff), dtype=tf.int32)
+            new_shape = tf.concat([tf.shape(squeezed), extra_dim], 0)
+            matched   = tf.reshape(squeezed, shape=new_shape)
+            return tf.ensure_shape(matched, tgt_shape)
+
+        # Ensure output shapes match their output spec shape
+        self._call_output = dict(zip(out, map(match_shape, out)))
         return self._call_output
 
 
     def __call__(self, X):  
         """ Calling a BaseNode passes input through its graph """
-        return self.graph(getattr(X, 'copy', lambda: X)())
+        return self.graph( getattr(X, 'copy', lambda: X)() )
     
 
     def __init_subclass__(cls, *args, **kwargs):
@@ -283,59 +322,91 @@ class _NodeWrap(tf.keras.layers.Layer):
                 setattr(self, k, v)
         self.obj = obj
 
+
     def __repr__(self): 
         return repr(self.obj)
 
+
     def call(self, X, *args, **kwargs):
         """ Adds output histograms for tensorboard visualization """
-        output = getattr(self.obj, '_call', self.obj)(X)
+        output = getattr(self.obj, '_call', self.obj)(X, *args, **kwargs)
 
-        # Add histograms for all outputs
         with tf.name_scope(''):
-            if isinstance(output, dict):
-                for k,v in output.items():
-                    tf.summary.histogram(f'{self.name}/output/{k}', output[k])
-            else: tf.summary.histogram(f'{self.name}/output', output)
+            with tf.name_scope(self.name):
+
+                # Add histograms for all outputs
+                if isinstance(output, dict):
+                    for k,v in output.items():
+                        tf.summary.histogram(k.replace('@', '.'), output[k])
+                else: tf.summary.histogram('output', output)
+        
+            # Add histograms for all weights
+            for w in self.weights: 
+                tf.summary.histogram(w.name, w)
         return output
+
 
     def get_config(self):
         return super().get_config() | {'obj': self.obj}
 
 
-def scatterplot(y_true, y_pred, **kwargs):
-    def add_identity(ax, *line_args, **line_kwargs):
-        ''' 
-        Add 1 to 1 diagonal line to a plot.
-        https://stackoverflow.com/questions/22104256/does-matplotlib-have-a-function-for-drawing-diagonal-lines-in-axis-coordinates
-        
-        Usage: add_identity(plt.gca(), color='k', ls='--')
-        '''
-        line_kwargs['label'] = line_kwargs.get('label', '_nolegend_')
-        identity, = ax.plot([], [], *line_args, **line_kwargs)
-        
-        def callback(axes):
-            low_x, high_x = ax.get_xlim()
-            low_y, high_y = ax.get_ylim()
-            lo = max(low_x,  low_y)
-            hi = min(high_x, high_y)
-            identity.set_data([lo, hi], [lo, hi])
+def scatter(y_true: np.ndarray, y_pred: np.ndarray, **kwargs) -> np.ndarray:
+    """ Create a scatter plot using y true and pred, returning as an array """
+    ys = [y_true.flatten(), y_pred.flatten()]
+    r2 = stats.linregress(*ys)[2] ** 2
 
-        callback(ax)
-        ax.callbacks.connect('xlim_changed', callback)
-        ax.callbacks.connect('ylim_changed', callback)
+    with plot_to_array() as array:
+        g = sns.jointplot(x=ys[1], y=ys[0])
+        g.plot_joint(sns.kdeplot, color='r', zorder=1, levels=6, alpha=0.8)
+        # g.plot_marginals(sns.rugplot, color='r', height=-0.15, clip_on=False)
+        plt.xlabel('y_pred')
+        plt.ylabel('y_true')
+        plt.title(rf'$r^{{2}}$ = {r2:.2f}   N = {len(ys[0])}', fontsize=15)
+        plt.axline((0,0), slope=1, ls='--', color='k', alpha=0.5, zorder=2)
+        plt.ticklabel_format(style='sci', axis='both', scilimits=(-2,3))
 
-    with io.BytesIO() as buf:
-        f = plt.Figure()
-        ax = f.gca()
-        ax.scatter(y_pred, y_true, **kwargs)
-        ax.set_xlabel('y_pred')
-        ax.set_ylabel('y_true')
-        add_identity(ax, ls='--', color='k', alpha=0.5)
-        slope_, intercept_, r_value, p_value, std_err = stats.linregress(y_true.flatten(), y_pred.flatten())
-        ax.set_title(f'R^2 = {r_value**2:.2f}', fontsize=14)
+        minim = min(plt.xlim()[0], plt.ylim()[0])
+        maxim = max(plt.xlim()[1], plt.ylim()[1])
+        plt.xlim((minim, maxim))
+        plt.ylim((minim, maxim))
+        return array
 
-        # Return plot as RGBA array
-        f.canvas.draw() 
-        f.savefig(buf, format='raw')
-        buf.seek(0)
-        return np.reshape(np.frombuffer(buf.getvalue(), dtype=np.uint8), (1, int(f.bbox.bounds[3]), int(f.bbox.bounds[2]), -1))
+
+@contextmanager
+def plot_to_array(dpi: int = 150, width: float = 4.8, height: float = 3.6):
+    """ Save a matplotlib plot to a numpy array. 
+    
+    Examples
+    --------
+    >>> with plot_to_array() as array:
+    ...     plt.scatter([1, 2], [2, 1])
+    >>> plt.imshow(array)
+
+    """
+    width = 4.8
+    height = 3.6
+    shape = (1, int(height*dpi), int(width*dpi), 4)
+    array = np.empty(shape, dtype=np.uint8)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        yield array
+    
+        # Save the current figure into the previously returned array object
+        with io.BytesIO() as buffer:
+            figure = plt.gcf()
+            try:
+
+                plt.tight_layout()
+                figure.set_size_inches([width, height])
+                figure.canvas.draw() 
+                figure.savefig(buffer, format='raw', dpi=dpi)
+                figure.clf()
+                plt.close(figure)
+                plt.close('all')
+                buffer.seek(0)
+                array.ravel()[:] = np.frombuffer(buffer.getvalue(), dtype=np.uint8)
+            except:
+                print('\n\n')
+                print(figure.get_size_inches())
+                print(figure.bbox)
+                # raise
