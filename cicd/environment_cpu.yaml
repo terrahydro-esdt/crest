@@ -25,6 +25,7 @@ dependencies:
   - ipywidgets=7.7.1
   - seaborn=0.13.0
   - pip=23.0.1
+  - jsonpickle=3.0.2
 
   # FAISS
   # - pytorch

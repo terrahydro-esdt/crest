@@ -266,11 +266,9 @@ class Batcher:
             # Discard any queue items if we need to close immediately
             if timeout == 0: self._queue.cancel_join_thread()
             else:
-                for _ in range(2):
-                    while not self._queue.empty():
-                        try: self._queue.get_nowait()
-                        except: break
-                    time.sleep(0.25)
+                while not self._queue.empty():
+                    try: self._queue.get_nowait()
+                    except: break
 
         # Delete cached attributes
         for key in ['_generator', '_queue']:

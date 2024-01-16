@@ -55,7 +55,7 @@ class TestDatafile:
 
 
     def test_resolution(self, datafile: list[Datafile], uniform: int):
-        if uniform: assert(datafile[uniform].resolution == [1, 0.1])
+        if uniform: assert(np.allclose(datafile[uniform].resolution, [1.0, 0.1]))
         else:
             stack = lambda diff: np.c_[
                 np.r_[diff[:1], diff],
@@ -66,11 +66,12 @@ class TestDatafile:
             assert(len(output) == len(target))
 
             for out, tgt in zip(output, target):
-                assert((out.round(5) == tgt.round(5)).all()), f'{out}\n{tgt}'
+                print(out, tgt, out.round(5) == tgt.round(5))
+                assert(np.allclose(out, tgt)), f'{out}\n{tgt}'
 
 
-    def test_coord_array(self, datafile: list[Datafile], uniform: int):
-        output = datafile[uniform].coord_array.compute().T
+    def test_dask_coords(self, datafile: list[Datafile], uniform: int):
+        output = datafile[uniform].dask_coords.compute().T
         target = np.array([
             np.array([example_coord[uniform]['coord_0']] * 3),
             np.array([example_coord[uniform]['coord_1']] * 3).T,

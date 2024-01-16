@@ -154,7 +154,10 @@ class Datafile(BaseAbstract):
             try:
                 if hasattr(self.data, attr): return getattr(self.data, attr)
                 if hasattr(self.dask, attr): return getattr(self.dask, attr)
-            except: return self.__getattribute__(attr)
+            except AttributeError: return self.__getattribute__(attr)
+            except Exception as e1: 
+                try: return self.__getattribute__(attr)
+                except Exception as e2: raise e1 from e2 
         return self.__getattribute__(attr)
 
 
@@ -213,19 +216,11 @@ class Datafile(BaseAbstract):
         data = data.sel({k: slice(*ext) for k, ext in self.extent.items() 
                         if k in data and k not in self._virtual_dims})
 
-        # Cast datetimes to float
-        for key in data.coords:
-            if np.issubdtype(data[key].dtype, np.datetime64):
-                data = data.assign_coords({key: (data[key].astype('float64')/6e10).astype('float32')})
-            elif key in ['latitude', 'longitude']: data = data.assign_coords({key: data[key].astype('float32')})
-
-        # Cast int/uint/etc. to float in order to allow NaN values
-        for key in data:
-            dtype = data[key].dtype
-            if np.issubdtype(dtype, np.number):
-                if not np.issubdtype(dtype, np.floating):
-                    min_dtype = np.promote_types(dtype, np.float16)
-                    data[key] = data[key].astype(min_dtype)
+        # Store original data dtypes - all coords are converted to float in 
+        # Datafile._typed_data. In order to allow datetime64 to fit float32,
+        # we convert datetime values to datetime64[m] (i.e. minute resolution)
+        dtypes = {k: T if not np.issubdtype(T := data[k].dtype, np.datetime64)
+                    else 'datetime64[m]' for k in list(data)+list(data.coords)}
 
         # Convert to a DataArray and ensure data is backed by dask
         data = data.to_array('features').chunk({})
@@ -237,10 +232,11 @@ class Datafile(BaseAbstract):
                 'Datafile.config_hash' : self.config_hash,
             })
 
-        # Save the original coordinates for later return values
+        # Save the original coordinates/dtypes for later return values
         self.original_dims = (
             [c for c in data.coords if c not in self._virtual_dims], 
             data.features.to_numpy(),
+            dtypes,
         )
 
         # Transpose dimensions so they are in the correct order, and return
@@ -275,9 +271,40 @@ class Datafile(BaseAbstract):
 
 
     @property
+    def _typed_data(self) -> xr.DataArray:
+        """ Data/coords converted to float types """
+        data = self.data
+
+        # Cast int/uint/etc. to float in order to allow NaNs
+        # for key in data.features:
+        if np.issubdtype(data.dtype, np.number):
+            if not np.issubdtype(data.dtype, np.floating):
+                data = data.astype( np.promote_types(data.dtype, np.float16) )
+
+        # Coordinates must have uniform type, so we cast to float32
+        # Note: datetime64 are converted to datetime64[m] (minute resolution)
+        for key in data.coords:
+            if key != 'features':
+                if np.issubdtype(data[key].dtype, np.datetime64):
+                    data = data.assign_coords({key: data[key].astype('float64')/6e10})
+                data = data.assign_coords({key: data[key].astype('float32')})
+        return data
+
+
+    @property
     def dask(self) -> da.Array:
         """ DaskArray reference held by the xr.DataArray """
-        return self.data.data
+        return self._typed_data.data
+    
+
+    @property
+    def dask_coords(self) -> da.Array:
+        """ Coordinate meshgrid wrapped with dask """
+        todask = partial(da.from_array, name=False)
+        coords = (self._typed_data[d].values for d in self.dims)
+        c_dask = map(todask, coords, self.dask.chunks)
+        c_grid = da.meshgrid(*c_dask, indexing='ij')
+        return da.stack(c_grid, axis=-1).rechunk({-1:-1})
 
 
     @property
@@ -413,7 +440,7 @@ class Datafile(BaseAbstract):
 
         """
         get_vec = lambda d: np.diff(d) if len(d) > 1 else np.zeros(1)
-        vectors = [get_vec(self.data[dim]).astype(float).round(5) for dim in self.dims]
+        vectors = [get_vec(self._typed_data[dim]).round(5) for dim in self.dims]
         uniform = lambda vec: (vec.max()-vec.min()) < 1e-3
         setattr(self, 'is_uniform', all(map(uniform, vectors)))
 
@@ -433,18 +460,6 @@ class Datafile(BaseAbstract):
         If we have uniform grids, this will just be the resolution
         itself; otherwise it will be the maximum along each vector """
         return [np.atleast_1d(r).max() for r in self.resolution]
-
-
-    @property
-    def coord_array(self) -> da.Array:
-        """ Coordinate meshgrid wrapped with dask """
-        coords = [self.data[dim].values.astype(np.float32) for dim in self.dims]
-        array  = partial(da.from_array, name=False)
-        coords = map(array, coords, self.dask.chunks)
-        coords = da.meshgrid(*coords, indexing='ij')
-        coords = da.stack(coords, axis=-1)
-        coords = coords.rechunk({-1:-1})
-        return coords
 
 
     def ensure_dims(self, dims: set[str]) -> None:
@@ -742,7 +757,7 @@ class Datafile(BaseAbstract):
 
         # Separate data/coords/masks into independent blocks
         d_blocks = blocker( overlap(self.dask) )
-        c_blocks = blocker( overlap(self.coord_array) )
+        c_blocks = blocker( overlap(self.dask_coords) )
         i_blocks = blocker( overlap(inbound_mask, boundary=0) )
         o_blocks = blocker( mask_id(overlap(overlap_mask, boundary=-1)) )
 

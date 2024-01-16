@@ -180,8 +180,8 @@ class BaseSet(BaseAbstract):
             valid = lambda v: len(v) in [0, len(__objs)]
             items = _map + list(_kwmap.values())
             assert(all(map(valid, items))), \
-                f'{self} has {len(__objs)} items, but items passed via' + \
-                f' _map/_kwmap had sizes {map(len, items)}: {_map} | {_kwmap}'
+                f'{self} has {len(__objs)} items, but items passed via _map'+ \
+                f'/_kwmap had sizes {list(map(len, items))}: {_map} | {_kwmap}'
 
             create_dict = lambda v: dict(zip(_kwmap.keys(), v))
             get_outputs = lambda f, k, *a: f(*(args+a), **(kwargs|k))

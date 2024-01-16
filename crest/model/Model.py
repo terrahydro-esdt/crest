@@ -9,6 +9,7 @@ from crest.data.loading import Dataset, StructuredDataset
 from crest.data import Batcher
 from .BaseModel import BaseModel, ImproperModelError
 from .TensorGraph import TensorGraph
+from crest.model.TensorSpec import TensorSpec
 
 
 class Model(BaseModel):
@@ -25,8 +26,18 @@ class Model(BaseModel):
         self.graph = graph
         self.model = None
         self.name  = graph.name
-        self.inputs = {k: tf.keras.Input(type_spec=v, name=k) if not v is None else 
-                       None for k,v in self.graph.inputs.items()}
+
+        # Allow for TensorSpec to be converted to Keras Input
+        self.inputs = {}
+        for k,v in self.graph.inputs.items():
+            if (not v is None):
+                if (isinstance(v, TensorSpec)):
+                    v = v.keras
+                
+                self.inputs[k] = tf.keras.Input(type_spec=v, name=k)
+            else:
+                self.inputs[k] = None
+
         self.outputs = self.graph(self.inputs)
         self.metric = Metrics()
         

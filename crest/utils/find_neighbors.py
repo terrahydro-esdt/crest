@@ -14,7 +14,7 @@ import polars as pl
 import pandas as pd 
 import logging 
 
-from ._bruteforce import bruteforce
+from ._bruteforce import * # bruteforce, bruteforce2,bruteforce3
 
 
 def get_indices(
@@ -382,7 +382,7 @@ def find_neighbors(
 
     """
     # Rough guess on what dtype can be used to hold indices
-    large = sum(map(np.log10, map(len, coordinates))) > 17
+    large = max(map(np.log10, map(len, coordinates))) > 8
     dtype = np.int64 if large else np.int32
 
     # Add small value to radius to account for numerical instability
@@ -395,6 +395,15 @@ def find_neighbors(
 
     # Set the radius, dtype, and any other kwargs given
     get_matches = partial(get_indices, **kwargs)
+
+    if resolutions is not None:
+        # Sanity check
+        for c, r in zip(coordinates, resolutions):
+            r = np.atleast_1d(r)
+            if r.ndim == 3: r = r[..., 0]
+            if r.ndim == 2: r = r.max(0)
+            if ((np.abs(c).max(0) > 0) & (r > np.abs(c).max(0))).any():
+                raise Exception(f'Resolution > Coordinate: {r} > {c.max(0)}')
 
     # Set a default value for the resolutions if None was given
     resolutions = resolutions or [np.ones(c.shape[-1]) for c in coordinates]
@@ -509,9 +518,22 @@ def find_neighbors(
         # Initialize the table of neighbor indices, along with the column order 
         table = np.arange(len(query[0]), dtype=dtype)[:, None]
         order = [0]
+        debug = False 
+        if debug:
+            print('\nCoordinates & Resolutions:')
+            for c, r in zip(coordinates, resolutions):
+                print(f'\t{c.shape}  {r.shape}  cmin={c.min(0)}  cmax={c.max(0)}  rmin={r[0].min(0)}  rmax={r[0].max(0)}')
 
         # Find simultaneously matching indices across all grids
         for i, build in enumerate(grids, 1):
+            if debug:
+                print(f'\nIteration {i}/{len(coordinates)-1}')
+                print('--------------')
+                print('Query shape:', query[0].shape, query[1].shape, query[0].dtype)
+                print('Build shape:', build[0].shape, build[1].shape, build[0].dtype)
+                print('Table shape:', table.shape, table.dtype)
+                print('Virtual dim:', np.isnan(build[0]).all(0).sum(), np.isnan(query[0]).all(0).sum())
+                print('Unique vals:', list(map(len, map(np.unique, build[0].T))), list(map(len, map(np.unique, query[0].T))))
 
             # Duplicate the next grid to align with the current table
             build_dup = [np.tile(b, i) for b in build]
@@ -527,6 +549,7 @@ def find_neighbors(
                 b_virt = np.isnan(b).all(0).sum()
                 q_virt = np.isnan(q).all(0).sum()
                 switch = (len(b)>len(q)) if q_virt==b_virt else (b_virt<q_virt)
+                if debug: print(f'\t{b_virt=} {q_virt=} {switch=}')
 
                 # Switch build/query if necessary, based on above criteria
                 bq_order = slice(None, None, -1 if switch else 1)
@@ -538,10 +561,11 @@ def find_neighbors(
 
                 # Order the columns asc wrt build unique values, desc wrt query
                 sort = lambda b,q: -b-float(f'0.{q}') if min(b,q)>1 else np.inf
+                # sort = lambda b,q: (b+q) if min(b,q)>1 else np.inf
                 bunq = map(len, map(np.unique, b.T))
                 qunq = map(len, map(np.unique, q.T))
                 cols = np.argsort(list(starmap(sort, zip(bunq, qunq))))
- 
+
                 b = b[:,cols]
                 q = q[:,cols]
                 bo = np.lexsort(b.T[::-1])
@@ -554,8 +578,19 @@ def find_neighbors(
                 br = (br[:, bo] if br.ndim > 1 and br.shape[1] > 1 else br)[..., cols]
                 qr = (qr[:, qo] if qr.ndim > 1 and qr.shape[1] > 1 else qr)[..., cols]
 
+                if debug:
+                    print(f'After optimizations:')
+                    print('\tQuery shape:', q.shape, qr.shape, q.dtype)
+                    print('\tBuild shape:', b.shape, br.shape, b.dtype)
+                    print('\tVirtual dim:', np.isnan(b).all(0).sum(), np.isnan(q).all(0).sum())
+                    print('\tUnique vals:', list(map(len, map(np.unique, b.T))), list(map(len, map(np.unique, q.T))))
+
             # Drop any all NaN (virtual) columns from the build and query tables
             skipdim = np.isnan(b).all(0) | np.isnan(q).all(0)
+            if debug:
+                print('  b q shape:', b.shape, q.shape)
+                print('br qr shape:', br.shape, qr.shape)
+                print('  skip dims:', skipdim)
 
             # Double check that build and query are already lexographically sorted
             # assert((q[np.lexsort(q.T[::-1])] == q).all()), [q, q[np.lexsort(q.T[::-1])]]
@@ -575,11 +610,13 @@ def find_neighbors(
                             notebook=False, 
                             postfix='find_neighbors progress',
                         )
-                # progress = ProgressBar(total=0, update_interval=1)
+                # progress = ProgressBar(total=len(b), update_interval=1)
 
                 with progress as pbar:
-                    b_ix, q_ix = bruteforce(b, q, *br, *qr, skipdim, pbar).T[bq_order]
-
+                    b_ix, q_ix = bruteforce_double(b, q, *br, *qr, skipdim, pbar)[bq_order]
+                    # b_ix, q_ix = bruteforce_single(b, q, *br, *qr, skipdim, pbar)[bq_order] # Original w/ dict
+                    # b_ix, q_ix = bruteforce_original(b, q, *br, *qr, skipdim, pbar).T[bq_order] # Original
+                if debug: print('b q i shape:', b_ix.shape, q_ix.shape)
             else:
                 b,q,br,qr = [arr[..., ~skipdim] for arr in [b,q,br,qr]]
                 b_ix,q_ix = get_matches([b,q], [br,qr], expand=True)[bq_order]
@@ -610,22 +647,30 @@ def find_neighbors(
 
                 # Construct the next query set by combining the current two grids
                 query = np.c_[(b[b_ix], q[q_ix])[bq_order]], br_qr
+                if debug: print(' next query:', query[0].shape, query[1].shape)
 
             # Separate the coordinates/resolutions and extract the locations
             table = np.c_[(b_ix, table[q_ix])[bq_order]]
             order = sum([[i], order][bq_order], [])
+            if debug: print(' next table:', table.shape)
 
         # Reorder the columns correctly 
-        table = table[:, np.argsort(order)[np.argsort(grid_order)]]
+        if debug: print('\nReordering table...')
+        table = table[:, np.argsort(order)[np.argsort(grid_order)]].T
 
-        # Lexigraphic sort to have consistent return order
-        table = table[np.lexsort(table.T[::-1])].T
-
+        # Random sample ordering
         if shuffle:
+            if debug: print('Shuffling...')
             i = np.arange(table.shape[1])
             np.random.shuffle(i)
             table = table[:,i]
 
+        # Lexigraphic sort to have consistent return order
+        else:
+            if debug: print('Lexsorting table...')
+            table = table.T[np.lexsort(table[::-1])].T
+
+    if debug: print('Finishing...')
     if use_implode:
         table = implode(table)
         count = np.array([list(map(len, col)) for col in table], dtype=dtype)

@@ -399,7 +399,7 @@ class Block(BaseAbstract):
         center-= lower[:, None, None]
         bounds = [left + np.arange(size) for left, size in zip(center, total)]
 
-        orig_dims, features = self.original_dims
+        orig_dims, features, dtypes = self.original_dims
         orig_dims = ['features'] + [d for d in orig_dims if d != 'features']
 
         # Initialize the final result dict with all globally applicable values
@@ -407,6 +407,10 @@ class Block(BaseAbstract):
         xr_kwargs = {'dims': orig_dims} | ({
             'attrs' : {'resolution': dict(zip(self.dims, self.resolution))}
         } if self.is_uniform else {})
+
+        def cast_dtype(key: str, value: np.ndarray) -> np.ndarray:
+            """ Cast the given value array back to its original dtype """
+            return value.astype(dtypes[key])
 
         def expand(axis: int, bound: np.ndarray) -> np.ndarray:
             """ Add dimensions to each bound based on the dim it applies to """
@@ -418,12 +422,15 @@ class Block(BaseAbstract):
 
         def gen_coords(coords: np.ndarray) -> dict[str, np.ndarray]:
             """ Generate a coordinates vector dictionary for xarray """
+            # Flatten coordinate grids into the coordinate vectors, then cast
             coord_vectors = starmap(collapse, enumerate(coords.T))
+            coord_vectors = map(cast_dtype, keep_dims, coord_vectors)
             return dict(zip(keep_dims, coord_vectors)) | {'features': features}
 
         def gen_xr_dict(data: np.ndarray, coords: np.ndarray) -> dict:
-            """ Generate the xr.Dataset dict for given data/coord windows """
-            return xr_kwargs | {'data': data, 'coords': coords}
+            """ Generate the xr.Dataset dict for given data/coord windows """            
+            return { 'data'   : list(map(cast_dtype, features, data)), 
+                     'coords' : gen_coords(coords) } | xr_kwargs
 
         # Expand the bounds so they can be broadcast over the full data/coords
         windows = tuple(starmap(expand, enumerate(bounds, 1)))
@@ -439,10 +446,9 @@ class Block(BaseAbstract):
         # Remove virtual dimension from coordinate features
         coords = coords[..., sorted(map(self.dims.index, orig_dims[1:]))]
 
-        # Transpose data to the correct order (offset by 1)
+        # Transpose data to the correct order: [samples, features, ...]
         data = data.transpose(tuple(map((['']+keep_dims).index, ['']+orig_dims)))
 
         # Extract final window dictionaries to use for Sample initialization 
-        coords  = map(gen_coords, coords)
         windows = dict(zip(indices, map(gen_xr_dict, data, coords)))
         return [[windows[i] for i in np.atleast_1d(idx)] for idx in matches]
