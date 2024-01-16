@@ -8,7 +8,7 @@ from .helpers import *
 from crest import HierarchalTensorGraph, ROOT_PATH
 from crest.model.TensorGraph import ImproperTensorGraphError
 
-root_path = os.path.join(ROOT_PATH.as_posix(), os.path.join('..', 'tests'))
+root_path = os.path.join(ROOT_PATH.as_posix(), os.path.join('..', 'tests', 'model'))
 
 def test_basenode():
     m = HierarchalTensorGraph(
@@ -294,100 +294,108 @@ def test_pickling():
 
 def test_json_basic():
     add = lambda x : x['a'] + x['b']
-
     htg_1 = HierarchalTensorGraph(node=add, name='add')
-    with open(os.path.join(root_path, 'test_json_basic.json'), 'w') as f:
-        json_data = htg_1.to_json()
-        json.dump(json_data, f)
 
-    htg_2 = HierarchalTensorGraph(node=lambda x: x)
-    with open(os.path.join(root_path, 'test_json_basic.json'), 'r') as f:
-        json_data = json.load(f)
-        assert (not json_data == None)
+    try:
+        with open(os.path.join(root_path, 'test_json_basic.json'), 'w') as f:
+            json_data = htg_1.to_json()
+            json.dump(json_data, f)
 
-        htg_2 = htg_2.from_json(json_data)
-        assert (not htg_2 == None)
+        htg_2 = HierarchalTensorGraph(node=lambda x: x)
+        with open(os.path.join(root_path, 'test_json_basic.json'), 'r') as f:
+            json_data = json.load(f)
+            assert (not json_data == None)
 
-    assert (htg_1.name == htg_2.name)
+            htg_2 = htg_2.from_json(json_data)
+            assert (not htg_2 == None)
+
+        assert (htg_1.name == htg_2.name)
+    finally: os.remove(os.path.join(root_path, 'test_json_basic.json'))
 
 
 def test_json_model():
     htg_1 = AddSequentialLayer()
-    with open(os.path.join(root_path, 'test_json_model.json'), 'w') as f:
-        json_data = htg_1.to_json()
-        json.dump(json_data, f)
+    try:
+        with open(os.path.join(root_path, 'test_json_model.json'), 'w') as f:
+            json_data = htg_1.to_json()
+            json.dump(json_data, f)
 
-    htg_2 = HierarchalTensorGraph(node=lambda x: x)
-    with open(os.path.join(root_path, 'test_json_model.json'), 'r') as f:
-        json_data = json.load(f)
-        assert (not json_data == None)
+        htg_2 = HierarchalTensorGraph(node=lambda x: x)
+        with open(os.path.join(root_path, 'test_json_model.json'), 'r') as f:
+            json_data = json.load(f)
+            assert (not json_data == None)
 
-        htg_2 = htg_2.from_json(json_data)
-        assert (not htg_2 == None)
+            htg_2 = htg_2.from_json(json_data)
+            assert (not htg_2 == None)
 
-    assert (htg_1.get_node('dense_layer') and htg_2.get_node('dense_layer'))
-    assert (htg_1.get_node('input') and htg_2.get_node('input'))
-    assert (htg_1.get_node('output') and htg_2.get_node('output'))
-    assert (str(htg_1.edges) == str(htg_2.edges))
+        assert (htg_1.get_node('dense_layer') and htg_2.get_node('dense_layer'))
+        assert (htg_1.get_node('input') and htg_2.get_node('input'))
+        assert (htg_1.get_node('output') and htg_2.get_node('output'))
+        assert (str(htg_1.edges) == str(htg_2.edges))
+    finally: os.remove(os.path.join(root_path, 'test_json_model.json'))
 
 
 def test_json_double():
 
     htg_1 = AddSquare()
-    with open(os.path.join(root_path, 'test_json_double.json'), 'w') as f:
-        json_data = htg_1.to_json()
-        json.dump(json_data, f)
+    try:
+        with open(os.path.join(root_path, 'test_json_double.json'), 'w') as f:
+            json_data = htg_1.to_json()
+            json.dump(json_data, f)
 
-    htg_2 = HierarchalTensorGraph(node=lambda x: x)
-    with open(os.path.join(root_path, 'test_json_double.json'), 'r') as f:
-        json_data = json.load(f)
-        assert (not json_data == None)
+        htg_2 = HierarchalTensorGraph(node=lambda x: x)
+        with open(os.path.join(root_path, 'test_json_double.json'), 'r') as f:
+            json_data = json.load(f)
+            assert (not json_data == None)
 
-        htg_2 = htg_2.from_json(json_data)
-        assert (not htg_2 == None)
+            htg_2 = htg_2.from_json(json_data)
+            assert (not htg_2 == None)
 
-        assert (htg_1.get_node('add') and htg_2.get_node('add'))
-        assert (htg_1.get_node('square') and htg_2.get_node('square'))
+            assert (htg_1.get_node('add') and htg_2.get_node('add'))
+            assert (htg_1.get_node('square') and htg_2.get_node('square'))
+            assert (htg_1.get_node('input') and htg_2.get_node('input'))
+            assert (htg_1.get_node('output') and htg_2.get_node('output'))
+            assert (str(htg_1.edges) == str(htg_2.edges))
+    finally: os.remove(os.path.join(root_path, 'test_json_double.json'))
+
+
+def test_json_triple():
+    htg_1 = LogAddSquare()
+    try:
+        with open(os.path.join(root_path, 'test_json_triple.json'), 'w') as f:
+            json_data = htg_1.to_json()
+            json.dump(json_data, f)
+
+        htg_2 = HierarchalTensorGraph(node=lambda x: x)
+        with open(os.path.join(root_path, 'test_json_triple.json'), 'r') as f:
+            json_data = json.load(f)
+            assert (not json_data == None)
+
+            htg_2 = htg_2.from_json(json_data)
+            assert (not htg_2 == None)
+
+        assert (htg_1[('add_square', 'add')] and htg_2[('add_square', 'add')])
+        assert (htg_1[('add_square', 'square')]
+                and htg_2[('add_square', 'square')])
+        assert (htg_1.get_node('log') and htg_2.get_node('log'))
+        assert (htg_1.get_node('add_square') and htg_2.get_node('add_square'))
         assert (htg_1.get_node('input') and htg_2.get_node('input'))
         assert (htg_1.get_node('output') and htg_2.get_node('output'))
         assert (str(htg_1.edges) == str(htg_2.edges))
 
+        with pytest.raises(Exception) as ImproperTensorGraphError:
+            htg_1.get_node('add')
 
-def test_json_triple():
+        with pytest.raises(Exception) as ImproperTensorGraphError:
+            htg_2.get_node('add')
 
-    htg_1 = LogAddSquare()
-    with open(os.path.join(root_path, 'test_json_triple.json'), 'w') as f:
-        json_data = htg_1.to_json()
-        json.dump(json_data, f)
+        with pytest.raises(Exception) as ImproperTensorGraphError:
+            htg_1.get_node('square')
 
-    htg_2 = HierarchalTensorGraph(node=lambda x: x)
-    with open(os.path.join(root_path, 'test_json_triple.json'), 'r') as f:
-        json_data = json.load(f)
-        assert (not json_data == None)
-
-        htg_2 = htg_2.from_json(json_data)
-        assert (not htg_2 == None)
-
-    assert (htg_1[('add_square', 'add')] and htg_2[('add_square', 'add')])
-    assert (htg_1[('add_square', 'square')]
-            and htg_2[('add_square', 'square')])
-    assert (htg_1.get_node('log') and htg_2.get_node('log'))
-    assert (htg_1.get_node('add_square') and htg_2.get_node('add_square'))
-    assert (htg_1.get_node('input') and htg_2.get_node('input'))
-    assert (htg_1.get_node('output') and htg_2.get_node('output'))
-    assert (str(htg_1.edges) == str(htg_2.edges))
-
-    with pytest.raises(Exception) as ImproperTensorGraphError:
-        htg_1.get_node('add')
-
-    with pytest.raises(Exception) as ImproperTensorGraphError:
-        htg_2.get_node('add')
-
-    with pytest.raises(Exception) as ImproperTensorGraphError:
-        htg_1.get_node('square')
-
-    with pytest.raises(Exception) as ImproperTensorGraphError:
-        htg_2.get_node('square')
+        with pytest.raises(Exception) as ImproperTensorGraphError:
+            htg_2.get_node('square')
+    finally: os.remove(os.path.join(root_path, 'test_json_triple.json'))
+    
 
 
 def test_json_custom():
