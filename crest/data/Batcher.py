@@ -873,7 +873,7 @@ class Batcher:
         #   easiest spot to import and register the class. It doesn't really
         #   make sense to import it here from an organizational standpoint
         #   though, so it does need to be moved somewhere else eventually.
-        try:  from terrahydro.src.data.utils.UploadMonitor import UploadMonitor
+        try:  from terrahydro.data.utils.UploadMonitor import UploadMonitor
         except: pass
 
         # Make sure we catch and log any exceptions, as they will disappear
