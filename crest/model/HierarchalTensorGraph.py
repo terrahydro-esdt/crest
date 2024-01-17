@@ -501,6 +501,13 @@ class HierarchalTensorGraph(TensorGraph):
         # adding it to the graph.
         self.get_node(node)
 
+    def add_io(self, node: Union[str, Callable]):
+        """ Add input/output edges and (optionally) input/output specs to a node """
+        self.add_edge('input', node)
+        self.add_edge(node, 'output')
+        if hasattr(node, 'input_spec'):  self.get_node(node).inputs  = node.input_spec
+        if hasattr(node, 'output_spec'): self.get_node(node).outputs = node.output_spec
+
     def remove_node(self, node):
         """
         Removes a node from the HierarchalTensorGraph
