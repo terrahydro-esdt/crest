@@ -27,7 +27,8 @@ dependencies:
   - pip=23.0.1
   - jsonpickle=3.0.2
   - crick=0.0.3
-
+  - pyreadline3=3.4.1
+  
   # FAISS
   # - pytorch
   # - faiss-cpu=1.7.4
