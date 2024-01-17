@@ -1,13 +1,16 @@
 from collections.abc import Iterable, Iterator, Callable, Collection
+from collections import defaultdict as dd
 from dask.diagnostics import ProgressBar
 from dask.delayed import Delayed
 from fsspec.mapping import FSMap 
 from contextlib import nullcontext, redirect_stdout
 from functools import partial, cached_property
+from itertools import starmap
 from pathlib import Path
-from numbers import Number 
+from numbers import Number, Integral as Int 
 from logging import Logger 
 from typing import Union 
+from pprint import pprint
 
 import cloudpickle as pkl
 import xarray as xr
@@ -21,7 +24,7 @@ import zarr
 import io 
 
 from crest.utils import Stopwatch, optimize_blocks
-from crest.base import BaseSet
+from crest.base import BaseSet, BaseNode
 from .Datafile import Datafile
 from .Blockset import Blockset
 
@@ -475,8 +478,8 @@ class Dataset(BaseSet):
     def cache(self, 
         numblocks : Collection[int], 
         overwrite : bool = False, 
-        cache_dir : Path | str  = '.',
-    ):
+        cache_dir : Path | str  = 'Cache',
+    ) -> 'Dataset':
         """Cache all Datafiles in new zarr databases for faster access.
 
         Parameters
@@ -495,6 +498,11 @@ class Dataset(BaseSet):
             Location for the cached data to be stored. By default, data is 
             cached in `./Cache`. 
 
+        Returns
+        -------
+        Dataset
+            Returns self. 
+
         """
         with Stopwatch(f'Cached {len(self)} Datafiles'):
             # Rechunk the data first
@@ -505,3 +513,180 @@ class Dataset(BaseSet):
                 'optimize'  : False,
             })
             self._cache(overwrite, cache_dir, _delay=False)
+        return self
+
+
+
+    @classmethod
+    def from_models(self, 
+        models          : Collection[BaseNode],
+        database_folder : Path | str | None = None,
+        variable_depths : dict[str, Int | Collection[Int]] = {},
+        datafile_kwargs : dict[str, dict] = {},
+        verbose         : bool = False,
+    ) -> 'Dataset':
+        """ Create a Dataset by inferring required parameters from BaseNodes.
+
+        BaseNode models (classes or objects) contain the information necessary
+        to infer Datafile locations, features, and windows. Using these and any
+        other given parameters, construct and return a Dataset object.
+
+        Parameters
+        ----------
+        models          : Collection[BaseNode]
+            Collection of classes which inherit from crest.base.BaseNode (or 
+            their respective instantiated objects).
+        database_folder : Path | str
+            Path to the folder in which the zarr databases are stored. If a
+            location defined by the model is not itself a resolvable path to
+            the zarr database, the location is searched for in this folder.
+        variable_depths : dict[str, Int | Collection[Int]]
+            Models may sometimes allow a variable dimension size along certain
+            axes - e.g. a temporal dimension can have any length when using an
+            LSTM since the model will compress all timesteps into its internal
+            state, which is represented by a None value as the dimension size.
+            When actually reading data from a database however, we need to know
+            how many timesteps to read; this variable_depths parameter allows
+            any variable dimension window depths to be defined, functioning as
+            a model hyperparameter. The format is the same as window_depths for
+            Datafile, e.g. {'datetime': (3, 0)} would indicate a window with 
+            three steps prior to the center match, and 0 steps to the right -
+            for any model features which have {'datetime': None, ...} as their
+            window depth. 
+        datafile_kwargs : dict[str, dict]
+            Any additional keyword arguments that should be given to the 
+            created Datafile objects, where the dict keys are the name of the 
+            Datafile for which the dict values should be passed; e.g. 
+            datafile_kwargs = {'SMAP': {'preprocessors': [backfill, coarsen]}}.
+            The character '*' can be used as a special key which signifies that
+            the respective value kwargs dict should be given to all datafiles.
+        verbose         : bool
+            Whether to print information on the Datafiles being created.
+
+        Returns
+        -------
+        Dataset
+            A Dataset object which contains all data necessary for the models.
+
+        """
+        universal_kwargs = datafile_kwargs.pop('*', {})
+        unused_df_kwargs = unused = set(list(datafile_kwargs))
+
+        def get_location(model, source) -> Path:
+            """ Get the zarr location from the given source, checking
+                a number of ways the location could be specified. """
+            path = Path(source)
+
+            # Can pass in location via datafile_kwargs
+            if not path.exists():
+                dfkw = datafile_kwargs.get(path.stem, {})
+                path = Path(dfkw.get('location', path))
+
+            # If the location doesn't exist, search in database_folder
+            if not path.exists() and database_folder is not None:
+                path = Path(database_folder).joinpath(path)
+
+            # Also search with .zarr extension
+            if not path.exists(): path = path.with_suffix('.zarr')
+            assert(path.exists()), f'Unknown location for {model}: {source}'
+            return path
+
+
+        def shape_key(model, feature, shape) -> tuple[(str, (Int, Int))]:
+            """ Create a dictionary key from the given shape, replacing None
+                shape size with variable_depths value where possible, and 
+                formatting each size as a two-tuple: (left, right). """
+            key = []
+            for k, v in sorted(shape.items(), key=lambda kv: kv[0]):
+                if v is None:
+                    assert(k in variable_depths), f'Model {model} needs the '+\
+                        f'feature {feature} with shape {shape}, but no value'+\
+                        f' was given for variable_depths to replace {k} = None'
+                    v = variable_depths[k]
+
+                # Replace total window size with depth
+                v = (int(v//2),)*2 if isinstance(v, Number) else tuple(v)
+                key.append((k, v))
+            return tuple(key)
+
+
+        def add_coord(shape_features, size, dims) -> None:
+            """ Add coordinate dims with given size to location features """
+            for dim in dims:
+                coord_key, = key = ((dim, size),)
+                
+                # If the coordinate hasn't been added as a new feature set
+                if key not in shape_features: 
+
+                    # Check if any feature sets have the same dimension size
+                    for shapes, feature_set in shape_features.items():
+                        if coord_key in shapes:
+                            feature_set.add(dim)
+                            break
+
+                    # Add the coordinate as a new shape otherwise
+                    else: shape_features[key].add(dim)
+                else: shape_features[key].add(dim)
+
+
+        def create_datafile(location, window_depth, feature_set) -> Datafile:
+            """ Create a Datafile object with the given parameters """
+            # Extract any additional kwargs specified
+            for option in [location, location.stem, location.as_posix()]:
+                if option in datafile_kwargs:
+                    kwargs = datafile_kwargs[option]
+                    unused_df_kwargs.difference_update({option})
+                    break
+                else: kwargs = {}
+
+            # Remove any @ specifiers for the features
+            remove_at = lambda f: f.split('@')[0]
+
+            # Collect all parameters and create Datafile
+            df_kwargs = {
+                'location'     : location,
+                'features'     : sorted(map(remove_at, feature_set)),
+                'window_depth' : dict(window_depth),
+            } | universal_kwargs | kwargs
+
+            if verbose:
+                print(f'\nCreating Datafile for {location.stem} with kwargs:')
+                pprint(df_kwargs, compact=True, indent=4)
+            return Datafile(**df_kwargs)
+
+
+        # {DB name : {(window shape,) : [features, ..]}
+        # {ERA5: {(None, 3, 3): ['skt', 'sp', ...]}}
+        features    = dd(lambda: dd(set))
+        coordinates = dd(lambda: dd(set))
+        for model in models:
+
+            # Check input and output shape definitions for the model
+            for io in [model.inputs, model.outputs]:
+
+                # Examine each source (zarr database) the model needs
+                for source, feature_shapes in io.items():
+                    location = get_location(model, source)
+
+                    # Group features by their requested window shape
+                    for feature, shape in feature_shapes.items():
+                        key = (dim,size), *_ = shape_key(model, feature, shape)
+
+                        # Include coordinate features with other features later
+                        if (len(key) == 1) and (dim == feature):
+                            coordinates[location][size].add(dim)
+                        else: features[location][key].add(feature)
+
+        # Group coordinate features with other features of the same size 
+        for location, coord in coordinates.items():
+            [*starmap(partial(add_coord, features[location]), coord.items())]
+
+        # Collate all Datafile kwargs and create the Datafile objects
+        dfs = [ create_datafile(location, window_depth, feature_set)
+                 for location, size_features in features.items()
+                 for window_depth, feature_set in size_features.items() ]
+    
+        # Warn if any datafile_kwargs were unused
+        if len(unused): print(f'WARNING unused datafile_kwargs: {unused}')
+        if verbose: print(f'Dataset with {len(dfs)} Datafiles:\n   {dfs}')
+        return Dataset(dfs)
