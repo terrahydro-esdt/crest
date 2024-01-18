@@ -252,9 +252,14 @@ class Batcher:
         if '_exit_flag' in self.__dict__:
             # In certain situations, Event.set can deadlock
             #  (see https://stackoverflow.com/a/73341335/22210498)
-            # Instead, we just delegate the flag set to another thread
-            with handler: threading.Thread(target=self._exit_flag.set).start()
-        
+            # Here, we set a timer to halt everything if _exit_flag.set
+            #   does not return in a reasonable amount of time.
+            with handler: 
+                timer = threading.Timer(5, lambda: os._exit(0))
+                timer.start()
+                self._exit_flag.set()
+                timer.cancel()
+
         # Close background thread managers
         for key in ['_block_tasks', '_batch_tasks']:
             if key in self.__dict__:
