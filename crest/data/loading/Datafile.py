@@ -93,6 +93,12 @@ class Datafile(BaseAbstract):
 
         Note that any functions given must be picklable if multiprocessing is
         used with the CREST Batcher class (thus lambda functions are invalid).
+    sort_dims     : bool
+        Whether samples generated from this Datafile should sort dimensions so
+        that dimension ordering is consistent across all Datafiles (default);
+        or if the original dimension order should be maintained in any samples 
+        that are generated (which might lead to different orderings across
+        Datafiles). 
     **kwargs
         Any additional kwargs are passed into xr.open_zarr when loading the
         given `location` (assuming it is not already an xr.Dataset object).
@@ -126,6 +132,7 @@ class Datafile(BaseAbstract):
         valid_percent : dict[str | tuple[str], Number]   = {},
         invalid_value : object                           = [],
         preprocessors : list[Callable]                   = [],
+        sort_dims     : bool                             = True,
         **kwargs
     ):
         self.location = location
@@ -136,6 +143,7 @@ class Datafile(BaseAbstract):
         self._valid_percent = valid_percent.copy()
         self._invalid_value = invalid_value
         self.preprocessors  = preprocessors
+        self.sort_dims      = sort_dims
         self.dataset_index  = 0 
 
         # Store initialization parameter names for pickling
@@ -233,8 +241,9 @@ class Datafile(BaseAbstract):
             })
 
         # Save the original coordinates/dtypes for later return values
+        original_dims = [c for c in data.coords if c not in self._virtual_dims]
         self.original_dims = (
-            sorted([c for c in data.coords if c not in self._virtual_dims]), 
+            sorted(original_dims) if self.sort_dims else original_dims, 
             data.features.to_numpy(),
             dtypes,
             self.features,
@@ -282,13 +291,7 @@ class Datafile(BaseAbstract):
                 'output_core_dims' : [['statistics']],
             }).to_array('features').to_dataset('statistics')
         stats = stats.to_array('statistics').to_dataset('features')
-        # print({f'{c}_f':c for c in data.coords if f'{c}_f' in stats}, 'latitude_f' in stats)
-
         stats = stats.rename({f'{c}_f':c for c in data.coords if f'{c}_f' in stats})
-        # if 'latitude' in self.features: 
-        #     print()
-        #     print(stats.to_array('features'))
-        #     self.interactive()
         return stats.to_array('features')
 
 

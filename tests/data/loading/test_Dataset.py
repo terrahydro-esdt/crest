@@ -20,7 +20,7 @@ def check_outputs(config, expected, update_data=lambda x: x, norm=True):
     depths = config.pop('depth', [])
 
     data = update_data(synthetic_data(**config) if config else None)
-    dfs  = [Datafile(d, window_depth=wd) for d,wd in zip_longest(data, depths, fillvalue={})]
+    dfs  = [Datafile(d, window_depth=wd, sort_dims=False) for d,wd in zip_longest(data, depths, fillvalue={})]
 
     with dask.config.set(scheduler='synchronous'): # Added for patch with forking error
         dataset = Dataset(dfs)
