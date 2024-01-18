@@ -67,12 +67,12 @@ class Block(BaseAbstract):
         resolution    : Union[Collection, da.Array],
         dims          : Collection[str],
         original_dims : Collection,
-        window_depth  : dict[str, np.ndarray] = {},#dict[str, np.ndarray[Int]] = {},
-        valid_percent : dict[tuple[str], Number]   = {},
-        invalid_value : Collection[object]         = [],
-        block_count   : int                        = 1,
-        block_index   : int                        = 0,
-        label         : str                        = '',
+        window_depth  : dict[str, np.ndarray]    = {},#dict[str, np.ndarray[Int]] = {},
+        valid_percent : dict[tuple[str], Number] = {},
+        invalid_value : Collection[object]       = [],
+        block_count   : int                      = 1,
+        block_index   : int                      = 0,
+        label         : str                      = '',
     ):
         self._data    = data
         self._coords  = coords
@@ -399,14 +399,14 @@ class Block(BaseAbstract):
         center-= lower[:, None, None]
         bounds = [left + np.arange(size) for left, size in zip(center, total)]
 
-        orig_dims, features, dtypes = self.original_dims
+        orig_dims, features, dtypes, req_features = self.original_dims
         orig_dims = ['features'] + [d for d in orig_dims if d != 'features']
 
         # Initialize the final result dict with all globally applicable values
         keep_dims = [f for f in self.dims if f in orig_dims] + ['features']
-        xr_kwargs = {'dims': orig_dims} | ({
-            'attrs' : {'resolution': dict(zip(self.dims, self.resolution))}
-        } if self.is_uniform else {})
+        xr_kwargs = {'dims': orig_dims, 'requested_features': req_features} | (
+            {'attrs' : {'resolution': dict(zip(self.dims, self.resolution))}}
+            if self.is_uniform else {})
 
         def cast_dtype(key: str, value: np.ndarray) -> np.ndarray:
             """ Cast the given value array back to its original dtype """

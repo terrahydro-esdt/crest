@@ -1,12 +1,25 @@
 from collections.abc import Collection, Iterator
 from collections import defaultdict as dd
-from tlz import merge_with
+from functools import cached_property
+from tlz import merge_with, dissoc
 
 import xarray as xr 
 import numpy as np 
 import warnings 
 
 from crest.base import BaseAbstract 
+
+
+# class DatafileSample:
+#     def __init__(self, requested_features: list[str] = [], **xr_data):
+#         self.features = requested_features
+#         self._xr_data = xr_data
+
+#     @cached_property
+#     def data(self) -> xr.Dataset:
+#         """ Instantiate the xarray object from the raw data dict """
+#         return xr.DataArray(**self._xr_data).to_dataset('features')
+
 
 
 # Inheriting from BaseAbstract nearly triples the time for loading batches
@@ -37,7 +50,8 @@ class Sample:#(BaseAbstract):
 
     """
     def __init__(self, data: Collection[dict], dtype=object):
-        self.container = data
+        self._features = merge_with(list, [dict.fromkeys(d.get('requested_features', []), i) for i,d in enumerate(data)])
+        self.container = [dissoc(d, 'requested_features') for d in data]
         self.dtype = dtype
         self.cache = {}
 
@@ -110,6 +124,13 @@ class Sample:#(BaseAbstract):
 
 
     @property
+    def data_groups(self) -> list[dict]:
+        """ Data grouped by datafile; [{feature: [df0_feature, ...]}] """
+        to_dict = lambda d: dict(zip(d['coords']['features'], d['data']))
+        return [to_dict(item) | item['coords'] for item in self.container]
+
+
+    @property
     def features(self) -> list:
         """ All available features """
         return [f for d in self.container for f in d['coords']['features']]
@@ -117,17 +138,50 @@ class Sample:#(BaseAbstract):
 
     def to_list(self, features: list | None = None) -> list:
         """ Extract the requested features into a list """
-        data = self.data
+        # Load data / groups lazily
+        data = None
+        grps = None
         vals = []
+
+        # Currently handling two different code paths - need to refactor
+        # into single handling method, esp. when dealing w/ StructuredDataset
         for feature_index in (features or self.features):
+            if isinstance(feature_index, str):
+                if '@' in feature_index:
+                    if data is None: data = self.data
+                    if feature_index not in data:
+                        feature, *index = (feature_index+'@0').split('@')
+                        vals.append(data[feature][int(index[0])])
+                    else: vals.append(data[feature_index][0])
+                else:
+                    if (feature_index not in self._features):
+                        feature, *index = (feature_index+'@0').split('@')
 
-            # Allow selecting feature from specific container item when there
-            # are duplicates; e.g. 'latitude@2' is latitude from container[2]
-            if isinstance(feature_index, str) and feature_index not in data:
-                feature, *index = (feature_index+'@0').split('@')
-                vals.append(data[feature][int(index[0])])
-            else: vals.append(data[feature_index][0])
+                        if feature in self._features:
+                            if grps is None: grps = self.data_groups
+                            f_idx = self._features[feature][int(index[0])]
+                            vals.append(grps[f_idx][feature])
+                        else:
+                            if data is None: data = self.data
+                            if feature_index not in data:
+                                vals.append(data[feature][int(index[0])])
+                            else: vals.append(data[feature_index][0])
+                    else: 
+                        if grps is None: grps = self.data_groups
+                        f_idx = self._features[feature_index][0]
+                        vals.append(grps[f_idx][feature_index])
+            else: 
+                if data is None: data = self.data
+                vals.append(data[feature_index][0])
 
+
+            # # Allow selecting feature from specific container item when there
+            # # are duplicates; e.g. 'latitude@2' is latitude from container[2]
+            # if isinstance(feature_index, str) and feature_index not in data:
+            #     feature, *index = (feature_index+'@0').split('@')
+            #     vals.append(data[feature][int(index[0])])
+            # else: vals.append(data[feature_index][0])
+        # BaseAbstract.interactive()
         assert(len(vals) == len(features or vals)), \
             f'Missing / duplicate features: {len(vals)} vs {len(features)}\n'+\
             f'Expected: {features}'

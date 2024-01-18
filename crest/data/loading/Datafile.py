@@ -129,7 +129,7 @@ class Datafile(BaseAbstract):
         **kwargs
     ):
         self.location = location
-        self.features = features
+        self.features = sorted(features)
         self.extent   = extent.copy()
         self._kwargs  = kwargs
         self._window_depth  = window_depth.copy()
@@ -207,7 +207,7 @@ class Datafile(BaseAbstract):
             data = func(self, data)
 
         # Select only requested features
-        data = data[self.features or data.keys()]
+        data = data[self.features or sorted(data.keys())]
 
         # Remove summary statistics
         data = data.drop_vars(['summary', 'features', 'statistics'], errors='ignore')
@@ -234,10 +234,14 @@ class Datafile(BaseAbstract):
 
         # Save the original coordinates/dtypes for later return values
         self.original_dims = (
-            [c for c in data.coords if c not in self._virtual_dims], 
+            sorted([c for c in data.coords if c not in self._virtual_dims]), 
             data.features.to_numpy(),
             dtypes,
+            self.features,
         )
+
+        # Sanity check - Sample.py assumes features are sorted
+        assert(sorted(self.original_dims[1]) == list(self.original_dims[1]))
 
         # Transpose dimensions so they are in the correct order, and return
         order = sorted(set(data.coords) - {'features'})
@@ -251,8 +255,18 @@ class Datafile(BaseAbstract):
         self._raw_data
         if 'summary' in self.__dict__:
             return self.__dict__['summary']
+        data = self.data.to_dataset('features')
 
-        data  = self.data.to_dataset('features')
+        # Include in the summary stats any coordinates requested as features
+        for coord in data.coords:
+            if coord in self.features:
+                coords = {c: data[c] for c in data.coords if c != coord}
+                data[f'{coord}_f'] = data[coord]
+                data[f'{coord}_f'] = data[[f'{coord}_f']] \
+                    .expand_dims(**coords)[f'{coord}_f'] \
+                    .transpose(*list(data.dims)) \
+                    .chunk(self.data.data.chunksize[:-1])
+
         extra = dd(int, {'null' : data.isnull().sum})
         stats = ['mean', 'std', 'min', 'max'] + list(extra)
         coord = xr.Variable('statistics', stats) 
@@ -267,7 +281,15 @@ class Datafile(BaseAbstract):
                 'input_core_dims'  : [list(data.dims)],
                 'output_core_dims' : [['statistics']],
             }).to_array('features').to_dataset('statistics')
-        return stats.to_array('statistics')
+        stats = stats.to_array('statistics').to_dataset('features')
+        # print({f'{c}_f':c for c in data.coords if f'{c}_f' in stats}, 'latitude_f' in stats)
+
+        stats = stats.rename({f'{c}_f':c for c in data.coords if f'{c}_f' in stats})
+        # if 'latitude' in self.features: 
+        #     print()
+        #     print(stats.to_array('features'))
+        #     self.interactive()
+        return stats.to_array('features')
 
 
     @property
@@ -823,7 +845,7 @@ class Datafile(BaseAbstract):
 
     def _cache(self, 
         overwrite : bool = False, 
-        cache_dir : Path | str  = '.',
+        cache_dir : Path | str  = 'Cache',
     ):
         """Cache data in a new zarr database for faster access.
 
@@ -842,7 +864,7 @@ class Datafile(BaseAbstract):
 
         """
         data = self.data.to_dataset('features')
-        dest = Path(cache_dir, 'Cache', self.name, f'{self.config_hash}.zarr')
+        dest = Path(cache_dir, self.name, f'{self.config_hash}.zarr')
         dest.parent.mkdir(exist_ok=True, parents=True)
 
         # Erase virtual dimensions
@@ -854,20 +876,20 @@ class Datafile(BaseAbstract):
         data['summary'] = self.summary
 
         # Verify cached data is equivalent
-        # if (not overwrite) and dest.exists():
-        #     try: 
-        #         with xr.open_zarr(dest) as cache:
-        #             overwrite = not all(
-        #                 getattr(data, attr) == getattr(cache, attr)
-        #                 for attr in ['dims', 'attrs', 'nbytes', 'chunksizes']
-        #             ) and bool(xr.align(data, cache, join='exact'))
-        #     except: overwrite = True
+        if (not overwrite) and dest.exists():
+            try: 
+                with xr.open_zarr(dest) as cache:
+                    overwrite = not all(
+                        getattr(data, attr) == getattr(cache, attr)
+                        for attr in ['dims', 'attrs', 'nbytes', 'chunksizes']
+                    ) and bool(xr.align(data, cache, join='exact'))
+            except: overwrite = True
 
         # Reinitialize this Datafile with the new cache
         # Anything handled by the cache (e.g. extent) can be dropped
         self.reset(**{
             'location'      : dest,
-            'features'      : [],
+            # 'features'      : [],
             'extent'        : {},
             'preprocessors' : [],
         })
