@@ -518,11 +518,11 @@ class Dataset(BaseSet):
 
 
     @classmethod
-    def from_models(self, 
+    def from_models(cls, 
         models          : Collection[BaseNode],
         database_folder : Path | str | None = None,
         variable_depths : dict[str, Int | Collection[Int]] = {},
-        datafile_kwargs : dict[str, dict] = {},
+        datafile_kwargs : dict[str | Path, dict] = {},
         verbose         : bool = False,
     ) -> 'Dataset':
         """ Create a Dataset by inferring required parameters from BaseNodes.
@@ -541,25 +541,40 @@ class Dataset(BaseSet):
             location defined by the model is not itself a resolvable path to
             the zarr database, the location is searched for in this folder.
         variable_depths : dict[str, Int | Collection[Int]]
-            Models may sometimes allow a variable dimension size along certain
-            axes - e.g. a temporal dimension can have any length when using an
-            LSTM since the model will compress all timesteps into its internal
-            state, which is represented by a None value as the dimension size.
-            When actually reading data from a database however, we need to know
-            how many timesteps to read; this variable_depths parameter allows
-            any variable dimension window depths to be defined, functioning as
-            a model hyperparameter. The format is the same as window_depths for
-            Datafile, e.g. {'datetime': (3, 0)} would indicate a window with 
-            three steps prior to the center match, and 0 steps to the right -
-            for any model features which have {'datetime': None, ...} as their
-            window depth. 
-        datafile_kwargs : dict[str, dict]
-            Any additional keyword arguments that should be given to the 
-            created Datafile objects, where the dict keys are the name of the 
-            Datafile for which the dict values should be passed; e.g. 
+            Models may sometimes allow a variable dimension size (represented
+            as a None value in the shape definition) along certain axes - e.g.
+            a temporal dimension can have any length when using an LSTM since 
+            the model will compress all timesteps into its internal state.
+            However, when reading the data from a database in that scenario,
+            we need to know how many timesteps to actually read. To allow for
+            this, the `variable_depths` parameter indicates the concrete window
+            depth that should be used by this Dataset - thus enabling the model
+            to still use Datasets which might have different sizes along the 
+            variable dimension, but defining it concretely for this specific 
+            Dataset object. The format is the same as `window_depths` for 
+            Datafile, i.e. keys represent the dimension name, and values should
+            either be a tuple of two ints representing (left size, right size);
+            or a single int which represents the same value being used for both
+            the left and right. For example, variable_depths={'datetime':(3,0)}
+            would indicate a window with three timesteps prior to the center 
+            value, and 0 timesteps after - then used by this method during 
+            Dataset creation to substitute any model feature shape definitions 
+            that use {'datetime': None, ...}. 
+        datafile_kwargs : dict[str | Path, dict]
+            Any additional keyword arguments that should be used when creating
+            the Datafile objects, where the dict keys are the name of the 
+            Datafile to which the respective values should be passed; e.g. 
             datafile_kwargs = {'SMAP': {'preprocessors': [backfill, coarsen]}}.
-            The character '*' can be used as a special key which signifies that
-            the respective value kwargs dict should be given to all datafiles.
+            Note the character '*' can be used as a special key to signify that
+            the respective value kwargs dict should be given to all datafiles,
+            e.g. {'*':{'extent': ...}} uses the given extent for all Datafiles.
+            Also note there are multiple formats that will be accepted when 
+            specifying the Datafile name (datafile_kwargs keys): a string that
+            indicates the folder name without its extension (e.g. 
+            f'{database_folder}/{name}.zarr'); the full folder name with any 
+            extension included (e.g. f'{database_folder}/{name}'); the full 
+            path to the database (either as a string or a Path object), in 
+            which case `database_folder` parameter will not be used.
         verbose         : bool
             Whether to print information on the Datafiles being created.
 
@@ -572,22 +587,47 @@ class Dataset(BaseSet):
         universal_kwargs = datafile_kwargs.pop('*', {})
         unused_df_kwargs = unused = set(list(datafile_kwargs))
 
-        def get_location(model, source) -> Path:
+        def get_kwargs(source) -> dict:
+            """ Get any kwargs from datafile_kwargs which matches source """
+            path = Path(source) if isinstance(source, str) else source
+            
+            # Multiple formats are accepted when specifying the Datafile name
+            if isinstance(path, Path): 
+                options = [path, path.stem, path.name, path.as_posix()]
+            else: options = [path]
+
+            for option in options:
+                if option in datafile_kwargs:
+                    unused_df_kwargs.difference_update({option})
+                    return universal_kwargs | datafile_kwargs[option]
+            return universal_kwargs
+
+
+        def get_location(model, source):
             """ Get the zarr location from the given source, checking
                 a number of ways the location could be specified. """
-            path = Path(source)
+            path = Path(source) if isinstance(source, str) else source
+
+            # Any source that doesn't have 'exists' method is assumed to exist
+            if not hasattr(path, 'exists'): return path
+
+            # If the location doesn't exist, search in database_folder
+            if not path.exists() and (database_folder is not None):
+                path = Path(database_folder).joinpath(path)
 
             # Can pass in location via datafile_kwargs
             if not path.exists():
-                dfkw = datafile_kwargs.get(path.stem, {})
-                path = Path(dfkw.get('location', path))
+                dfkw = get_kwargs(path) or get_kwargs(source)
+                path = dfkw.get('location', path)
+                path = Path(path) if isinstance(path, str) else path
+                if not hasattr(path, 'exists'): return path
 
-            # If the location doesn't exist, search in database_folder
-            if not path.exists() and database_folder is not None:
-                path = Path(database_folder).joinpath(path)
+            # Also check for *folders* if extension was excluded
+            if not path.exists(): 
+                glob = lambda p: p.parent.glob(f'{p.name}.*')
+                dirs = lambda p: list(filter(Path.is_dir, glob(p)))
+                path = ((dirs(path) or dirs(Path(source))) + [path])[0]
 
-            # Also search with .zarr extension
-            if not path.exists(): path = path.with_suffix('.zarr')
             assert(path.exists()), f'Unknown location for {model}: {source}'
             return path
 
@@ -631,14 +671,6 @@ class Dataset(BaseSet):
 
         def create_datafile(location, window_depth, feature_set) -> Datafile:
             """ Create a Datafile object with the given parameters """
-            # Extract any additional kwargs specified
-            for option in [location, location.stem, location.as_posix()]:
-                if option in datafile_kwargs:
-                    kwargs = datafile_kwargs[option]
-                    unused_df_kwargs.difference_update({option})
-                    break
-                else: kwargs = {}
-
             # Remove any @ specifiers for the features
             remove_at = lambda f: f.split('@')[0]
 
@@ -647,7 +679,7 @@ class Dataset(BaseSet):
                 'location'     : location,
                 'features'     : sorted(map(remove_at, feature_set)),
                 'window_depth' : dict(window_depth),
-            } | universal_kwargs | kwargs
+            } | get_kwargs(location)
 
             if verbose:
                 print(f'\nCreating Datafile for {location.stem} with kwargs:')
