@@ -84,7 +84,7 @@ class HierarchalTensorGraph(TensorGraph):
             """ Recursive generator """
             for node in graph:
                 yield [path + (graph.nodes[node]['htg'].name,), graph.nodes[node]['htg']]
-                if not graph.nodes[node]['htg'].is_empty:
+                if not graph.nodes[node]['htg'].is_basenode:
                     yield from traverse_nodes(graph.nodes[node]['htg'].graph, path + (graph.nodes[node]['htg'].name,))
 
         yield from traverse_nodes(self.graph, ())
@@ -172,8 +172,8 @@ class HierarchalTensorGraph(TensorGraph):
     def equals(self, node: Callable) -> bool:
         """ Check if the given node is the same as this node """
 
-        if (self.node and self.node.is_empty):
-            if (node and node.is_empty):
+        if (self.node and self.is_basenode):
+            if (node and node.is_basenode):
 
                 # compare names because it is impossible to compared callables
                 return (self.node.name == node.name)
@@ -205,7 +205,7 @@ class HierarchalTensorGraph(TensorGraph):
             for node in list(self.graph.graph.nodes):
                 n = self.get_node(node)
                 d['nodes'][node] = HierarchalTensorGraph.serialize_callable(
-                    n.node) if (n.is_empty) else n.to_json()
+                    n.node) if (n.is_basenode) else n.to_json()
 
             # store edges of connection to this node
             d['edges'] = list(self.graph.graph.edges)
@@ -374,6 +374,11 @@ class HierarchalTensorGraph(TensorGraph):
 
     @property
     def is_empty(self) -> bool:
+        """ Check if graph is empty """
+        return self.graph.is_empty
+    
+    @property
+    def is_basenode(self) -> bool:
         """ Check if graph is empty """
         return self.graph.is_empty
 
@@ -865,12 +870,9 @@ class HierarchalTensorGraph(TensorGraph):
             - If input and output nodes do not exists
 
         """
-
-        # apply feature map
-        _X = self.feature_map(X, 'input')
-
-        # if not a basenode
-        if (self.node is self):
+        
+        # if not a basenode do some error checking
+        if (not self.is_basenode):
 
             # check that i/o exist
             if not all([b in self.graph for b in ['input', 'output']]):
@@ -890,12 +892,24 @@ class HierarchalTensorGraph(TensorGraph):
                 message += f'Found sinks {[ self[i] for i in sinks]}'
                 raise ImproperTensorGraphError(message)
 
-        # Flatten input/output keys in the dict
-        def flatten(d): return [d.update(d.pop(k, {}))
-                                for k in ['input', 'output']] and d
-
-        # Basenode: graph is empty
-        if self.is_empty:
+        # apply feature map
+        _X = self.feature_map(X, 'input')
+        
+        # Removes 'input' or 'output' nesting of keys
+        def flatten(d):
+            # find 'input' or 'output' items that are dicts
+            keys = [k for k in ['input','output'] 
+                    if k in d and isinstance(d[k],dict)]
+            
+            # If found, flatten
+            if(keys):
+                return [d.update(d.pop(k, {}))for k in ['input','output']] and d
+            
+            # otherwise, return original
+            return d
+        
+        # Basenode call
+        if self.is_basenode:
             return self.feature_map(self.node(flatten(_X)), 'output')
 
         # Recursive case: traverse graph in reverse, from output to input
@@ -931,7 +945,7 @@ class HierarchalTensorGraph(TensorGraph):
             graph = g.copy()
 
         # if basenode cannot be expanded
-        if self[nodename].is_empty:
+        if self[nodename].is_basenode:
             return graph
 
         # in/out edges of node
@@ -968,7 +982,7 @@ class HierarchalTensorGraph(TensorGraph):
         # check if nodes are empty
         def is_not_all_empty(graph):
             for v in graph:
-                if not graph.nodes[v]['htg'].is_empty:
+                if not graph.nodes[v]['htg'].is_basenode:
                     return True
             return False
 
@@ -988,7 +1002,7 @@ class HierarchalTensorGraph(TensorGraph):
                 while (is_not_all_empty(g)):
                     nodes = g.get_node_attributes('htg')
                     for k, node in nodes.items():
-                        if not node.is_empty:
+                        if not node.is_basenode:
                             g = self.expand_graph_node(node.name, g)
 
         # Draw the final graph

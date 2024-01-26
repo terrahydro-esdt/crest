@@ -12,11 +12,10 @@ root_path = os.path.join(ROOT_PATH.as_posix(), os.path.join('..', 'tests', 'mode
 
 def test_basenode():
     m = HierarchalTensorGraph(
-        node=lambda X: {'mult': X['scalar'] * X['x']},
+        node=lambda X: {'output': X['scalar'] * X['input']},
         name='mult'
     )
-    assert m({'scalar': 2, 'x': 3}) == {'mult': 6}
-
+    assert m({'scalar': 2, 'input': 3}) == {'output': 6}
 
 def test_add_node():
     # A multinode HierarchalTensorGraph
@@ -395,7 +394,7 @@ def test_json_triple():
         with pytest.raises(Exception) as ImproperTensorGraphError:
             htg_2.get_node('square')
     finally: os.remove(os.path.join(root_path, 'test_json_triple.json'))
-    
+
 
 
 def test_json_custom():
