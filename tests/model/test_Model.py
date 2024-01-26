@@ -11,7 +11,6 @@ from crest.data import Batcher
 
 
 # Temporary workaround for Heisenbug:
-@pytest.mark.xfail
 def test_Model():
     """ Basic test of model interfaces """
 
@@ -26,6 +25,7 @@ def test_Model():
         'features': ['x'],
         'repeat': True,
         'workers': 1,
+        'duplicate': True,
         'shuffle': False
     })
 
@@ -52,7 +52,7 @@ def test_Model():
         'loss': 'mean_absolute_error'
     })
 
-    model.fit(ds, workers=1, **{
+    model.fit(ds, **{
         'batch_size': 5,
         'steps_per_epoch': 4,  # 20 samples / 5 samples per batch
         'epochs': 20,
@@ -74,6 +74,7 @@ def test_Model():
     assert np.array_equal(using_ds, using_bs)
     assert np.array_equal(using_dict, using_bs)
 
+
     # Check evaluations for different types of data
     using_ds = model.evaluate(ds, **pred_kwargs)
     using_dict = model.evaluate({'x': x, 'y': y}, **pred_kwargs)
@@ -81,7 +82,6 @@ def test_Model():
 
     bs.close()
 
-@pytest.mark.skip(reason="fails in CI/CD")
 def test_model_exhaust():
     """ Basic test of model interfaces """
 
@@ -150,7 +150,6 @@ def test_model_exhaust():
 
     bs.close()
 
-@pytest.mark.skip(reason="fails in CI/CD")
 def test_deep_exhaust():
     """ Basic test of model interfaces """
 
