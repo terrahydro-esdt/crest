@@ -186,7 +186,7 @@ def test_deep_exhaust():
 
     # Build and fit the Model
     model = Model(htg)
-    model.build(**{
+    model.compile(**{
         'optimizer': 'Adam',
         'loss': 'mean_absolute_error'
     })
