@@ -280,6 +280,16 @@ def test_hanging_sinks_nodes():
     with pytest.raises(ImproperTensorGraphError):
         model({'i': 2})
 
+def test_node_as_basenode():
+    m = HierarchalTensorGraph(
+        node=lambda X: {'output': X['scalar'] * X['input']},
+        name='mult'
+    )
+    with pytest.raises(ImproperTensorGraphError):
+         HierarchalTensorGraph(
+                 node=m,
+                 name='mult'
+                 )
 
 def test_pickling():
     X = {'x_1': 0.2, 'x_2': 0.3, 'scalar': 1.5}
