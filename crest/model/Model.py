@@ -142,7 +142,8 @@ class Model(BaseModel):
             'batch_size' : kwargs['batch_size'],
             'features'   : [list(self.inputs),list(self.outputs)],
             'repeat'     : True,
-            'shuffle'    : kwargs['shuffle']
+            'shuffle'    : kwargs['shuffle'],
+            'workers'    : 0
         }
 
         training_batcher = self._make_batcher(dataset,**train_kwargs)
@@ -156,7 +157,8 @@ class Model(BaseModel):
             valid_kwargs = {
                 'batch_size' : kwargs ['batch_size'],
                 'features'   : [list(self.inputs),list(self.outputs)],
-                'shuffle'    : False
+                'shuffle'    : False,
+                'workers'    : 0
             }
 
             kwargs['validation_data'] = self._make_batcher(kwargs['validation_data'],**valid_kwargs)
