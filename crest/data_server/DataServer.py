@@ -112,6 +112,73 @@ class DataServer:
 
         return data
 
+    @staticmethod
+    def load_soil_moisture(path=''):
+        """
+        Creates a folder /soil_moisture and stores required
+        data for examples/soil_moisture_demo.ipynb. If the folder
+        already exist, it reads from the local files, otherwise
+        it downloads it from the server.
+
+        Parameters
+        ----------
+
+        path, optional : Local path to store soil_moisture. If not
+        specified, it stores it in terrahydro/toy_dataset
+
+        Returns
+        -------
+
+        Path to the downloaded dataset
+
+        """
+        # URL to the soil_moisture data on server
+        url = 'https://portal.nccs.nasa.gov/datashare/astg/terrahydro/toy_dataset/'
+
+        # Default path
+        if not path:
+            path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'soil_moisture')
+        else:
+            path = os.path.join(path, 'soil_moisture')
+
+        # Make directory if it doesn't exist
+        if not os.path.isdir(path):
+            os.mkdir(path)
+
+        # list of the required files
+        names = ['SMAP.nc',
+                 'ERA5.nc',
+                 'Soil.nc',
+                 'Irrigation.nc']
+        zarr_names = ['SMAP.zarr',
+                      'ERA5.zarr',
+                      'StaticAttributes.zarr/Soil',
+                      'StaticAttributes.zarr/Irrigation']
+        for index, n in enumerate(names):
+            # Download files which are in
+            # netcdf formats
+            file = os.path.join(path, n)
+            file_zarr = os.path.join(path, zarr_names[index])
+            if not os.path.isfile(file) and not os.path.exists(file_zarr):
+                try:
+                    urlretrieve(url + n, file)
+                except Exception as e:
+                    print(e)
+                    return None
+            
+                # convert files to the zarr format
+                data = xr.open_dataset(file)
+                if n in ['SMAP.nc', 'ERA5.nc']:
+                    data.to_zarr(os.path.join(path, n.split('.')[0]+'.zarr'))
+                else:
+                    data.to_zarr(os.path.join(path, 'StaticAttributes.zarr/'+n.split('.')[0]))
+                
+                # remove the netcdf files
+                os.remove(file)
+        
+        print('Download complete at', path)
+        return path
+            
     @classmethod
     def load(cls, name, path=''):
         if name == 'mnist':
@@ -119,6 +186,9 @@ class DataServer:
         
         if name == 'lstm_streamflow':
             return DataServer.load_streamflow(path)
+        
+        if name == 'soil_moisture':
+            return DataServer.load_soil_moisture(path)
 
         exc = f'No dataset called {name} on DataServer'
         raise Exception(exc)
