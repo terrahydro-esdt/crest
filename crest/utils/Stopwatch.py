@@ -95,7 +95,7 @@ class Stopwatch:
     time=1 seconds  dMem=0 B
     >>> with Stopwatch('using time.perf_counter', timer=time.perf_counter):
     ...   time.sleep(1)
-    using time.perf_couunter: time=1.01 seconds  dMem=0 B
+    using time.perf_counter: time=1.01 seconds  dMem=0 B
 
     """
 
