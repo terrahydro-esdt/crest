@@ -4,7 +4,7 @@ from typing import Union
 from copy import deepcopy
 
 # networkx breaks numpy if it's not also loaded, due to nx.lazy_import modifying sys modules
-import numpy as np 
+import numpy as np
 import networkx as nx
 import marshal, base64
 import traceback
@@ -15,9 +15,9 @@ from .graphs.NetworkXGraph import NetworkXGraph
 
 class HierarchalTensorGraph(TensorGraph):
     """
-    HierarchalTensorGraph (HTG): The HTG is the core object where the Earth System Model (ESM) 
-    is encoded and specified. The HTG provides the information needed to build a CREST 
-    model using the Tensor Network backend. As the name suggest, HTG is a hierarchal graph object, 
+    HierarchalTensorGraph (HTG): The HTG is the core object where the Earth System Model (ESM)
+    is encoded and specified. The HTG provides the information needed to build a CREST
+    model using the Tensor Network backend. As the name suggest, HTG is a hierarchal graph object,
     and as such, nodes within a HTG are HTGs themselves.
 
     It has 2 modes:
@@ -26,8 +26,8 @@ class HierarchalTensorGraph(TensorGraph):
     process in an ESM. The basenode is the main object intended for specifying an actual model
     of a physical process. As such, you must supply a callable function when instantiating a basenode.
 
-    2.	A multi-node graph (nodes>1) used to represent ESM sub-systems. In this mode, HTG is not 
-    instantiated with callable function. Instead, nodes and edges are added to create a sub-system. 
+    2.	A multi-node graph (nodes>1) used to represent ESM sub-systems. In this mode, HTG is not
+    instantiated with callable function. Instead, nodes and edges are added to create a sub-system.
     Nodes can either be fundamental processes (basenode) or sub-systems (multi-node HTGs).
 
 
@@ -36,8 +36,8 @@ class HierarchalTensorGraph(TensorGraph):
 
     name : str
        The name of the HTG which must be different than other nodes
-       in the graph. If name is None, it will default to 
-       ['name', '__name__', '__qualname__']. 
+       in the graph. If name is None, it will default to
+       ['name', '__name__', '__qualname__'].
 
     node : Callable, optional
        A callable function to initalize a HTG. If set, a
@@ -51,10 +51,10 @@ class HierarchalTensorGraph(TensorGraph):
 
     """
 
-    def __init__(self, 
-        node    : None | Callable = None, 
-        name    : None | str = None, 
-        inputs  : dict = {}, 
+    def __init__(self,
+        node    : None | Callable = None,
+        name    : None | str = None,
+        inputs  : dict = {},
         outputs : dict = {},
     ):
 
@@ -77,6 +77,14 @@ class HierarchalTensorGraph(TensorGraph):
             message = f'node must be callable'
             raise ImproperTensorGraphError(message)
 
+        # check that node is not an HTG
+        if(isinstance(node,HierarchalTensorGraph)):
+            message = "A HierarchalTensorGraph can not be used to"
+            message += "create a basenode (i.e., node cannot be a"
+            message += "HierarchalTensorGraph)"
+            raise ImproperTensorGraphError(message)
+
+
     def __iter__(self):
         """ Iterate through all nodes within the HTG """
 
@@ -84,7 +92,7 @@ class HierarchalTensorGraph(TensorGraph):
             """ Recursive generator """
             for node in graph:
                 yield [path + (graph.nodes[node]['htg'].name,), graph.nodes[node]['htg']]
-                if not graph.nodes[node]['htg'].is_empty:
+                if not graph.nodes[node]['htg'].is_basenode:
                     yield from traverse_nodes(graph.nodes[node]['htg'].graph, path + (graph.nodes[node]['htg'].name,))
 
         yield from traverse_nodes(self.graph, ())
@@ -102,7 +110,7 @@ class HierarchalTensorGraph(TensorGraph):
         """
 
         Serialize the node object based on the type we have inferred.
-        If the type extends HierarchalTensorGraph, we call its serialize function. 
+        If the type extends HierarchalTensorGraph, we call its serialize function.
 
         Parameters
         ----------
@@ -133,7 +141,7 @@ class HierarchalTensorGraph(TensorGraph):
         """
 
         Deserialize the node object based on the type we have inferred.
-        If the type extends HierarchalTensorGraph, we call the deserialize function. 
+        If the type extends HierarchalTensorGraph, we call the deserialize function.
 
         Parameters
         ----------
@@ -172,8 +180,8 @@ class HierarchalTensorGraph(TensorGraph):
     def equals(self, node: Callable) -> bool:
         """ Check if the given node is the same as this node """
 
-        if (self.node and self.node.is_empty):
-            if (node and node.is_empty):
+        if (self.node and self.is_basenode):
+            if (node and node.is_basenode):
 
                 # compare names because it is impossible to compared callables
                 return (self.node.name == node.name)
@@ -188,7 +196,7 @@ class HierarchalTensorGraph(TensorGraph):
     def to_json(self):
         """
 
-        Enables the serialization of the network graph associated with this node. 
+        Enables the serialization of the network graph associated with this node.
 
         """
 
@@ -205,7 +213,7 @@ class HierarchalTensorGraph(TensorGraph):
             for node in list(self.graph.graph.nodes):
                 n = self.get_node(node)
                 d['nodes'][node] = HierarchalTensorGraph.serialize_callable(
-                    n.node) if (n.is_empty) else n.to_json()
+                    n.node) if (n.is_basenode) else n.to_json()
 
             # store edges of connection to this node
             d['edges'] = list(self.graph.graph.edges)
@@ -220,7 +228,7 @@ class HierarchalTensorGraph(TensorGraph):
     def from_json(self, data):
         """
 
-        Enables the deserialization of the network graph represented in a JSON structure. 
+        Enables the deserialization of the network graph represented in a JSON structure.
 
         Parameters:
         -----------
@@ -286,12 +294,12 @@ class HierarchalTensorGraph(TensorGraph):
         return HierarchalTensorGraph.get_name(value)
 
 
-    def rename_io(self, 
-        inputs_map  : None | dict = None, 
-        outputs_map : None | dict = None, 
+    def rename_io(self,
+        inputs_map  : None | dict = None,
+        outputs_map : None | dict = None,
         node        : None | str | tuple  | TensorGraph = None,
     ):
-        """ 
+        """
             Sets any renaming of input/output tensors needed.
 
             Parameters
@@ -377,6 +385,11 @@ class HierarchalTensorGraph(TensorGraph):
         """ Check if graph is empty """
         return self.graph.is_empty
 
+    @property
+    def is_basenode(self) -> bool:
+        """ Check if graph is empty """
+        return self.graph.is_empty
+
     @staticmethod
     def identity(name: str) -> 'HierarchalTensorGraph':
         """
@@ -395,8 +408,8 @@ class HierarchalTensorGraph(TensorGraph):
         ----------
         node : str, callable, or HTG
             If a callable is passed, it is wrapped into a HTG and added to
-            the graph if it doesn't yet exist. If a string is passed, the HTG 
-            (which must already exist in the graph) is returned. If a HTG is passed, 
+            the graph if it doesn't yet exist. If a string is passed, the HTG
+            (which must already exist in the graph) is returned. If a HTG is passed,
             it is added to the graph if it doesn't yet exist.
 
         Returns
@@ -482,7 +495,7 @@ class HierarchalTensorGraph(TensorGraph):
         ----------
         node : Callable, or HierarchalTensorGraph
             If a callable is passed, it is wrapped into an HTG and added to
-            the graph if it doesn't yet exist. Otherwise, if an HTG is passed, 
+            the graph if it doesn't yet exist. Otherwise, if an HTG is passed,
             it is added to the graph if it doesn't yet exist.
 
         Raises
@@ -855,7 +868,7 @@ class HierarchalTensorGraph(TensorGraph):
         Returns
         -------
 
-        Outputs produce by executing the underlying graph in the 
+        Outputs produce by executing the underlying graph in the
         form {path: output value}.
 
         Raises
@@ -866,11 +879,8 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        # apply feature map
-        _X = self.feature_map(X, 'input')
-
-        # if not a basenode
-        if (self.node is self):
+        # if not a basenode do some error checking
+        if (not self.is_basenode):
 
             # check that i/o exist
             if not all([b in self.graph for b in ['input', 'output']]):
@@ -890,12 +900,24 @@ class HierarchalTensorGraph(TensorGraph):
                 message += f'Found sinks {[ self[i] for i in sinks]}'
                 raise ImproperTensorGraphError(message)
 
-        # Flatten input/output keys in the dict
-        def flatten(d): return [d.update(d.pop(k, {}))
-                                for k in ['input', 'output']] and d
+        # apply feature map
+        _X = self.feature_map(X, 'input')
 
-        # Basenode: graph is empty
-        if self.is_empty:
+        # Removes 'input' or 'output' nesting of keys
+        def flatten(d):
+            # find 'input' or 'output' items that are dicts
+            keys = [k for k in ['input','output']
+                    if k in d and isinstance(d[k],dict)]
+
+            # If found, flatten
+            if(keys):
+                return [d.update(d.pop(k, {}))for k in ['input','output']] and d
+
+            # otherwise, return original
+            return d
+
+        # Basenode call
+        if self.is_basenode:
             return self.feature_map(self.node(flatten(_X)), 'output')
 
         # Recursive case: traverse graph in reverse, from output to input
@@ -931,7 +953,7 @@ class HierarchalTensorGraph(TensorGraph):
             graph = g.copy()
 
         # if basenode cannot be expanded
-        if self[nodename].is_empty:
+        if self[nodename].is_basenode:
             return graph
 
         # in/out edges of node
@@ -968,7 +990,7 @@ class HierarchalTensorGraph(TensorGraph):
         # check if nodes are empty
         def is_not_all_empty(graph):
             for v in graph:
-                if not graph.nodes[v]['htg'].is_empty:
+                if not graph.nodes[v]['htg'].is_basenode:
                     return True
             return False
 
@@ -988,7 +1010,7 @@ class HierarchalTensorGraph(TensorGraph):
                 while (is_not_all_empty(g)):
                     nodes = g.get_node_attributes('htg')
                     for k, node in nodes.items():
-                        if not node.is_empty:
+                        if not node.is_basenode:
                             g = self.expand_graph_node(node.name, g)
 
         # Draw the final graph

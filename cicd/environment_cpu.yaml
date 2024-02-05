@@ -27,6 +27,7 @@ dependencies:
   - pip=23.0.1
   - jsonpickle=3.0.2
   - crick=0.0.3
+  - netCDF4=1.6.2
   - pip:
     - pyreadline3==3.4.1
       
