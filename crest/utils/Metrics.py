@@ -5,6 +5,7 @@ from scipy import stats
 import traceback
 import jsonpickle
 
+
 class Metrics(object):
 
     def __init__(self):
@@ -26,6 +27,8 @@ class Metrics(object):
         self.register('alpha_nse', self.alpha_nse)
         self.register('beta_nse', self.beta_nse)
 
+        self.defaults = list(self.handlers.keys())
+
     def get_callbacks(self, metrics):
         m_callbacks = []
         try:
@@ -43,11 +46,9 @@ class Metrics(object):
                         m_callbacks.append(handler_avail)
 
                 elif (callable(m)):
+                    self.register(m.__class__.__name__, m)
                     m_callbacks.append(m)
 
-        except:
-            print(traceback.format_exc())
-            raise Exception('Could not get all metric callbacks')
         finally:
             return m_callbacks
 
@@ -60,7 +61,11 @@ class Metrics(object):
 
     @property
     def all(self):
-        return self.handlers.keys()
+        return list(self.handlers.keys())
+
+    @property
+    def customs(self):
+        return [k for k in self.all if not k in self.defaults]
 
     def unbiased_rmse(self, y_true, y_pred):
         return (tf.sqrt(tf.reduce_mean(tf.pow(tf.subtract(y_true, y_pred), 2)))).numpy()
@@ -161,13 +166,13 @@ class Metrics(object):
     def to_json(self):
         try:
             registered_metrics = list(self.handlers.keys())
+
             saved_dict = {}
             for metric in registered_metrics:
                 saved_dict[metric] = self.get_handler(metric)
 
             saved_dict = jsonpickle.encode(saved_dict)
             return saved_dict
-
         except:
             print(traceback.format_exc())
             raise Exception('Could not save metrics')

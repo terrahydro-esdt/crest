@@ -2,13 +2,18 @@ from math import exp
 
 import pytest
 import cloudpickle as pickle
-import json, os
+import json
+import os
 
 from .helpers import *
 from crest import HierarchalTensorGraph, ROOT_PATH
 from crest.model.TensorGraph import ImproperTensorGraphError
+from crest.model.LambdaNode import LambdaNode
+from crest.model.TensorSpec import TensorSpec
 
-root_path = os.path.join(ROOT_PATH.as_posix(), os.path.join('..', 'tests', 'model'))
+root_path = os.path.join(ROOT_PATH.as_posix(),
+                         os.path.join('..', 'tests', 'model'))
+
 
 def test_basenode():
     m = HierarchalTensorGraph(
@@ -301,128 +306,177 @@ def test_pickling():
     assert m(X) == n(X)
 
 
+def compare_htg(node_1, node_2):
+    inps = node_1.inputs.keys() == node_2.inputs.keys()
+
+    for k in node_1.inputs.keys():
+        inps = (TensorSpec(node_1.inputs[k]).spec_dict == TensorSpec(node_2.inputs[k]).spec_dict) and inps
+
+    if (not inps):
+        print(node_1.inputs.keys(), node_2.inputs.keys())
+        print(TensorSpec(node_1.inputs['x']).spec_dict, node_2.inputs['x'].spec_dict)
+    
+    outs = node_1.outputs.keys() == node_2.outputs.keys()
+
+    for k in node_1.outputs.keys():
+        outs = (TensorSpec(node_1.outputs[k]).spec_dict == TensorSpec(node_2.outputs[k]).spec_dict) and outs
+
+    if (not outs):
+        print(TensorSpec(node_1.outputs['y']).spec_dict, node_2.outputs['y'].spec_dict)
+
+    edge = node_1.edges == node_2.edges
+
+    if (not edge):
+        print(node_1.edges, node_2.edges)
+
+    inpmap = node_1._inputs_map == node_2._inputs_map
+
+    if (not inpmap):
+        print(node_1._inputs_map, node_2._inputs_map)
+
+    outmap = node_1._outputs_map == node_2._outputs_map
+
+    if (not outmap):
+        print(node_1._outputs_map, node_2._outputs_map)
+
+    return inps and outs and edge and inpmap and outmap
+
+
+# Test htg basenode that cannot be serialized
+def test_json_basic_exception():
+    def add(x): return x['a'] + x['b']
+
+    with pytest.raises(Exception):
+        htg_1 = HierarchalTensorGraph(node=add, name='add')
+        htg_1.to_json()
+
+# Test htg lambdabase node serialized locally and attempted to deserialize via HTG
+def test_basenode_exception():
+    l = LambdaNode(lambda X: X['x'] + 10, name='add', inputs={'x': None}, outputs={'add': None})
+
+    assert HierarchalTensorGraph.from_json(l.to_json())
+
 def test_json_basic():
-    add = lambda x : x['a'] + x['b']
-    htg_1 = HierarchalTensorGraph(node=add, name='add')
+    def add(x): return {'add': x['a'] + x['b']}
+    l = LambdaNode(add, name='add', inputs={'a': None, 'b': None}, outputs={'add': None})
 
-    try:
-        with open(os.path.join(root_path, 'test_json_basic.json'), 'w') as f:
-            json_data = htg_1.to_json()
-            json.dump(json_data, f)
+    htg_1 = HierarchalTensorGraph(name='add')
+    htg_1.add_edge('input', l)
+    htg_1.add_edge(l, 'output')
 
-        htg_2 = HierarchalTensorGraph(node=lambda x: x)
-        with open(os.path.join(root_path, 'test_json_basic.json'), 'r') as f:
-            json_data = json.load(f)
-            assert (not json_data == None)
+    htg_1.inputs = {'a': None, 'b': None}
+    htg_1.outputs = {'add': None}
 
-            htg_2 = htg_2.from_json(json_data)
-            assert (not htg_2 == None)
+    json_data = htg_1.to_json()
+    assert (not json_data == None)
+    assert (isinstance(json_data, str))
 
-        assert (htg_1.name == htg_2.name)
-    finally: os.remove(os.path.join(root_path, 'test_json_basic.json'))
+    htg_2 = HierarchalTensorGraph.from_json(json_data)
+    assert (not htg_2 == None)
+
+    assert (htg_1(
+        {'a': 1, 'b': 2}) == htg_2({'a': 1, 'b': 2}))
+
+def test_json_model_exception():
+    htg_1 = AddSequentialLayer()
+
+    with pytest.raises(Exception):
+        htg_1.to_json()
 
 
 def test_json_model():
-    htg_1 = AddSequentialLayer()
-    try:
-        with open(os.path.join(root_path, 'test_json_model.json'), 'w') as f:
-            json_data = htg_1.to_json()
-            json.dump(json_data, f)
+    keras_node = AddKerasModel()
 
-        htg_2 = HierarchalTensorGraph(node=lambda x: x)
-        with open(os.path.join(root_path, 'test_json_model.json'), 'r') as f:
-            json_data = json.load(f)
-            assert (not json_data == None)
+    htg_1 = HierarchalTensorGraph(name='test_json_model')
+    htg_1.add_edge('input', keras_node)
+    htg_1.add_edge(keras_node, 'output')
 
-            htg_2 = htg_2.from_json(json_data)
-            assert (not htg_2 == None)
+    htg_1.inputs = {'x': None}
+    htg_1.outputs = {'y': None}
 
-        assert (htg_1.get_node('dense_layer') and htg_2.get_node('dense_layer'))
-        assert (htg_1.get_node('input') and htg_2.get_node('input'))
-        assert (htg_1.get_node('output') and htg_2.get_node('output'))
-        assert (str(htg_1.edges) == str(htg_2.edges))
-    finally: os.remove(os.path.join(root_path, 'test_json_model.json'))
+    json_data = htg_1.to_json()
+    
+    htg_2 = HierarchalTensorGraph.from_json(json_data)
+    assert (not htg_2 == None)
+
+    assert (htg_1.edges == htg_2.edges)
+    assert (htg_1.nodes['test'].node.get_config() ==
+            htg_2.nodes['test'].node.get_config())
 
 
 def test_json_double():
 
-    htg_1 = AddSquare()
-    try:
-        with open(os.path.join(root_path, 'test_json_double.json'), 'w') as f:
-            json_data = htg_1.to_json()
-            json.dump(json_data, f)
+    htg_1 = AddSquareNode()
 
-        htg_2 = HierarchalTensorGraph(node=lambda x: x)
-        with open(os.path.join(root_path, 'test_json_double.json'), 'r') as f:
-            json_data = json.load(f)
-            assert (not json_data == None)
+    json_data = htg_1.to_json()
 
-            htg_2 = htg_2.from_json(json_data)
-            assert (not htg_2 == None)
+    htg_2 = HierarchalTensorGraph.from_json(json_data)
+    assert (not htg_2 == None)
 
-            assert (htg_1.get_node('add') and htg_2.get_node('add'))
-            assert (htg_1.get_node('square') and htg_2.get_node('square'))
-            assert (htg_1.get_node('input') and htg_2.get_node('input'))
-            assert (htg_1.get_node('output') and htg_2.get_node('output'))
-            assert (str(htg_1.edges) == str(htg_2.edges))
-    finally: os.remove(os.path.join(root_path, 'test_json_double.json'))
-
+    assert (htg_1.get_node('add') and htg_2.get_node('add'))
+    assert (htg_1.get_node('square') and htg_2.get_node('square'))
+    assert (htg_1.get_node('input') and htg_2.get_node('input'))
+    assert (htg_1.get_node('output') and htg_2.get_node('output'))
+    assert (htg_1.edges == htg_2.edges)
 
 def test_json_triple():
-    htg_1 = LogAddSquare()
-    try:
-        with open(os.path.join(root_path, 'test_json_triple.json'), 'w') as f:
-            json_data = htg_1.to_json()
-            json.dump(json_data, f)
+    htg_1 = LogAddSquareNode()
+    
+    json_data = htg_1.to_json()
 
-        htg_2 = HierarchalTensorGraph(node=lambda x: x)
-        with open(os.path.join(root_path, 'test_json_triple.json'), 'r') as f:
-            json_data = json.load(f)
-            assert (not json_data == None)
+    htg_2 = HierarchalTensorGraph.from_json(json_data)
+    assert (not htg_2 == None)
 
-            htg_2 = htg_2.from_json(json_data)
-            assert (not htg_2 == None)
+    assert (htg_1[('add_square', 'add')] and htg_2[('add_square', 'add')])
+    assert (htg_1[('add_square', 'square')]
+            and htg_2[('add_square', 'square')])
+    assert (htg_1.get_node('log') and htg_2.get_node('log'))
+    assert (htg_1.get_node('add_square') and htg_2.get_node('add_square'))
+    assert (htg_1.get_node('input') and htg_2.get_node('input'))
+    assert (htg_1.get_node('output') and htg_2.get_node('output'))
+    assert (htg_1.edges == htg_2.edges)
 
-        assert (htg_1[('add_square', 'add')] and htg_2[('add_square', 'add')])
-        assert (htg_1[('add_square', 'square')]
-                and htg_2[('add_square', 'square')])
-        assert (htg_1.get_node('log') and htg_2.get_node('log'))
-        assert (htg_1.get_node('add_square') and htg_2.get_node('add_square'))
-        assert (htg_1.get_node('input') and htg_2.get_node('input'))
-        assert (htg_1.get_node('output') and htg_2.get_node('output'))
-        assert (str(htg_1.edges) == str(htg_2.edges))
+    with pytest.raises(Exception) as ImproperTensorGraphError:
+        htg_1.get_node('add')
 
-        with pytest.raises(Exception) as ImproperTensorGraphError:
-            htg_1.get_node('add')
+    with pytest.raises(Exception) as ImproperTensorGraphError:
+        htg_2.get_node('add')
 
-        with pytest.raises(Exception) as ImproperTensorGraphError:
-            htg_2.get_node('add')
+    with pytest.raises(Exception) as ImproperTensorGraphError:
+        htg_1.get_node('square')
 
-        with pytest.raises(Exception) as ImproperTensorGraphError:
-            htg_1.get_node('square')
-
-        with pytest.raises(Exception) as ImproperTensorGraphError:
-            htg_2.get_node('square')
-    finally: os.remove(os.path.join(root_path, 'test_json_triple.json'))
+    with pytest.raises(Exception) as ImproperTensorGraphError:
+        htg_2.get_node('square')
 
 
 
-def test_json_custom():
+
+def test_sqjson_custom():
+
+    base_node = SquareRoot()
+    htg = HierarchalTensorGraph(
+        name='square_root'
+    )
+
+    htg.add_edge('input', base_node)
+    htg.add_edge(base_node, 'output')
+
+    htg.inputs = {'x': None}
+    htg.outputs = {'square_root': None}
+
+    json_data = htg.to_json()
+
+    print(json_data)
+
+    HierarchalTensorGraph.from_json(json_data)
+
+def test_logjson_custom():
 
     htg = HierarchalTensorGraph(
-        name='square',
-        node=SquareRoot()
+        name='log',
+        node=LogCustom()
     )
 
     json_data = htg.to_json()
-    str_data = str(htg.to_json())
 
-    assert ('<<serialized--SquareRootCustomSerial>>' in str_data)
-
-    htg_get = HierarchalTensorGraph(node=lambda x: x)
-    htg_get.from_json(json_data)
-
-    # fails due to import errors within the directory
-    # works if tested outside this directory
-    # assert(htg_get.name == htg.name)
-    # assert(htg_get.node.__class__.__name__ == htg.node.__class__.__name__)
+    HierarchalTensorGraph.from_json(json_data)

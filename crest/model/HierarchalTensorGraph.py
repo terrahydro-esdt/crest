@@ -1,13 +1,13 @@
 from collections.abc import Callable
 from functools import cache
 from typing import Union
-from copy import deepcopy
+import importlib
+import json
 
 # networkx breaks numpy if it's not also loaded, due to nx.lazy_import modifying sys modules
 import numpy as np
 import networkx as nx
-import marshal, base64
-import traceback
+from .TensorSpec import TensorSpec
 
 from .TensorGraph import TensorGraph, ImproperTensorGraphError
 from .graphs.NetworkXGraph import NetworkXGraph
@@ -105,78 +105,6 @@ class HierarchalTensorGraph(TensorGraph):
     def __setstate__(self, d):
         self.__dict__ = d
 
-    @staticmethod
-    def serialize_callable(node: Callable):
-        """
-
-        Serialize the node object based on the type we have inferred.
-        If the type extends HierarchalTensorGraph, we call its serialize function.
-
-        Parameters
-        ----------
-        obj : Callable, extends HierarchalTensorGraph | Marshal
-             The object from which we determine node type.
-
-        """
-
-        try:
-            # print(type(node), node.__class__)
-            if (hasattr(node, 'serialize') and not node.__class__.__name__ == 'HierarchicalTensorGraph'):
-                return {'module': str(node.__class__.__module__), 'name': str(node.__class__.__name__), 'obj': node.serialize()}
-            else:
-                def LAMBDA(): return 0
-                if isinstance(node, type(LAMBDA)) and 'lambda' in node.__name__:
-                    lambda_serialized = marshal.dumps(node.__code__)
-                    # print('lambda serialized')
-                    return {'module': 'lambda', 'name': 'lambda', 'obj': base64.b64encode(lambda_serialized).decode('utf-8')}
-                else:
-                    raise ImproperTensorGraphError(
-                        f'Unsupported base-node type')
-        except:
-            raise ImproperTensorGraphError(
-                f'Could not find serialization function for base-node type')
-
-    @staticmethod
-    def deserialize_callable(data: dict):
-        """
-
-        Deserialize the node object based on the type we have inferred.
-        If the type extends HierarchalTensorGraph, we call the deserialize function.
-
-        Parameters
-        ----------
-        dict : data, extends HierarchalTensorGraph | Marhsal
-             The object from which we determine node type and deserialize.
-
-        """
-
-        try:
-            modulename = data['module']
-            classname = data['name']
-
-            # print(classname, modulename)
-
-            if ('lambda' in modulename):
-                decoded_str = base64.b64decode(data['obj'])
-                marshal_obj = marshal.loads(decoded_str)
-                x = lambda x: eval(marshal_obj)
-                return x
-            else:
-                module = __import__(modulename)
-                class_ = getattr(module, classname)
-                instance = class_()
-
-                if hasattr(instance, 'deserialize'):
-                    x = instance.deserialize(data['obj'])
-                    return x
-                else:
-                    raise ImproperTensorGraphError(
-                        f'Unsupported base-node type')
-
-        except:
-            raise ImproperTensorGraphError(
-                f'Need deserialize function for base-node type')
-
     def equals(self, node: Callable) -> bool:
         """ Check if the given node is the same as this node """
 
@@ -193,84 +121,161 @@ class HierarchalTensorGraph(TensorGraph):
 
         return False
 
+    def basenode_to_json(self):
+        """
+        Enables the serialization of the HTG basenode as a JSON string.
+        """
+
+        to_json = getattr(self.node, "to_json", None)
+
+        if (to_json):
+            node_json = self.__dict__.copy()
+
+            node_json.pop('graph')
+            node_json.pop('output')
+
+            node_json['node'] = self.node.to_json()
+
+            node_json['inputs'] = TensorSpec.dict_to_json(self.inputs)
+            node_json['outputs'] = TensorSpec.dict_to_json(self.outputs)
+
+            node_json['node_class'] = self.node.__class__.__name__
+            node_json['node_module'] = self.node.__module__
+
+            return json.dumps(node_json)
+        else:
+            raise Exception(
+                'Base node <%s> does not have a to_json method' % self.name)
+
     def to_json(self):
         """
+        Enables the serialization of the HTG network graph as a JSON string. 
+        """
 
-        Enables the serialization of the network graph associated with this node.
+        graph_info = {}
+
+        if (self.is_basenode):
+            if (not type(self) == HierarchalTensorGraph):
+                raise Exception(
+                    'Base node <%s> is not of type HierarchalTensorGraph' % self.name)
+
+            return self.basenode_to_json()
+
+        # name
+        graph_info['name'] = self.name
+
+        # node
+        graph_info['node'] = None
+
+        # input and output map
+        graph_info['inputs_map'] = self._inputs_map
+        graph_info['outputs_map'] = self._outputs_map
+
+        # input and output
+        graph_info['inputs'] = TensorSpec.dict_to_json(self.inputs)
+        graph_info['outputs'] = TensorSpec.dict_to_json(self.outputs)
+
+        # edges
+        graph_info['edges'] = list(self.edges)
+
+        # nodes
+        graph_info['nodes'] = []
+        for name, node in self.nodes.items():
+            if (not name in ['input', 'output']):
+                try:
+                    graph_info['nodes'].append(node.to_json())
+                except:
+                    raise Exception(
+                        f'Could not serialize node {name} in graph {self.name}')
+
+        graph_info['node_class'] = self.node.__class__.__name__
+        graph_info['node_module'] = self.node.__module__
+
+        return json.dumps(graph_info)
+
+    @staticmethod
+    def basenode_from_json(graph_json: str):
+        """
+        
+        Enables the deserialization of the HTG basenode represented as a JSON string.
+
+        Parameters:
+        -----------
+        data : str
+             The JSON string to deserialize.
 
         """
 
-        try:
-            # create a copy of the current node and attributes
+        graph_dict = graph_json
+        if (isinstance(graph_json, str)):
+            graph_dict = json.loads(graph_json)
 
-            d = deepcopy(self.__dict__)
-            d['graph'] = None
-            d['node'] = HierarchalTensorGraph.serialize_callable(self.node) if (
-                self.node and not isinstance(self.node, HierarchalTensorGraph)) else None
+        class_name = graph_dict['node_class']
+        module_name = graph_dict['node_module']
 
-            # iterate through nodes in the graph and recursively serialize them
-            d['nodes'] = {}
-            for node in list(self.graph.graph.nodes):
-                n = self.get_node(node)
-                d['nodes'][node] = HierarchalTensorGraph.serialize_callable(
-                    n.node) if (n.is_basenode) else n.to_json()
+        module = importlib.import_module(module_name)
+        class_ = getattr(module, class_name)
 
-            # store edges of connection to this node
-            d['edges'] = list(self.graph.graph.edges)
+        from_json = getattr(class_, "from_json", None)
 
-            # return dictionary
-            return d
-        except Exception as e:
-            # log for later debugging
-            print(traceback.format_exc())
-            return None
+        if (from_json):
 
-    def from_json(self, data):
+            # the graph_json contains a sub dictionary to process
+            if (issubclass(class_, HierarchalTensorGraph)):
+                node = class_.from_json(graph_dict)
+                return node
+
+            htg = HierarchalTensorGraph(
+                name=graph_dict['name'], node=class_.from_json(graph_dict['node']))
+
+            htg.inputs = TensorSpec.json_to_dict(graph_dict['inputs'])
+            htg.outputs = TensorSpec.json_to_dict(graph_dict['outputs'])
+
+            htg._inputs_map = graph_dict['_inputs_map']
+            htg._outputs_map = graph_dict['_outputs_map']
+
+            return htg
+        else:
+            raise Exception(f'from_json was not defined for class {class_name}')
+
+    @staticmethod
+    def from_json(graph_json):
         """
 
-        Enables the deserialization of the network graph represented in a JSON structure.
+        Enables the deserialization of the HTG network graph represented in a JSON structure. 
 
         Parameters:
         -----------
         data : dict
-             The JSON object to deserialize.
+             The JSON string to deserialize.
 
         """
-        try:
-            # get name of the current node from input dictionary
-            self.name = data['name']
 
-            # get node and graph from input dictionary
-            self.node = self if ('node' in data.keys(
-            ) and data['node'] == None) else HierarchalTensorGraph.deserialize_callable(data['node'])
-            self.graph = NetworkXGraph()
+        graph_dict = json.loads(graph_json)
 
-            # iterate through nodes in the graph and recursively deserialize them
-            for k, v in data['nodes'].items():
-                if isinstance(v, dict) and ('node' in v.keys()):
-                    htg = HierarchalTensorGraph(name=k)
-                    self.graph.add_node(k, htg=htg.from_json(v))
-                else:
-                    c = HierarchalTensorGraph.deserialize_callable(v)
-                    htg = HierarchalTensorGraph(
-                        name=k, node=c)
-                    self.graph.add_node(k, htg=htg)
+        # basenode
+        if (not graph_dict['node'] is None):
+            return HierarchalTensorGraph.basenode_from_json(graph_dict)
 
-            # add edges to the graph
-            self.graph.add_edges_from(data['edges'])
+        # graph
+        graph = HierarchalTensorGraph(name=graph_dict['name'])
 
-            # pick up other attributes of the node
-            self._inputs_map = data['_inputs_map']
-            self._outputs_map = data['_outputs_map']
-            self.inputs = data['inputs']
-            self.outputs = data['outputs']
-            self.output = data['output']
+        # input and output
+        graph.inputs = TensorSpec.json_to_dict(graph_dict['inputs'])
+        graph.outputs = TensorSpec.json_to_dict(graph_dict['outputs'])
 
-            return self
-        except Exception as e:
-            # log for later debugging
-            print(traceback.format_exc())
-            return None
+        # nodes
+        for node_json in graph_dict['nodes']:
+            graph.add_node(HierarchalTensorGraph.from_json(node_json))
+
+        # edges
+        graph.add_edges_from(graph_dict['edges'])
+
+        # input and output map
+        graph._inputs_map = graph_dict['inputs_map']
+        graph._outputs_map = graph_dict['outputs_map']
+
+        return graph
 
     @staticmethod
     def get_name(obj) -> str:
@@ -326,7 +331,6 @@ class HierarchalTensorGraph(TensorGraph):
             if not isinstance(outputs_map, dict):
                 raise ImproperTensorGraphError('outputs_map must be a dict')
             self[node]._outputs_map = outputs_map
-
 
     def search(self, name: str, partial: bool = False) -> dict:
         """
@@ -401,7 +405,9 @@ class HierarchalTensorGraph(TensorGraph):
         """
         return HierarchalTensorGraph(lambda x: x, name)
 
-    def get_node(self, node: Union[str, Callable, TensorGraph]) -> 'HierarchalTensorGraph':
+    # TODO: Type hinting of HierarchicalTensorGraph is not working
+
+    def get_node(self, node: Union[str, Callable, TensorGraph]):
         """Wrap the given node in a HTG and add to its graph if necessary.
 
         Parameters
