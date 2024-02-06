@@ -147,7 +147,8 @@ def test_soil_moisture_model():
     htg = HierarchalTensorGraph(
         node=sm_model(),
         name='SM',
-        inputs=inputs
+        inputs=inputs,
+        outputs={f: TensorSpec((None,1)) for f in OUT}
     )
     
     # Create, compile, fit
