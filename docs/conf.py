@@ -62,6 +62,8 @@ autodoc_mock_imports = [
     'scipy',
     'zarr',
     'psutil',
+    'seaborn',
+    'tlz',
     'crest_cpu',
 ]
 
@@ -76,3 +78,4 @@ napoleon_google_docstring = True
 napoleon_use_ivar = True
 napoleon_include_init_with_doc = True
 
+nbsphinx_allow_errors = True
