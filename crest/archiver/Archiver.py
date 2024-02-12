@@ -195,7 +195,7 @@ class Archiver(BaseAbstract):
                         # resolution to the smallest range among the datafiles        
                         finest_coordinate = {k: val[val <= finest_max[k]] for k, val in finest_coordinate.items()}
                         finest_coordinate = {k: val[val >= finest_min[k]] for k, val in finest_coordinate.items()}
-
+                        print(finest_coordinate)
                         out_datafile = xr.Dataset(coords=finest_coordinate)
 
                     # if the specific datafile must be data schema, 
@@ -568,6 +568,10 @@ class Archiver(BaseAbstract):
         # output dataset
         p_dt_dict = self._match_coords(p_dt_dict)
 
+        # handle the cases that only one row exists
+        if np.sum([len(v.shape) for v in p_dt_dict.values()]) == 0.:
+            p_dt_dict = {k: v[np.newaxis] for k, v in p_dt_dict.items()}
+                
         # specify the pred_val attribute by the new predictions
         # if the pred_val is empty.
         if isinstance(self.pred_val, bool):
