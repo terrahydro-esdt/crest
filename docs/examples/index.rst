@@ -46,6 +46,7 @@ Soil Moisture Demo
    batcher_demo
    data_loader_demo
    metrics_demo
+   mnist_demo
    cifar_demo
    archiver_demo
    soil_moisture_demo
