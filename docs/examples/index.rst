@@ -17,21 +17,18 @@ A demo of the batcher package
 
 A demo of the data loader package
 
-| **mnist_demo**
+| **metrics_demo**
 
-An end-to-end demo of CREST using the MNIST dataset
+A demo of the CREST metrics
+
 
 | **cifar_demo**
 
-CIFAR demo (needs description)
-
-| **climetlab_demo**
-
-CLIMETLAB demo (needs description)
+We use CREST to load/train/predict with the CIFAR-10 dataset
 
 | **archiver_demo**
 
-ARCHIVER demo (needs description)
+The Archiver class is responsible for inserting the model predictions into an xarray dataset at the correct coordinates and save the result to disk.
 
 .. toctree::
    :maxdepth: 1
@@ -41,7 +38,7 @@ ARCHIVER demo (needs description)
    HTG_algebra
    batcher_demo
    data_loader_demo
-   mnist_demo
+   metrics_demo
    cifar_demo
-   climetlab_demo
    archiver_demo
+   soil_moisture_demo
