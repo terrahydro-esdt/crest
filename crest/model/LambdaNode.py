@@ -6,11 +6,31 @@ import traceback
 import crest.model.HierarchalTensorGraph as HierarchalTensorGraph
 
 class LambdaNode(HierarchalTensorGraph):
+    """
+    LambdaNode is a wrapper around a lambda function that allows for
+    individuals to define a custom basenode of type HierarchalTensorGraph. 
+    This allows for easy saving and loading of basenodes with lambda functions
+    within the CREST framework.
+
+    Args:
+        node: The lambda function to be wrapped
+        name: The name of the node
+        inputs: A dictionary of the input tensor specs
+        outputs: A dictionary of the output tensor specs
+    """
     def __init__(self, node, name: None | str = None, inputs: dict = {}, outputs: dict = {}):
         super().__init__(node=node, name=name,
                          inputs=inputs, outputs=outputs)
 
     def to_json(self):
+        """
+        Creates a JSON string of the LambdaNode.
+        Uses marhsal library and base64 encoding to 
+        encode the lambda function.
+
+        Returns:
+            str: A JSON string of the LambdaNode
+        """
         func_serial = marshal.dumps(self.node.__code__)
         func_json = base64.b64encode(func_serial).decode('utf-8')
 
@@ -27,6 +47,17 @@ class LambdaNode(HierarchalTensorGraph):
 
     @staticmethod
     def from_json(lambda_json):
+        """
+        Create a LambdaNode from a JSON string.
+        Uses marhsal library and base64 encoding to
+        decode the lambda function.
+
+        Args:
+            lambda_json (str): A JSON string of the LambdaNode
+
+        Returns:
+            LambdaNode: A LambdaNode object
+        """
         lambda_dict = lambda_json
         if (isinstance(lambda_json, str)):
             lambda_dict = json.loads(lambda_json)
@@ -46,15 +77,28 @@ class LambdaNode(HierarchalTensorGraph):
         return ln
 
     def save(self, path='lambda.json'):
+        """
+        Saves the LambdaNode to a file.
+
+        Args:
+            path (str): The path to save the LambdaNode to
+        """
         lamnda_json = self.to_json()
         with open(path, 'w') as f:
             json.dump(lamnda_json, f)
             f.close()
 
-        return True
-
     @staticmethod
     def load(path='lambda.json'):
+        """
+        Loads a LambdaNode from a file.
+
+        Args:
+            path (str): The path to load the LambdaNode from
+        
+        Returns:
+            LambdaNode: A LambdaNode object
+        """
         lamnda_json = None
         with open(path, 'r') as f:
             lamnda_json = json.load(f)

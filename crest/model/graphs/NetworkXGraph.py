@@ -4,6 +4,12 @@ import copy
 
 
 class NetworkXGraph(BaseGraph):
+    """
+    NetworkXGraph is a wrapper around the NetworkX DiGraph class.
+    It is a subclass of BaseGraph and implements all of the methods
+    defined in BaseGraph. Basic graph operations are implemented
+    here. This is the graph utility of the HierarchalTensorGraph. 
+    """
 
     def __init__(self):
         self.graph = nx.DiGraph()
