@@ -26,7 +26,8 @@ class KerasNode(HierarchalTensorGraph):
     This allows for easy saving and loading of basenodes with keras models 
     and layers within the CREST framework. 
 
-    Args:
+    Parameters
+    ----------
         keras_obj: The keras model or layer to be wrapped
         name: The name of the node
         inputs: A dictionary of the input tensor specs
@@ -122,10 +123,12 @@ class KerasNode(HierarchalTensorGraph):
         """
         Checks the type of the given keras object and returns the corresponding KerasNodeType
 
-        Args:
+        Parameters
+        ----------
             obj: The keras object to check the type of
 
-        Returns:
+        Returns
+        -------
                 KerasNodeType: The type of the given keras object
         """
         if (isinstance(obj, keras.models.Sequential)):
@@ -142,7 +145,8 @@ class KerasNode(HierarchalTensorGraph):
         """
         Create JSON string of the KerasNode
 
-        Returns:
+        Returns
+        -------
             str: JSON string of the KerasNode
         """
         keras_json = self.__dict__.copy()
@@ -166,10 +170,12 @@ class KerasNode(HierarchalTensorGraph):
         """
         Create a KerasNode from a JSON string
 
-        Args:
+        Parameters
+        ----------
             keras_json: The JSON string to create the KerasNode from
         
-        Returns:
+        Returns
+        -------
             KerasNode: The KerasNode created from the JSON string
         """
         keras_dict = keras_json
@@ -194,7 +200,8 @@ class KerasNode(HierarchalTensorGraph):
         """
         Save the KerasNode to a file
 
-        Args:
+        Parameters
+        ----------
             path: The path to save the KerasNode to        
         """
         self.keras_obj.save(path)
@@ -204,7 +211,8 @@ class KerasNode(HierarchalTensorGraph):
         """
         Load a KerasNode from a file
 
-        Args:
+        Parameters
+        ----------
             path: The path to load the KerasNode from
         """
         model = keras.load_model(path)

@@ -45,7 +45,8 @@ class Metrics(object):
         is a custom metric. If the metric is a callable, it will be added to the
         list of callbacks.
 
-        Args:
+        Parameters
+        ----------
             metrics: A list of metrics for which callbacks are required
         """
         m_callbacks = []
@@ -80,7 +81,8 @@ class Metrics(object):
         """
         Register a custom metric with the given event and callback.
 
-        Args:
+        Parameters
+        ----------
             event: The event for which the callback is to be registered
             callback: The callback to be registered
         """
@@ -90,10 +92,12 @@ class Metrics(object):
         """
         Get the handler for the given event.
 
-        Args:
+        Parameters
+        ----------
             event: The event for which the handler is required
 
-        Returns:
+        Returns
+        -------
             The handler for the given event
         """
         for handler in self.handlers.get(event, []):
@@ -119,11 +123,13 @@ class Metrics(object):
         The RMSE is a measure of the differences between values predicted 
         by a model or an estimator and the values actually observed.
 
-        Args:
+        Parameters
+        ----------
             y_true: The true values
             y_pred: The predicted values
 
-        Returns:
+        Returns
+        -------
             The RMSE value
         """
         return (tf.sqrt(tf.reduce_mean(tf.pow(tf.subtract(y_true, y_pred), 2)))).numpy()
@@ -135,11 +141,13 @@ class Metrics(object):
         The Fluctuation Complexity is a measure of the complexity of a time series.
         It is calculated as the average of the Hurst exponent and 2.
 
-        Args:
+        Parameters
+        ----------
             y_true: The true values
             y_pred: The predicted values
 
-        Returns:
+        Returns
+        -------
             The Fluctuation Complexity value
         """
         return
@@ -175,11 +183,13 @@ class Metrics(object):
         Metric Entropy metric.
         The Metric Entropy is a measure of the entropy of a time series.
 
-        Args:
+        Parameters
+        ----------
             y_true: The true values
             y_pred: The predicted values
 
-        Returns:
+        Returns
+        -------
             The Metric Entropy value
         """
         import scipy.stats as stats
@@ -193,11 +203,13 @@ class Metrics(object):
         Relative Error metric.
         The Relative Error is a measure of the error in a model's predictions.
 
-        Args:
+        Parameters
+        ----------
             y_true: The true values
             y_pred: The predicted values
 
-        Returns:
+        Returns
+        -------
             The Relative Error value
         """
         result = tf.math.divide(tf.math.subtract(y_pred, y_true), y_true)
@@ -212,11 +224,13 @@ class Metrics(object):
         The Triple Collocation Error is a measure of the error in three
         independent measurements of the same quantity.
 
-        Args:
+        Parameters
+        ----------
             y_true: The true values
             y_pred: The predicted values
 
-        Returns:
+        Returns
+        -------
             The Triple Collocation Error value
         """
         return
@@ -229,11 +243,13 @@ class Metrics(object):
         The Nash-Sutcliffe Efficiency is a measure of the accuracy of a model
         in predicting values.
 
-        Args:
+        Parameters
+        ----------
             y_true: The true values
             y_pred: The predicted values
 
-        Returns:
+        Returns
+        -------
             The NSE value
         """
         denominator = tf.reduce_sum(tf.square(y_true - tf.reduce_mean(y_true)))
@@ -247,11 +263,13 @@ class Metrics(object):
         The log NSE is a measure of the accuracy of a model in predicting values.
         The log NSE increases the sensitivity to low flows.
 
-        Args:
+        Parameters
+        ----------
             y_true: The true values
             y_pred: The predicted values
 
-        Returns:
+        Returns
+        -------
             The NSE value in log space
         """
 
@@ -266,11 +284,13 @@ class Metrics(object):
         The MSE is a measure of the differences between values predicted
         by a model or an estimator and the values actually observed.
 
-        Args:
+        Parameters
+        ----------
             y_true: The true values
             y_pred: The predicted values
 
-        Returns:
+        Returns
+        -------
             The MSE value
         """
         return tf.reduce_mean(tf.pow(tf.subtract(y_true, y_pred), 2))
@@ -280,12 +300,14 @@ class Metrics(object):
         Kling-Gupta Efficiency (KGE) metric.
         The KGE is a measure of the accuracy of a model in predicting values.
 
-        Args:
+        Parameters
+        ----------
             y_true: The true values
             y_pred: The predicted values
             weights: The weights for the KGE components
 
-        Returns:
+        Returns
+        -------
             The KGE value
         """
         if len(y_true) < 2:
@@ -310,11 +332,13 @@ class Metrics(object):
         Logarithmic Kling-Gupta Efficiency (KGE) metric.
         The KGE is a measure of the accuracy of a model in predicting values.
 
-        Args:
+        Parameters
+        ----------
             y_true: The true values
             y_pred: The predicted values
 
-        Returns:
+        Return
+        ------
             The KGE value in log space
         """
         return tf.math.log(self.kge(y_true, y_pred))
@@ -325,11 +349,13 @@ class Metrics(object):
         The Pearson correlation coefficient is a measure of the linear correlation
         between two variables.
 
-        Args:
+        Parameters
+        ----------
             y_true: The true values
             y_pred: The predicted values
 
-        Returns:
+        Return
+        ------
             The Pearson correlation coefficient value
         """
         r, _ = stats.pearsonr(y_true, y_pred)
@@ -342,11 +368,13 @@ class Metrics(object):
         The alpha NSE is a fraction of the standard deviation of the predicted
         values to the standard deviation of the true values.
 
-        Args:
+        Parameters
+        ----------
             y_true: The true values
             y_pred: The predicted values
 
-        Returns:
+        Return
+        ------
             The Alpha-NSE value
         """
         return float(tf.math.reduce_std(y_pred) / tf.math.reduce_std(y_true))
@@ -358,11 +386,13 @@ class Metrics(object):
         and the mean of the true values, divided by the standard deviation of the
         true values.
 
-        Args:
+        Parameters
+        ----------
             y_true: The true values
             y_pred: The predicted values
 
-        Returns:
+        Return
+        ------
             The Beta-NSE value
         """
         return float((tf.reduce_mean(y_pred) - tf.reduce_mean(y_true)) / tf.math.reduce_std(y_true))
@@ -371,7 +401,8 @@ class Metrics(object):
         """
         The JSON representation of the Metrics class.
 
-        Return:
+        Return
+        ------
             str: The JSON representation of the Metrics class
         """
         registered_metrics = list(self.handlers.keys())
@@ -388,10 +419,12 @@ class Metrics(object):
         """
         Loads the Metrics class from a JSON representation.
 
-        Args:
+        Pameter
+        -------
             saved_dict: The JSON representation of the Metrics class
 
-        Return:
+        Return
+        ------
             Metrics: The Metrics class loaded from the JSON representation
         """
         saved_dict = jsonpickle.decode(saved_dict)

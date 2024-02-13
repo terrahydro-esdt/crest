@@ -12,7 +12,8 @@ class LambdaNode(HierarchalTensorGraph):
     This allows for easy saving and loading of basenodes with lambda functions
     within the CREST framework.
 
-    Args:
+    Parameters
+    ----------
         node: The lambda function to be wrapped
         name: The name of the node
         inputs: A dictionary of the input tensor specs
@@ -28,7 +29,8 @@ class LambdaNode(HierarchalTensorGraph):
         Uses marhsal library and base64 encoding to 
         encode the lambda function.
 
-        Returns:
+        Returns
+        -------
             str: A JSON string of the LambdaNode
         """
         func_serial = marshal.dumps(self.node.__code__)
@@ -52,10 +54,12 @@ class LambdaNode(HierarchalTensorGraph):
         Uses marhsal library and base64 encoding to
         decode the lambda function.
 
-        Args:
+        Parameters
+        ----------
             lambda_json (str): A JSON string of the LambdaNode
 
-        Returns:
+        Returns
+        -------
             LambdaNode: A LambdaNode object
         """
         lambda_dict = lambda_json
@@ -80,7 +84,8 @@ class LambdaNode(HierarchalTensorGraph):
         """
         Saves the LambdaNode to a file.
 
-        Args:
+        Parameters
+        ----------
             path (str): The path to save the LambdaNode to
         """
         lamnda_json = self.to_json()
@@ -93,10 +98,12 @@ class LambdaNode(HierarchalTensorGraph):
         """
         Loads a LambdaNode from a file.
 
-        Args:
+        Parameters
+        ----------
             path (str): The path to load the LambdaNode from
         
-        Returns:
+        Returns
+        -------
             LambdaNode: A LambdaNode object
         """
         lamnda_json = None
