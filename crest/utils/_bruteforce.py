@@ -494,7 +494,7 @@ def bruteforce_double(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
 
         n_loop1 = 0
         for _ in range(max(1, int(reps1))):
-            if (start2 < len(a1)):
+            if start2 < len(a1):
                 start1, mc, lc = loop(matches, start2, start1, a1lr, a2lr, skip2, steps, False)
                 n_match = n_match + mc
                 n_loop1 = n_loop1 + lc
@@ -504,7 +504,7 @@ def bruteforce_double(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
 
             n_loop2 = 0
             for _ in range(max(1, int(reps2))):
-                if (start1 < len(a2)):
+                if start1 < len(a2):
                     start2, mc, lc = loop(matches, start1, start2, a2lr, a1lr, skip1, steps, True)
                     n_match = n_match + mc
                     n_loop2 = n_loop2 + lc

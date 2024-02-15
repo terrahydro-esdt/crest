@@ -259,7 +259,8 @@ class SquareRoot(HierarchalTensorGraph):
     @staticmethod
     def from_json(json_obj):
         return SquareRoot()
-    
+
+
 class LogCustom():
 
     custom_lambda  = None

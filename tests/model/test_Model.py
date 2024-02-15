@@ -15,6 +15,7 @@ from crest.model.Model import Model
 from crest.data.loading import StructuredDataset,Dataset,Datafile
 from crest.data import Batcher
 
+
 @pytest.mark.integtest
 def test_soil_moisture_model():
     """ test a simple soil moisture model """ 
@@ -182,7 +183,8 @@ def test_soil_moisture_model():
  
     # Clean up
     shutil.rmtree(ROOT_PATH)
-    
+
+
 @pytest.mark.integtest
 def test_model():
     """ Basic test of model interfaces """
@@ -255,6 +257,7 @@ def test_model():
 
     bs.close()
 
+
 @pytest.mark.integtest
 def test_model_exhaust():
     """ Basic test of model interfaces """
@@ -323,6 +326,7 @@ def test_model_exhaust():
     assert np.array_equal(using_dict, using_bs)
 
     bs.close()
+
 
 @pytest.mark.integtest
 def test_deep_exhaust():

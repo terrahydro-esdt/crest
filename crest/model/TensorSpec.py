@@ -11,50 +11,50 @@ class TensorSpec(object):
 
         self.spec_dict = {}
 
-        if (len(specs) == 1 and isinstance(specs[0], TensorSpec)):
+        if len(specs) == 1 and isinstance(specs[0], TensorSpec):
             self.spec_dict['shape'] = self._modify_shape(specs[0].shape)
             self.spec_dict['dtype'] = specs[0].dtype
             self.spec_dict['name'] = specs[0].name
 
-        elif (len(specs) == 1 and hasattr(specs[0], 'type_spec') and isinstance(specs[0].type_spec, tf.TensorSpec)):
+        elif len(specs) == 1 and hasattr(specs[0], 'type_spec') and isinstance(specs[0].type_spec, tf.TensorSpec):
             self.spec_dict['shape'] = self._modify_shape(
                 specs[0].type_spec.shape)
             self.spec_dict['dtype'] = specs[0].type_spec.dtype.name
             self.spec_dict['name'] = specs[0].type_spec.name
 
-        elif (len(specs) == 1 and isinstance(specs[0], list)):
+        elif len(specs) == 1 and isinstance(specs[0], list):
             self.spec_dict['shape'] = self._modify_shape(specs[0])
             self.spec_dict['dtype'] = 'float32'
             self.spec_dict['name'] = None
 
-        elif (len(specs) == 1 and isinstance(specs[0], tuple)):
+        elif len(specs) == 1 and isinstance(specs[0], tuple):
             self.spec_dict['shape'] = self._modify_shape(specs[0])
             self.spec_dict['dtype'] = 'float32'
             self.spec_dict['name'] = None
 
-        elif (len(specs) == 1 and isinstance(specs[0], dict)):
+        elif len(specs) == 1 and isinstance(specs[0], dict):
             self.spec_dict['shape'] = self._modify_shape(specs[0]['shape'])
             self.spec_dict['dtype'] = specs[0]['dtype']
             self.spec_dict['name'] = specs[0]['name']
 
-        elif (len(specs) == 1 and isinstance(specs[0], tf.TensorSpec)):
+        elif len(specs) == 1 and isinstance(specs[0], tf.TensorSpec):
             self.spec_dict['shape'] = self._modify_shape(specs[0].shape)
             self.spec_dict['dtype'] = specs[0].dtype.name
             self.spec_dict['name'] = specs[0].name
 
         # specs is a tuple
-        elif (len(specs) >= 1):
+        elif len(specs) >= 1:
             self.spec_dict['shape'] = self._modify_shape(specs[0])
 
             # optional parameter
-            if (len(specs) >= 2):
+            if len(specs) >= 2:
                 self.spec_dict['dtype'] = specs[1]
             else:
                 # default to float32
                 self.spec_dict['dtype'] = 'float32'
 
             # optional parameter
-            if (len(specs) >= 3):
+            if len(specs) >= 3:
                 self.spec_dict['name'] = specs[2]
             else:
                 self.spec_dict['name'] = None
@@ -64,7 +64,7 @@ class TensorSpec(object):
                 'TensorSpec must be initialized with a tuple or dict')
 
     def _modify_shape(self, shape):
-        if (isinstance(shape, tf.TensorShape)):
+        if isinstance(shape, tf.TensorShape):
             return tuple(shape.as_list())
 
         return shape
@@ -104,7 +104,7 @@ class TensorSpec(object):
 
         str_json = {}
         for k, v in htg_dict.items():
-            if (v):
+            if v:
                 str_json[k] = TensorSpec(v).spec_dict
             else:
                 str_json[k] = None
@@ -118,7 +118,7 @@ class TensorSpec(object):
         htg_dict = {}
 
         for k, v in str_dict.items():
-            if (v):
+            if v:
                 htg_dict[k] = TensorSpec(v)
             else:
                 htg_dict[k] = None
@@ -128,9 +128,9 @@ class TensorSpec(object):
     def __eq__(self, other):
         same_keys = (self.specs.keys() == other.specs.keys())
 
-        if (same_keys):
-            if (self.specs['shape'] == tuple(other.specs['shape'])):
-                if (self.specs['dtype'] == other.specs['dtype']):
+        if same_keys:
+            if self.specs['shape'] == tuple(other.specs['shape']):
+                if self.specs['dtype'] == other.specs['dtype']:
                     return True
                 else:
                     return False

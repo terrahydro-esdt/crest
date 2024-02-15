@@ -52,25 +52,25 @@ class Metrics(object):
         m_callbacks = []
         try:
             # If metrics is not a list, make it a list
-            if (not isinstance(metrics, list)):
+            if not isinstance(metrics, list):
                 metrics = [metrics]
 
             # For each metric, check if it is a keras metric or a custom metric
             for m in metrics:
 
                 # If the metric is a string
-                if (isinstance(m, str)):
+                if isinstance(m, str):
                     keras_avail = tf.keras.metrics.get(m)
                     handler_avail = self.get_handler(m)
 
                     # If the metric is a keras metric, add it to the list of callbacks
-                    if ((not keras_avail == m) or callable(keras_avail)):
+                    if (not keras_avail == m) or callable(keras_avail):
                         m_callbacks.append(keras_avail)
-                    elif (not handler_avail is None):
+                    elif not handler_avail is None:
                         m_callbacks.append(handler_avail)
 
                 # If the metric is a callable, add it to the list of callbacks
-                elif (callable(m)):
+                elif callable(m):
                     self.register(m.__class__.__name__, m)
                     m_callbacks.append(m)
 
@@ -196,7 +196,7 @@ class Metrics(object):
         norm_entropy_true = stats.entropy(y_true) / tf.size(y_true)
         norm_entropy_pred = stats.entropy(y_pred) / tf.size(y_pred)
 
-        return (norm_entropy_true, norm_entropy_pred)
+        return norm_entropy_true, norm_entropy_pred
 
     def relative_error(self, y_true, y_pred):
         """
@@ -432,7 +432,7 @@ class Metrics(object):
         metrics = list(saved_dict.keys())
 
         for metric in metrics:
-            if (not metric in m.all):
+            if not metric in m.all:
                 m.register(metric, saved_dict[metric])
 
         return m

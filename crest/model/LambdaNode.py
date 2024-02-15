@@ -2,8 +2,8 @@ import marshal
 import base64
 import types
 import json
-import traceback
 import crest.model.HierarchalTensorGraph as HierarchalTensorGraph
+
 
 class LambdaNode(HierarchalTensorGraph):
     """
@@ -63,7 +63,7 @@ class LambdaNode(HierarchalTensorGraph):
             LambdaNode: A LambdaNode object
         """
         lambda_dict = lambda_json
-        if (isinstance(lambda_json, str)):
+        if isinstance(lambda_json, str):
             lambda_dict = json.loads(lambda_json)
 
         func_json = lambda_dict['node']

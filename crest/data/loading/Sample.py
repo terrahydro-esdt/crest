@@ -154,7 +154,7 @@ class Sample:#(BaseAbstract):
                         vals.append(data[feature][int(index[0])])
                     else: vals.append(data[feature_index][0])
                 else:
-                    if (feature_index not in self._features):
+                    if feature_index not in self._features:
                         feature, *index = (feature_index+'@0').split('@')
 
                         if feature in self._features:

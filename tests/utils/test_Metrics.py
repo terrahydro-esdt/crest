@@ -26,7 +26,7 @@ def sample_simple_data():
     obs = tf.convert_to_tensor(observed_data)
     pred = tf.convert_to_tensor(simulated_data)
 
-    return (observed_array, simulated_array, obs, pred)
+    return observed_array, simulated_array, obs, pred
 
 
 def sample_complex_data():
@@ -47,7 +47,7 @@ def sample_complex_data():
     obs = tf.convert_to_tensor(observed_data)
     pred = tf.convert_to_tensor(simulated_data)
 
-    return (observed_array, simulated_array, obs, pred)
+    return observed_array, simulated_array, obs, pred
 
 
 def test_relative_error():

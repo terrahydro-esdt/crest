@@ -23,12 +23,15 @@ def type_repr(val=None, T=None, _maxdepth=4):
 
     # Recurse on val if it's iterable (and not a str)
     if hasattr(val, '__iter__') and not isinstance(val, str) and _maxdepth:
-        recurse = partial(type_repr, T=T, _maxdepth=_maxdepth-1)
+        recurse = partial(type_repr, T=T, _maxdepth=_maxdepth - 1)
         try:
             item = next(iter(getattr(val, 'items', lambda: val)()))
-            if hasattr(val, 'items'): ele_type = ', '.join(map(recurse, item))
-            else:                     ele_type = recurse(item)
-        except:                       ele_type = '?'
+            if hasattr(val, 'items'):
+                ele_type = ', '.join(map(recurse, item))
+            else:
+                ele_type = recurse(item)
+        except:
+            ele_type = '?'
         return f'{container}[{ele_type}]'
     return container
 
@@ -43,38 +46,45 @@ def handle_generic(val, T):
     """ Swap generic TypeVar for val type """
     if isinstance(T, TypeVar) and len(T.__constraints__):
         raise NotImplementedError('TypeVar constraints not implemented')
-    if isinstance(T, TypeVar): T = T.__bound__ or type(val)
-    elif equal_tuples(val, T): T = tuple(map(handle_generic, val, T))
-    elif T is None:            T = type(None)
+    if isinstance(T, TypeVar):
+        T = T.__bound__ or type(val)
+    elif equal_tuples(val, T):
+        T = tuple(map(handle_generic, val, T))
+    elif T is None:
+        T = type(None)
     return T
 
 
 def istype(val, T):
     """ Recursively determine if value matches generic type T """
     # Cannot look inside iterators to verify types, as it would exhaust values
-    if isinstance(val, Iterator): 
+    if isinstance(val, Iterator):
         origin = get_origin(T) or T
-        types  = get_args(T)
-        if origin in [Union, UnionType]: 
+        types = get_args(T)
+        if origin in [Union, UnionType]:
             return any(istype(val, T) for T in types)
         return isinstance(val, origin)
 
     T = handle_generic(val, T)
 
     # Handle a tuple of types
-    if equal_tuples(val, T):   return all(map(istype, val, T))
-    elif isinstance(T, tuple): return False
+    if equal_tuples(val, T):
+        return all(map(istype, val, T))
+    elif isinstance(T, tuple):
+        return False
 
     # Try a simple type check, which fails if T is a parameterized generic
-    try:              return isinstance(val, T)
-    except TypeError: pass
+    try:
+        return isinstance(val, T)
+    except TypeError:
+        pass
 
     # Get origin type and parameterized types 
     origin = get_origin(T)
-    types  = get_args(T)
+    types = get_args(T)
 
     # Origin is just a union of types, so we can check for any valid
-    if origin in [Union, UnionType]: 
+    if origin in [Union, UnionType]:
         return any(istype(val, T) for T in types)
 
     # String with class name might be used in the class definition
@@ -103,14 +113,13 @@ class EnsureTypes:
     underlying object attributes when a callable object is wrapped.
 
     """
+
     def __init__(self, cls_obj: 'BaseAbstract', callable_obj: Callable):
         self._cls_repr = repr(cls_obj)
         self._callable = callable_obj
 
-
-    def __repr__(self): 
+    def __repr__(self):
         return f'{self._cls_repr}.{self._callable.__code__.co_name}'
-
 
     def __call__(self, *args, **kwargs):
         """ Wrap the function with an explicit type checker """
@@ -119,37 +128,36 @@ class EnsureTypes:
         function = self._callable
         annotate = function.__annotations__
         keyvalue = inspect.getcallargs(function, *args, **kwargs)
-        keyvalue|= {'return': function(*args, **kwargs)}
+        keyvalue |= {'return': function(*args, **kwargs)}
 
         # Iterate over all parameters and verify types match the annotations
         [self.verify_type(value, annotate[key], f'{self} parameter "{key}"')
-            for key, value in keyvalue.items() if key in annotate]
+         for key, value in keyvalue.items() if key in annotate]
         return keyvalue['return']
-
 
     def __getattr__(self, attr):
         """ Pass through attribute lookups to the underlying callable """
         return self if attr == '__call__' else getattr(self._callable, attr)
 
-
     @classmethod
     def wrap(cls, obj, obj_attr):
         """ Wrap the object attribute if valid, and return it otherwise """
         # 1) not EnsureTypes; 2) callable; 3) not bytecode; 4) annotated
-        if (  not isinstance(obj_attr, cls)
-              and callable(obj_attr)
-              and hasattr(obj_attr, '__code__')
-              and getattr(obj_attr, '__annotations__', {})):
+        if (not isinstance(obj_attr, cls)
+                and callable(obj_attr)
+                and hasattr(obj_attr, '__code__')
+                and getattr(obj_attr, '__annotations__', {})):
             return cls(obj, obj_attr)
         return obj_attr
-
 
     @classmethod
     def verify_type(cls, obj, annotation, label):
         """ Raise TypeError if obj type does not match the given annotation """
-        try: invalid_type = not istype(obj, annotation)
-        except TypeError: raise TypeError(f'{label} annotation ' +
-            f'"{annotation}" is not a valid type annotation')
+        try:
+            invalid_type = not istype(obj, annotation)
+        except TypeError:
+            raise TypeError(f'{label} annotation ' +
+                            f'"{annotation}" is not a valid type annotation')
 
         if invalid_type:
             req = type_repr(T=annotation)
@@ -158,18 +166,16 @@ class EnsureTypes:
             raise TypeError(msg)
 
 
-
 class BaseAbstract(ABC):
     """ Base class for any other 'Base' classes. """
-    def __repr__(self): 
-        return self.__class__.__name__
 
+    def __repr__(self):
+        return self.__class__.__name__
 
     def __getattribute__(self, name):
         """ Provides type checking for class functions that use annotations """
         attr = object.__getattribute__(self, name)
         return attr if name.startswith('__') else EnsureTypes.wrap(self, attr)
-
 
     def __new__(cls, *args, **kwargs):
         """ Called whenever a new inheriting class object is instantiated """
@@ -178,23 +184,23 @@ class BaseAbstract(ABC):
         cls._refs[id(obj)] = obj
         return obj
 
-
     def __init_subclass__(cls, *args, **kwargs):
         """ Called when an inheriting class is defined.
             Wraps __init__ with type checking, and allows 
             __post_init__ functions in inheriting classes.
         """
+
         def init_decorator(init):
             def __init__(self, *args, **kwargs):
                 init(self, *args, **kwargs)
                 # Only call for the final __init__ in the inheritance stack
                 if type(self) is cls: self.__post_init__()
+
             return __init__
 
         type_checked = EnsureTypes.wrap(cls, cls.__init__)
         cls.__init__ = init_decorator(type_checked)
         cls._refs = weakref.WeakValueDictionary()
-
 
     def __post_init__(self):
         """ Allows inheriting classes to define a function that runs after
@@ -202,12 +208,10 @@ class BaseAbstract(ABC):
             children to perform some operations after initialization """
         pass
 
-
     @classmethod
     def load(cls, obj, *args, **kwargs):
         """ Wrap an object with the parent class if it isn't already one """
         return obj if isinstance(obj, cls) else cls(obj, *args, **kwargs)
-
 
     @classmethod
     def interactive(cls, env={}, style='monokai'):
@@ -218,12 +222,12 @@ class BaseAbstract(ABC):
             info = inspect.getframeinfo(frame)
             name = info.filename
             line = info.lineno + 1
-            size = len(str(line-1))
+            size = len(str(line - 1))
 
             getline = lambda i: f'{i:<{size}}{linecache.getline(name, i)}'
-            context = f'{name}:{line-1} called interactive:'
-            divider = ''.join(['-']*len(context))
-            srccode = ''.join(map(getline, range(max(0, line-n_lines), line)))
+            context = f'{name}:{line - 1} called interactive:'
+            divider = ''.join(['-'] * len(context))
+            srccode = ''.join(map(getline, range(max(0, line - n_lines), line)))
             return '\n'.join(['', divider, context, '', srccode, divider, ''])
 
         # Include variables from the frame this function was called in
@@ -232,10 +236,10 @@ class BaseAbstract(ABC):
 
         # Define flag to indicate exception in the console
         global forcestop
-        forcestop = False 
+        forcestop = False
 
         # Show code context as the console banner
-        try:                   
+        try:
             banner = get_context(callframe)
 
             # Add syntax highlighting
@@ -246,10 +250,12 @@ class BaseAbstract(ABC):
                 from pygments.formatters import Terminal256Formatter
                 srcfmt = Terminal256Formatter(style=get_style_by_name(style))
                 banner = highlight(banner, Python3Lexer(), srcfmt)
-            except ImportError: pass
-        except Exception as e: banner = f'Error retrieving code context: {e}'
+            except ImportError:
+                pass
+        except Exception as e:
+            banner = f'Error retrieving code context: {e}'
 
-        try:   
+        try:
             # Import readline if available to pull interpreter command history
             import readline, rlcompleter
             variables = locals() | variables
@@ -258,7 +264,7 @@ class BaseAbstract(ABC):
             # https://tiswww.case.edu/php/chet/readline/readline.html
             readline.set_completer(rlcompleter.Completer(variables).complete)
             readline.parse_and_bind('tab: complete')
-            
+
             # Read previous command history
             readline.read_history_file()
 
@@ -283,11 +289,12 @@ class BaseAbstract(ABC):
                         terminal._history.set_history_cursor(index)
                         terminal.process_keyevent_queue.pop(-1)
                         return terminal.process_keyevent(*args, **kwargs)
-                    except Exception as e: _handle_exc(e)
+                    except Exception as e:
+                        _handle_exc(e)
 
                 try:
                     # Get the current index in history and total length
-                    terminal = readline.rl.mode # e.g. pyreadline3.modes.emacs
+                    terminal = readline.rl.mode  # e.g. pyreadline3.modes.emacs
                     hist_len = len(terminal._history.history)
                     hist_idx = terminal._history.get_history_cursor() + 1
 
@@ -300,7 +307,8 @@ class BaseAbstract(ABC):
                         if curr_cmd == prev_cmd:
                             set_cursor = partial(_set_cursor, hist_idx - 1)
                             terminal.process_keyevent_queue.append(set_cursor)
-                except Exception as e: _handle_exc(e)
+                except Exception as e:
+                    _handle_exc(e)
 
                 # Otherwise just accept the line as usual
                 return terminal.accept_line(*args, **kwargs)
@@ -309,20 +317,23 @@ class BaseAbstract(ABC):
             # from history without needing to press up for each command 
             readline.rl.mode._bind_key('return', follow_history)
 
-        except ImportError: pass
+        except ImportError:
+            pass
 
         # Start the console
         banner += '\nCTRL-Z resumes execution, quit() halts execution'
-        try: code.InteractiveConsole(variables).interact(banner=banner)
+        try:
+            code.InteractiveConsole(variables).interact(banner=banner)
 
         # Ensure we write the command history after exiting
         finally:
-            try:                   readline.write_history_file()
-            except Exception as e: print(f'Failed to write history: {e}')
+            try:
+                readline.write_history_file()
+            except Exception as e:
+                print(f'Failed to write history: {e}')
 
         # Raise a SystemExit if the exception flag was set while running
         if forcestop: raise SystemExit
-
 
     @classmethod
     def verify_type(cls, obj, annotation, label=''):

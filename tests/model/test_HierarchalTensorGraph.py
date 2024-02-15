@@ -312,7 +312,7 @@ def compare_htg(node_1, node_2):
     for k in node_1.inputs.keys():
         inps = (TensorSpec(node_1.inputs[k]).spec_dict == TensorSpec(node_2.inputs[k]).spec_dict) and inps
 
-    if (not inps):
+    if not inps:
         print(node_1.inputs.keys(), node_2.inputs.keys())
         print(TensorSpec(node_1.inputs['x']).spec_dict, node_2.inputs['x'].spec_dict)
     
@@ -321,22 +321,22 @@ def compare_htg(node_1, node_2):
     for k in node_1.outputs.keys():
         outs = (TensorSpec(node_1.outputs[k]).spec_dict == TensorSpec(node_2.outputs[k]).spec_dict) and outs
 
-    if (not outs):
+    if not outs:
         print(TensorSpec(node_1.outputs['y']).spec_dict, node_2.outputs['y'].spec_dict)
 
     edge = node_1.edges == node_2.edges
 
-    if (not edge):
+    if not edge:
         print(node_1.edges, node_2.edges)
 
     inpmap = node_1._inputs_map == node_2._inputs_map
 
-    if (not inpmap):
+    if not inpmap:
         print(node_1._inputs_map, node_2._inputs_map)
 
     outmap = node_1._outputs_map == node_2._outputs_map
 
-    if (not outmap):
+    if not outmap:
         print(node_1._outputs_map, node_2._outputs_map)
 
     return inps and outs and edge and inpmap and outmap

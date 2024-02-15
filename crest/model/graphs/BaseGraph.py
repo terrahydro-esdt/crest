@@ -79,11 +79,6 @@ class BaseGraph(ABC):
             
     @property
     @abstractmethod
-    def is_empty(self):
-         raise NotImplementedError
-
-    @property
-    @abstractmethod
     def adj(self):
         raise NotImplementedError
 

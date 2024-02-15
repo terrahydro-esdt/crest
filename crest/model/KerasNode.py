@@ -1,8 +1,5 @@
 from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
-import tensorflow.keras as keras
-import traceback
 from enum import Enum
-from pydoc import locate
 import tensorflow as tf
 import tensorflow.keras as keras
 from .TensorSpec import TensorSpec
@@ -42,16 +39,16 @@ class KerasNode(HierarchalTensorGraph):
         self.type = self._check_type(keras_obj)
 
         # If the keras object is a model
-        if (self.type == KerasNodeType.MODEL):
+        if self.type == KerasNodeType.MODEL:
             self.keras_obj = keras_obj
 
             # Input and output must be dictionaries
             # TODO: Double check that this is the correct way to handle inputs and outputs
-            if (not isinstance(self.keras_obj.input, dict)):
+            if not isinstance(self.keras_obj.input, dict):
                 raise ImproperModelError(
                     'Keras model must take type dictionary for inputs')
 
-            if (not isinstance(self.keras_obj.output, dict)):
+            if not isinstance(self.keras_obj.output, dict):
                 raise ImproperModelError(
                     'Keras model must take type dictionary for outputs')
 
@@ -64,15 +61,15 @@ class KerasNode(HierarchalTensorGraph):
                             }
 
         # If the keras object is a layer
-        elif (self.type == KerasNodeType.LAYER):
+        elif self.type == KerasNodeType.LAYER:
 
             # Input and output must be defined and only have one key-value pair.
             # This is the assumption of this library. 
-            if (not inputs or not outputs):
+            if not inputs or not outputs:
                 raise Exception(
                     'KerasNode must be initialized with inputs and outputs for keras layers')
 
-            if (len(inputs.keys()) > 1 or len(outputs.keys()) > 1):
+            if len(inputs.keys()) > 1 or len(outputs.keys()) > 1:
                 raise Exception(
                     'KerasNode must be initialized with only one input or output for keras layers')
 
@@ -89,14 +86,14 @@ class KerasNode(HierarchalTensorGraph):
             self.keras_obj = keras.Model(inputs={key_x: x}, outputs={key_y: y})
 
         # If the keras object is a sequential model
-        elif (self.type == KerasNodeType.SEQUENTIAL):
+        elif self.type == KerasNodeType.SEQUENTIAL:
 
             # Input and output must be defined and only have one key-value pair.
-            if (not inputs or not outputs):
+            if not inputs or not outputs:
                 raise Exception(
                     'KerasNode must be initialized with inputs and outputs for keras layers')
 
-            if (len(inputs.keys()) > 1 or len(outputs.keys()) > 1):
+            if len(inputs.keys()) > 1 or len(outputs.keys()) > 1:
                 raise Exception(
                     'KerasNode must be initialized with only one input or output for keras layers')
 
@@ -131,11 +128,11 @@ class KerasNode(HierarchalTensorGraph):
         -------
                 KerasNodeType: The type of the given keras object
         """
-        if (isinstance(obj, keras.models.Sequential)):
+        if isinstance(obj, keras.models.Sequential):
             return KerasNodeType.SEQUENTIAL
-        elif (isinstance(obj, keras.Model)):
+        elif isinstance(obj, keras.Model):
             return KerasNodeType.MODEL
-        elif (isinstance(obj, keras.layers.Layer)):
+        elif isinstance(obj, keras.layers.Layer):
             return KerasNodeType.LAYER
         else:
             raise ImproperModelError(
@@ -179,7 +176,7 @@ class KerasNode(HierarchalTensorGraph):
             KerasNode: The KerasNode created from the JSON string
         """
         keras_dict = keras_json
-        if (isinstance(keras_json, str)):
+        if isinstance(keras_json, str):
             keras_dict = json.loads(keras_json)
 
         model = keras.models.model_from_json(keras_dict['node'])

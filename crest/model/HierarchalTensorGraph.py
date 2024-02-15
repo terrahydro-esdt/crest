@@ -52,11 +52,11 @@ class HierarchalTensorGraph(TensorGraph):
     """
 
     def __init__(self,
-        node    : None | Callable = None,
-        name    : None | str = None,
-        inputs  : dict = {},
-        outputs : dict = {},
-    ):
+                 node: None | Callable = None,
+                 name: None | str = None,
+                 inputs: dict = {},
+                 outputs: dict = {},
+                 ):
 
         self.name = name or HierarchalTensorGraph.get_name(node)
         self.node = node or self
@@ -78,12 +78,11 @@ class HierarchalTensorGraph(TensorGraph):
             raise ImproperTensorGraphError(message)
 
         # check that node is not an HTG
-        if(isinstance(node,HierarchalTensorGraph)):
+        if isinstance(node, HierarchalTensorGraph):
             message = "A HierarchalTensorGraph can not be used to"
             message += "create a basenode (i.e., node cannot be a"
             message += "HierarchalTensorGraph)"
             raise ImproperTensorGraphError(message)
-
 
     def __iter__(self):
         """ Iterate through all nodes within the HTG """
@@ -108,15 +107,15 @@ class HierarchalTensorGraph(TensorGraph):
     def equals(self, node: Callable) -> bool:
         """ Check if the given node is the same as this node """
 
-        if (self.node and self.is_basenode):
-            if (node and node.is_basenode):
+        if self.node and self.is_basenode:
+            if node and node.is_basenode:
 
                 # compare names because it is impossible to compared callables
-                return (self.node.name == node.name)
+                return self.node.name == node.name
             else:
                 return False
 
-        if (self.node.graph.is_isomorphic(node.graph.graph)):
+        if self.node.graph.is_isomorphic(node.graph.graph):
             return True
 
         return False
@@ -128,7 +127,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         to_json = getattr(self.node, "to_json", None)
 
-        if (to_json):
+        if to_json:
             node_json = self.__dict__.copy()
 
             node_json.pop('graph')
@@ -154,8 +153,8 @@ class HierarchalTensorGraph(TensorGraph):
 
         graph_info = {}
 
-        if (self.is_basenode):
-            if (not type(self) == HierarchalTensorGraph):
+        if self.is_basenode:
+            if not type(self) == HierarchalTensorGraph:
                 raise Exception(
                     'Base node <%s> is not of type HierarchalTensorGraph' % self.name)
 
@@ -181,7 +180,7 @@ class HierarchalTensorGraph(TensorGraph):
         # nodes
         graph_info['nodes'] = []
         for name, node in self.nodes.items():
-            if (not name in ['input', 'output']):
+            if not name in ['input', 'output']:
                 try:
                     graph_info['nodes'].append(node.to_json())
                 except:
@@ -207,7 +206,7 @@ class HierarchalTensorGraph(TensorGraph):
         """
 
         graph_dict = graph_json
-        if (isinstance(graph_json, str)):
+        if isinstance(graph_json, str):
             graph_dict = json.loads(graph_json)
 
         class_name = graph_dict['node_class']
@@ -218,10 +217,10 @@ class HierarchalTensorGraph(TensorGraph):
 
         from_json = getattr(class_, "from_json", None)
 
-        if (from_json):
+        if from_json:
 
             # the graph_json contains a sub dictionary to process
-            if (issubclass(class_, HierarchalTensorGraph)):
+            if issubclass(class_, HierarchalTensorGraph):
                 node = class_.from_json(graph_dict)
                 return node
 
@@ -254,7 +253,7 @@ class HierarchalTensorGraph(TensorGraph):
         graph_dict = json.loads(graph_json)
 
         # basenode
-        if (not graph_dict['node'] is None):
+        if not graph_dict['node'] is None:
             return HierarchalTensorGraph.basenode_from_json(graph_dict)
 
         # graph
@@ -298,12 +297,11 @@ class HierarchalTensorGraph(TensorGraph):
             return value or str(obj)
         return HierarchalTensorGraph.get_name(value)
 
-
     def rename_io(self,
-        inputs_map  : None | dict = None,
-        outputs_map : None | dict = None,
-        node        : None | str | tuple  | TensorGraph = None,
-    ):
+                  inputs_map: None | dict = None,
+                  outputs_map: None | dict = None,
+                  node: None | str | tuple | TensorGraph = None,
+                  ):
         """
             Sets any renaming of input/output tensors needed.
 
@@ -354,7 +352,7 @@ class HierarchalTensorGraph(TensorGraph):
         if isinstance(name, tuple):
             return dict(filter(lambda t: name == t[0], self.all_nodes.items()))
 
-        if (partial):
+        if partial:
             return dict(filter(lambda s: name in ''.join(s[0]), self.all_nodes.items()))
         return dict(filter(lambda s: name in s[0], self.all_nodes.items()))
 
@@ -375,13 +373,17 @@ class HierarchalTensorGraph(TensorGraph):
     @property
     def sources(self) -> list:
         """ Nodes with no incoming edges """
+
         def is_source(node): return self.graph.in_degree(node) == 0
+
         return list(filter(is_source, self.graph.nodes))
 
     @property
     def sinks(self) -> list:
         """ Nodes with no outgoing edges """
+
         def is_sink(node): return self.graph.out_degree(node) == 0
+
         return list(filter(is_sink, self.graph.nodes))
 
     @property
@@ -524,7 +526,7 @@ class HierarchalTensorGraph(TensorGraph):
         """ Add input/output edges and (optionally) input/output specs to a node """
         self.add_edge('input', node)
         self.add_edge(node, 'output')
-        if hasattr(node, 'input_spec'):  self.get_node(node).inputs  = node.input_spec
+        if hasattr(node, 'input_spec'):  self.get_node(node).inputs = node.input_spec
         if hasattr(node, 'output_spec'): self.get_node(node).outputs = node.output_spec
 
     def remove_node(self, node):
@@ -599,17 +601,17 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        if (isinstance(source, str)):
+        if isinstance(source, str):
             if source == 'output':
                 message = f'Output cannot be used as a source'
                 raise ImproperTensorGraphError(message)
 
-        if (isinstance(target, str) & (self.node is self)):
+        if isinstance(target, str) & (self.node is self):
             if target == 'input':
                 message = f'Input cannot be used as a target'
                 raise ImproperTensorGraphError(message)
 
-        if (self.node is not self):
+        if self.node is not self:
             message = f'It is not permitted to add edges to a basenode,'
             message += 'i.e. an HTG initialized with a callable node'
             raise ImproperTensorGraphError(message)
@@ -664,7 +666,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        if (isinstance(path, HierarchalTensorGraph)):
+        if isinstance(path, HierarchalTensorGraph):
             htg = list(filter(lambda x: x == path, self.all_nodes.values()))
             if htg:
                 if len(htg) > 1:
@@ -676,7 +678,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         if not path:
             return self
-        if (isinstance(path, str)):
+        if isinstance(path, str):
             # if path == self.name: return self
             # return i/o nodes
             if path in ['input'] and (path not in self.graph):
@@ -886,7 +888,7 @@ class HierarchalTensorGraph(TensorGraph):
         """
 
         # if not a basenode do some error checking
-        if (not self.is_basenode):
+        if not self.is_basenode:
 
             # check that i/o exist
             if not all([b in self.graph for b in ['input', 'output']]):
@@ -897,13 +899,13 @@ class HierarchalTensorGraph(TensorGraph):
             sources = list(filter(lambda x: x != 'input', self.sources))
             if sources:
                 message = f'Only input can be a source node in the graph. '
-                message += f'Found sources {[ self[i] for i in sources]}'
+                message += f'Found sources {[self[i] for i in sources]}'
                 raise ImproperTensorGraphError(message)
 
             sinks = list(filter(lambda x: x != 'output', self.sinks))
             if sinks:
                 message = f'Only output can be a sink in the graph. '
-                message += f'Found sinks {[ self[i] for i in sinks]}'
+                message += f'Found sinks {[self[i] for i in sinks]}'
                 raise ImproperTensorGraphError(message)
 
         # apply feature map
@@ -912,12 +914,12 @@ class HierarchalTensorGraph(TensorGraph):
         # Removes 'input' or 'output' nesting of keys
         def flatten(d):
             # find 'input' or 'output' items that are dicts
-            keys = [k for k in ['input','output']
-                    if k in d and isinstance(d[k],dict)]
+            keys = [k for k in ['input', 'output']
+                    if k in d and isinstance(d[k], dict)]
 
             # If found, flatten
-            if(keys):
-                return [d.update(d.pop(k, {}))for k in ['input','output']] and d
+            if (keys):
+                return [d.update(d.pop(k, {})) for k in ['input', 'output']] and d
 
             # otherwise, return original
             return d
@@ -927,14 +929,17 @@ class HierarchalTensorGraph(TensorGraph):
             return self.feature_map(self.node(flatten(_X)), 'output')
 
         # Recursive case: traverse graph in reverse, from output to input
-        def nodes(name): return dict(
-            self.graph.in_edges(name))  # All input nodes
+        def nodes(name):
+            return dict(
+                self.graph.in_edges(name))  # All input nodes
 
-        def search(name): return dict(
-            map(traverse, nodes(name)))  # Traverse all inputs
+        def search(name):
+            return dict(
+                map(traverse, nodes(name)))  # Traverse all inputs
 
-        def output(name): return self[name](
-            search(name) or _X)  # Get output for a node
+        def output(name):
+            return self[name](
+                search(name) or _X)  # Get output for a node
 
         traverse = cache(lambda name: (name, self[name](search(name) or _X)))
         return self.feature_map(flatten(dict(map(traverse, self.sinks))), 'output')
@@ -1013,7 +1018,7 @@ class HierarchalTensorGraph(TensorGraph):
                     g = self.expand_graph_node(node, g)
 
             if expand_nodes == 'all':
-                while (is_not_all_empty(g)):
+                while is_not_all_empty(g):
                     nodes = g.get_node_attributes('htg')
                     for k, node in nodes.items():
                         if not node.is_basenode:
