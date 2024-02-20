@@ -12,6 +12,14 @@ crest.base.BaseAbstract module
    :undoc-members:
    :show-inheritance:
 
+crest.base.BaseNode module
+--------------------------
+
+.. automodule:: crest.base.BaseNode
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 crest.base.BaseSet module
 -------------------------
 

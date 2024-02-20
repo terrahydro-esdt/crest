@@ -65,6 +65,7 @@ autodoc_mock_imports = [
     'psutil',
     'seaborn',
     'tlz',
+    'jsonpickle',
     'crest_cpu',
 ]
 
