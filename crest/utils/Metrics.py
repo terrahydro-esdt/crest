@@ -70,8 +70,12 @@ class Metrics(object):
                         m_callbacks.append(handler_avail)
 
                 # If the metric is a callable, add it to the list of callbacks
-                elif callable(m):
-                    self.register(m.__class__.__name__, m)
+                elif (callable(m)):
+                    if (type(m).__name__ == 'function'):
+                        self.register(m.__name__, m)
+                    else:
+                        self.register(m.__class__.__name__, m)
+
                     m_callbacks.append(m)
 
         finally:

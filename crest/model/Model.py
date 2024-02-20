@@ -37,9 +37,9 @@ class Model(BaseModel):
         # Allow for TensorSpec to be converted to Keras Input
         self.inputs = {}
         for k, v in self.graph.inputs.items():
-            if not v is None:
-                if isinstance(v, TensorSpec):
-                    v = v.keras
+            if (not v is None):
+                if (isinstance(v, TensorSpec)):
+                    v = v.tf
 
                 self.inputs[k] = tf.keras.Input(type_spec=v, name=k)
             else:
