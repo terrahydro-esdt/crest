@@ -8,3 +8,7 @@ __pycache__
 .pytest_cache
 .ipynb_checkpoints
 .DS_Store
+*.zarr
+crest_cache/
+soil_moisture/
+*.pkl
