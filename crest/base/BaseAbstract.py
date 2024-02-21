@@ -211,16 +211,24 @@ class BaseAbstract(ABC):
 
     @classmethod
     def interactive(cls, env={}, style='monokai'):
-        """ Start an interactive console wherever this function is called """
+        """ Start an interactive console wherever this function is called. 
+
+        Parameters
+        ----------
+        env   : dict
+            Any extra objects to include in the terminal environment.
+        style : str
+            Pygments style name for code highlighting.
+
+        """
 
         def get_context(frame, n_lines=20):
             """ Get code context at given frame """
-            info = inspect.getframeinfo(frame)
-            name = info.filename
-            line = info.lineno + 1
+            name = frame.f_code.co_filename 
+            line = frame.f_lineno + 1 
             size = len(str(line-1))
 
-            getline = lambda i: f'{i:<{size}}{linecache.getline(name, i)}'
+            getline = lambda i: f'{i:<{size}} {linecache.getline(name, i)}'
             context = f'{name}:{line-1} called interactive:'
             divider = ''.join(['-']*len(context))
             srccode = ''.join(map(getline, range(max(0, line-n_lines), line)))
@@ -246,8 +254,32 @@ class BaseAbstract(ABC):
                 from pygments.formatters import Terminal256Formatter
                 srcfmt = Terminal256Formatter(style=get_style_by_name(style))
                 banner = highlight(banner, Python3Lexer(), srcfmt)
+
+                # On windows, for some versions of python, ANSI escape codes
+                # are not processed by the console. A solution is to run 
+                # `os.system('')`, which will indirectly set the windows
+                # terminal ENABLE_VIRTUAL_TERMINAL_PROCESSING flag - thus
+                # enabling the parsing of control sequences. For more details,
+                # see https://stackoverflow.com/a/64222858
+                if os.name == 'nt': 
+                    os.system('')
+
+                    # Another potential source of breaking ANSI codes can 
+                    # come from using colorama, or importing anything that
+                    # uses colorama on initialization (e.g. tqdm). The fix
+                    # for this is to call `colorama.deinit()`; however it
+                    # has been noted that although calling this fixes ANSI
+                    # ANSI code parsing in some cases, it can also break it
+                    # in other cases. To that end, the following code is 
+                    # left commented out by default; users can choose to 
+                    # enable it or use it as reference when fixing an issue
+                    # in their specific environment. For more details, see
+                    # https://github.com/tqdm/tqdm/issues/678#issuecomment-70662706
+                    # import colorama
+                    # colorama.deinit()
+                    
             except ImportError: pass
-        except Exception as e: banner = f'Error retrieving code context: {e}'
+        except Exception as e: banner = f'\n{e}\n{traceback.format_exc()}'
 
         try:   
             # Import readline if available to pull interpreter command history
