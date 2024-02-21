@@ -15,7 +15,7 @@ import pandas as pd
 import logging 
 
 from ._bruteforce import *
-from .lexsort import lexsort
+# from .lexsort import lexsort
 from .entropy import entropy  
 
 
@@ -571,9 +571,18 @@ def find_neighbors(
                 q = q[:, cols]
                 skip_dims = skip_dims[cols]
 
-                b, b_orig = lexsort(b)
-                q, q_orig = lexsort(q)
+                # Can't use lexsort until numba's recursion support is fixed
+                # b, b_orig = lexsort(b)
+                # q, q_orig = lexsort(q)
+                # br = (br[:, b_orig] if br.ndim > 1 and br.shape[1] > 1 else br)[..., cols]
+                # qr = (qr[:, q_orig] if qr.ndim > 1 and qr.shape[1] > 1 else qr)[..., cols]
 
+                b_orig = np.lexsort(b.T[::-1])
+                q_orig = np.lexsort(q.T[::-1])
+                # b_orig = np.arange(len(b))[bo]
+                # q_orig = np.arange(len(q))[qo]
+                b = b[b_orig]
+                q = q[q_orig]
                 br = (br[:, b_orig] if br.ndim > 1 and br.shape[1] > 1 else br)[..., cols]
                 qr = (qr[:, q_orig] if qr.ndim > 1 and qr.shape[1] > 1 else qr)[..., cols]
 
@@ -653,19 +662,20 @@ def find_neighbors(
 
         # Reorder the columns correctly 
         if debug: print('\nReordering table...')
-        table = table[:, np.argsort(order)[np.argsort(grid_order)]].T
+        table = table[:, np.argsort(order)[np.argsort(grid_order)]]
 
         # Random sample ordering
         if shuffle:
             if debug: print('Shuffling...')
-            i = np.arange(table.shape[1])
+            i = np.arange(len(table))
             np.random.shuffle(i)
-            table = table[:,i]
+            table = table[i].T
 
         # Lexigraphic sort to have consistent return order
         else:
             if debug: print('Lexsorting table...')
-            lexsort(table.T)
+            # lexsort(table); table = table.T
+            table = table[np.lexsort(table.T[::-1])].T
 
     if debug: print('Finishing...')
     if use_implode:
