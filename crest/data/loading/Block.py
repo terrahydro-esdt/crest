@@ -415,22 +415,16 @@ class Block(BaseAbstract):
         def expand(axis: int, bound: np.ndarray) -> np.ndarray:
             """ Add dimensions to each bound based on the dim it applies to """
             return np.expand_dims(bound, list(set(range(1, ndims+1)) - {axis}))
-        
+
         def collapse(axis: int, coord: np.ndarray) -> np.ndarray:
             """ Collapse the coord grid into its respective coord vector """
-            return coord[(0,)*(coord.ndim-axis-1) + (slice(None),) + (0,)*axis]
+            return coord[(0,)*(coord.ndim-axis-2) + (slice(None),) + (0,)*axis].T
 
-        def gen_coords(coords: np.ndarray) -> dict[str, np.ndarray]:
-            """ Generate a coordinates vector dictionary for xarray """
-            # Flatten coordinate grids into the coordinate vectors, then cast
-            coord_vectors = starmap(collapse, enumerate(coords.T))
-            coord_vectors = map(cast_dtype, keep_dims, coord_vectors)
-            return dict(zip(keep_dims, coord_vectors)) | {'features': features}
-
-        def gen_xr_dict(data: np.ndarray, coords: np.ndarray) -> dict:
+        def gen_xr_dict(data: np.ndarray, *coords: np.ndarray) -> dict:
             """ Generate the xr.Dataset dict for given data/coord windows """            
             return { 'data'   : list(map(cast_dtype, features, data)), 
-                     'coords' : gen_coords(coords) } | xr_kwargs
+                     'coords' : dict(zip(keep_dims, coords)) | {
+                        'features': features} } | xr_kwargs
 
         # Expand the bounds so they can be broadcast over the full data/coords
         windows = tuple(starmap(expand, enumerate(bounds, 1)))
@@ -446,9 +440,13 @@ class Block(BaseAbstract):
         # Remove virtual dimension from coordinate features
         coords = coords[..., sorted(map(self.dims.index, orig_dims[1:]))]
 
+        # Extract coordinate vectors
+        coord_vectors = starmap(collapse2, enumerate(coords.T))
+        coord_vectors = list(map(cast_dtype, keep_dims, coord_vectors))
+
         # Transpose data to the correct order: [samples, features, ...]
         data = data.transpose(tuple(map((['']+keep_dims).index, ['']+orig_dims)))
 
         # Extract final window dictionaries to use for Sample initialization 
-        windows = dict(zip(indices, map(gen_xr_dict, data, coords)))
+        windows = dict(zip(indices, map(gen_xr_dict, data, *coord_vectors)))
         return [[windows[i] for i in np.atleast_1d(idx)] for idx in matches]
