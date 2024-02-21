@@ -249,16 +249,10 @@ class Batcher:
         with handler: self.debug(f'Called close from: {origin}')
 
         # Signal threads/workers to exit
-        if '_exit_flag' in self.__dict__:
+        if ('_exit_flag' in self.__dict__) and not self._exit:
             # In certain situations, Event.set can deadlock
             #  (see https://stackoverflow.com/a/73341335/22210498)
-            # Here, we set a timer to halt everything if _exit_flag.set
-            #   does not return in a reasonable amount of time.
-            with handler: 
-                timer = threading.Timer(5, lambda: os._exit(0))
-                timer.start()
-                self._exit_flag.set()
-                timer.cancel()
+            with handler: self._exit_flag.set()
 
         # Close background thread managers
         for key in ['_block_tasks', '_batch_tasks']:
@@ -383,7 +377,10 @@ class Batcher:
                 # Further discussion: https://stackoverflow.com/a/74923483
                 for batch in self._generator: yield batch
 
-        except KeyboardInterrupt: self.info('KeyboardInterrupt')
+        except KeyboardInterrupt: 
+            self.info('KeyboardInterrupt')
+            self.close(timeout=0, origin='KeyboardInterrupt') 
+            raise
         except Exception as e:    self.error(f'Exception: {e}\n{traceback.format_exc()}')
 
         # Clean up resources once all batches have been yielded
@@ -470,7 +467,6 @@ class Batcher:
             self.info('KeyboardInterrupt')
             self.close(timeout=0, origin='KeyboardInterrupt') 
             raise
-            # raise SystemExit
 
         except Exception as e:
             message = f'\nException: {e}\n{traceback.format_exc()}\n'
@@ -720,30 +716,36 @@ class Batcher:
         with Stopwatch(f'Generated {n_batch} batches', self.info):
             if self.shuffle: self.random.shuffle(samples)
 
-            # Use a lock to ensure _remainder is handled by only one thread
-            with self._remainder_lock:
-                if 0 < len(self._remainder) < self.batch_size:
-                    samples = np.append(self._remainder, samples, 0)
-
+            # Faster, but discards any (samples % batch_size) samples
+            if False:
                 splits  = np.arange(self.batch_size, len(samples), self.batch_size)
-                samples = np.array_split(samples, splits)
-                if len(samples[-1]) < self.batch_size:
-                    *samples, self._remainder = samples
-                else: self._remainder = []
-                # # Calculate attributes to create a view of the samples
-                # n_group = len(samples) // self.batch_size
-                # i_size  = samples.itemsize
-                # shape   = (n_group, self.batch_size) + samples.shape[1:]
-                # strides = (self.batch_size*i_size,i_size) + samples.strides[1:]
+                list(map(self._queue.put, map(self._finalize_batch, np.array_split(samples, splits))))
+                samples = []
+            else:
+                # Use a lock to ensure _remainder is handled by only one thread
+                with self._remainder_lock:
+                    if 0 < len(self._remainder) < self.batch_size:
+                        samples = np.append(self._remainder, samples, 0)
 
-                # # Save any remainder samples
-                # self._remainder = samples[n_group * self.batch_size:]
+                    splits  = np.arange(self.batch_size, len(samples), self.batch_size)
+                    samples = np.array_split(samples, splits)
+                    if len(samples[-1]) < self.batch_size:
+                        *samples, self._remainder = samples
+                    else: self._remainder = []
+                    # # Calculate attributes to create a view of the samples
+                    # n_group = len(samples) // self.batch_size
+                    # i_size  = samples.itemsize
+                    # shape   = (n_group, self.batch_size) + samples.shape[1:]
+                    # strides = (self.batch_size*i_size,i_size) + samples.strides[1:]
 
-            # Create a strided view and create the batch feature dicts
-            # samples = as_strided(samples, shape=shape, strides=strides)
-            # list(map(self._queue.put, map(self._finalize_batch, samples)))
-            # list(map(self._queue.send, map(self._finalize_batch, samples)))
-            samples = list(map(self._finalize_batch, samples))
+                    # # Save any remainder samples
+                    # self._remainder = samples[n_group * self.batch_size:]
+
+                # Create a strided view and create the batch feature dicts
+                # samples = as_strided(samples, shape=shape, strides=strides)
+                # list(map(self._queue.put, map(self._finalize_batch, samples)))
+                # list(map(self._queue.send, map(self._finalize_batch, samples)))
+                samples = list(map(self._finalize_batch, samples))
 
             # Signal that the first batch set is now completed
             if not self._first: self._first_done.set()
@@ -895,6 +897,7 @@ class Batcher:
                 '_exit_flag'     : exit_flag,
                 '_first_done'    : first_done,
                 '_subset_blocks' : sub_blocks,
+                '_queue'         : queue,
             })
 
             # When duplicate is set, generate new randomness per process
