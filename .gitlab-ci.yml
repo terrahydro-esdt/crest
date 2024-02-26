@@ -1,5 +1,10 @@
 image: continuumio/miniconda3:latest
 
+variables:
+  PIP: python3 -m pip
+  SPHINX: python3 -m sphinx -W --keep-going --color
+
+
 before_script:
     # Switch to using libmamba solver:
     #   https://www.anaconda.com/blog/conda-is-fast-now
@@ -21,7 +26,7 @@ pages:
     - source activate crest_doc
     - pip install --upgrade pip
     - pip install sphinx_rtd_theme
-    - sphinx-build -b html docs public
+    - $SPHINX -b html docs public
   artifacts:
     paths:
     - public

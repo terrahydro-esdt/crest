@@ -1,41 +1,32 @@
 Examples
 =========
 
-| **HTG_overview**
+| **HTG Overview**
+| Overview of the CREST Hierarchal Tensor Graph
 
-Overview of the CREST Hierarchal Tensor Graph
+| **HTG Algebra**
+| Basic HTG computations
 
-| **HTG_algebra**
+| **Using the Batcher**
+| A demo of the batcher package
 
-Basic HTG computations
+| **Using the Data Loader**
+| A demo of the data loader package
 
-| **batcher_demo**
+| **The Metrics Package**
+| A demo of the CREST metrics
 
-A demo of the batcher package
+| **The MNIST Demo**
+| We use CREST to load/train/predict with the MNIST dataset
 
-| **data_loader_demo**
+| **The CIFAR Demo**
+| We use CREST to load/train/predict with the CIFAR-10 dataset
 
-A demo of the data loader package
+| **Using the Archiver**
+| The Archiver class is responsible for inserting the model predictions into an xarray dataset at the correct coordinates and save the result to disk.
 
-| **metrics_demo**
-
-A demo of the CREST metrics
-
-| **mnist_demo**
-
-We use CREST to load/train/predict with the MNIST dataset
-
-| **cifar_demo**
-
-We use CREST to load/train/predict with the CIFAR-10 dataset
-
-| **archiver_demo**
-
-The Archiver class is responsible for inserting the model predictions into an xarray dataset at the correct coordinates and save the result to disk.
-
-| **soil_moisture_demo**
-
-Soil Moisture Demo
+| **Working with Soil Moisture Data**
+| Soil Moisture Demo
 
 .. toctree::
    :maxdepth: 1
