@@ -23,10 +23,11 @@ extensions = [
     'sphinx.ext.autodoc',  # autodocument
     'sphinx.ext.napoleon',  # google and numpy doc string support
     'sphinx.ext.mathjax',  # latex rendering of equations using MathJax
+    "sphinx_autodoc_typehints",
+    "sphinx.ext.doctest",
     'nbsphinx',  # for direct embedding of jupyter notebooks into sphinx docs
     'nbsphinx_link'  # to be able to include notebooks from outside of the docs folder
 ]
-#    "sphinx_autodoc_typehints",
 #    "sphinx.ext.doctest",
 #    "sphinx.ext.intersphinx",
 #    "sphinx.ext.viewcode",
@@ -46,27 +47,28 @@ autodoc_mock_imports = [
     'pytest',
     'matplotlib',
     'tqdm',
+    'zarr',
     'pandas',
     'numpy',
-    'numba',
     'fsspec',
     'xarray',
+    'sparse',
+    'pyarrow',
     'networkx',
+    'ipykernel',
     'dask',
     'bottleneck',
     'cloudpickle',
-    'pyarrow',
-    'sparse',
     'ipywidgets',
-    'sklearn',
-    'polars',
-    'scipy',
-    'zarr',
-    'psutil',
     'seaborn',
-    'tlz',
+    'sklearn',
+    'scipy',
     'jsonpickle',
-    'crest_cpu',
+    'crick',
+    'pyreadline3',
+    'polars',
+    'numba',
+    'tlz',
 ]
 
 # -- Options for HTML output -------------------------------------------------
@@ -80,4 +82,5 @@ napoleon_google_docstring = True
 napoleon_use_ivar = True
 napoleon_include_init_with_doc = True
 
-nbsphinx_allow_errors = True
+nbsphinx_kernel_name = 'python3'
+nbsphinx_execute = 'never'
