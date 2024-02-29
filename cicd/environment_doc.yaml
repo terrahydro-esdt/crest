@@ -1,6 +1,6 @@
 # Hard requirements for running documentation generator (sphinx)
 # WARNING: Keep this up-to-date!
-name: autodoc
+name: crest_doc
 channels:
  - conda-forge
  - defaults
