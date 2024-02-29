@@ -1,43 +1,49 @@
 Examples
-=========
+========
 
-| **HTG Overview**
-| Overview of the CREST Hierarchal Tensor Graph
+CREST Fundamentals
+------------------
 
-| **HTG Algebra**
-| Basic HTG computations
+The Hierarchal Tensor Graph (HTG) is the core object in CREST where the Earth System Model (ESM) is encoded and specified.
 
-| **Using the Batcher**
-| A demo of the batcher package
+In this section we include examples that show how to use the `CREST HTG`_ and how to perform basic `HTG computations`_.
 
-| **Using the Data Loader**
-| A demo of the data loader package
+.. _CREST HTG: HTG_overview.nblink
 
-| **The Metrics Package**
-| A demo of the CREST metrics
+.. _HTG computations: HTG_algebra.nblink
 
-| **The MNIST Demo**
-| We use CREST to load/train/predict with the MNIST dataset
+The HTG `Keras Node`_ class implements a wrapper around a Keras model or layer and the HTG `Lambda Node`_ class implements a wrapper around a lambda function.
 
-| **The CIFAR Demo**
-| We use CREST to load/train/predict with the CIFAR-10 dataset
+.. _Keras Node: HTG_keras.nblink
 
-| **Using the Archiver**
-| The Archiver class is responsible for inserting the model predictions into an xarray dataset at the correct coordinates and save the result to disk.
+.. _Lambda Node: HTG_lambda.nblink
 
-| **Working with Soil Moisture Data**
-| Soil Moisture Demo
 
-.. toctree::
-   :maxdepth: 1
-   :caption: Contents:
+Batch processing is a technique of processing large volumes of data in groups or batches, rather than individually or continuously. The `batcher demo`_ shows how this is done in CREST. Additionally, the `data loader package`_ is responsible for loading data from single or multiple sources.
 
-   HTG_overview
-   HTG_algebra
-   batcher_demo
-   data_loader_demo
-   metrics_demo
-   mnist_demo
-   cifar_demo
-   archiver_demo
-   soil_moisture_demo
+.. _batcher demo: batcher_demo.nblink
+
+.. _data loader package: data_loader_demo.nblink
+
+Metrics are quantitative measures that help evaluate the effectiveness and reliability of models. This is implemented in the `CREST metrics`_ class.
+
+.. _CREST metrics: metrics_demo.nblink
+
+The `Archiver`_ class is responsible for inserting the model predictions into an xarray dataset at the correct coordinates and save the results to disk.
+
+.. _Archiver: archiver_demo.nblink
+
+Applications
+------------
+
+One can use CREST to load/train/predict with the well-known `MNIST dataset`_ and well as the with the `CIFAR-10 dataset`_.
+
+.. _MNIST dataset: mnist_demo.nblink
+
+.. _CIFAR-10 dataset: cifar_demo.nblink
+
+
+The `Soil Moisture Demo`_ is an end-to-end worflow that shows how to use CREST to build/train a model using soil moisture data.
+
+.. _Soil Moisture Demo: soil_moisture_demo.nblink
+

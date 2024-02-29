@@ -7,9 +7,11 @@ import datetime
 import sys
 import os
 
-sys.path.insert(0, os.path.abspath('.'))
-sys.path.insert(0, os.path.abspath('..'))
+# sys.path.insert(0, os.path.abspath('../crest'))
+# sys.path.insert(0, os.path.abspath('..'))
+# sys.path.insert(0, os.path.abspath('.'))
 
+print(sys.path)
 # -- Project information -----------------------------------------------------
 about = {}
 with open('../crest/__about__.py', "r") as fp:
@@ -20,14 +22,26 @@ release = about["__version__"]
 
 # -- General configuration ---------------------------------------------------
 extensions = [
-    'sphinx.ext.autodoc',  # autodocument
-    'sphinx.ext.napoleon',  # google and numpy doc string support
-    'sphinx.ext.mathjax',  # latex rendering of equations using MathJax
-    "sphinx_autodoc_typehints",
+    "sphinx.ext.duration",
     "sphinx.ext.doctest",
+    "sphinx.ext.autodoc",
+    "sphinx.ext.autosummary",
+    # "sphinx.ext.intersphinx",
     'nbsphinx',  # for direct embedding of jupyter notebooks into sphinx docs
     'nbsphinx_link'  # to be able to include notebooks from outside of the docs folder
 ]
+
+# extensions = [
+#     'sphinx.ext.autosummary',
+#     # "sphinx.ext.viewcode",
+#     'sphinx.ext.autodoc',  # autodocument
+#     'sphinx.ext.napoleon',  # google and numpy doc string support
+#     'sphinx.ext.mathjax',  # latex ssrendering of equations using MathJax
+#     "sphinx_autodoc_typehints",
+#     "sphinx.ext.doctest",
+#     'nbsphinx',  # for direct embedding of jupyter notebooks into sphinx docs
+#     'nbsphinx_link'  # to be able to include notebooks from outside of the docs folder
+# ]
 #    "sphinx.ext.doctest",
 #    "sphinx.ext.intersphinx",
 #    "sphinx.ext.viewcode",
