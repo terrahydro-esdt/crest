@@ -12,12 +12,13 @@ In this section we include examples that show how to use the `CREST HTG`_ and ho
 
 .. _HTG computations: HTG_algebra.nblink
 
-The HTG `Keras Node`_ class implements a wrapper around a Keras model or layer and the HTG `Lambda Node`_ class implements a wrapper around a lambda function.
+The HTG `Keras Node`_ class implements a wrapper around a `Keras` model or layer and the HTG `Lambda Node`_ class implements a wrapper around a `lambda` function. In CREST we can also `serialize`_ an HTG network graph as a JSON string.
 
 .. _Keras Node: HTG_keras.nblink
 
 .. _Lambda Node: HTG_lambda.nblink
 
+.. _serialize: HTG_tofromJSON.nblink
 
 Batch processing is a technique of processing large volumes of data in groups or batches, rather than individually or continuously. The `batcher demo`_ shows how this is done in CREST. Additionally, the `data loader package`_ is responsible for loading data from single or multiple sources.
 
@@ -29,7 +30,7 @@ Metrics are quantitative measures that help evaluate the effectiveness and relia
 
 .. _CREST metrics: metrics_demo.nblink
 
-The `Archiver`_ class is responsible for inserting the model predictions into an xarray dataset at the correct coordinates and save the results to disk.
+The `Archiver`_ class is responsible for inserting the model predictions into an `xArray` dataset at the correct coordinates and save the results to disk.
 
 .. _Archiver: archiver_demo.nblink
 

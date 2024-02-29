@@ -7,11 +7,9 @@ import datetime
 import sys
 import os
 
-# sys.path.insert(0, os.path.abspath('../crest'))
-# sys.path.insert(0, os.path.abspath('..'))
-# sys.path.insert(0, os.path.abspath('.'))
+sys.path.insert(0, os.path.abspath('.'))
+sys.path.insert(0, os.path.abspath('..'))
 
-print(sys.path)
 # -- Project information -----------------------------------------------------
 about = {}
 with open('../crest/__about__.py', "r") as fp:
@@ -22,28 +20,14 @@ release = about["__version__"]
 
 # -- General configuration ---------------------------------------------------
 extensions = [
-    "sphinx.ext.duration",
+    'sphinx.ext.autodoc',  # autodocument
+    'sphinx.ext.napoleon',  # google and numpy doc string support
+    'sphinx.ext.mathjax',  # latex rendering of equations using MathJax
     "sphinx.ext.doctest",
-    "sphinx.ext.autodoc",
-    "sphinx.ext.autosummary",
-    # "sphinx.ext.intersphinx",
+    "sphinx_autodoc_typehints",
     'nbsphinx',  # for direct embedding of jupyter notebooks into sphinx docs
     'nbsphinx_link'  # to be able to include notebooks from outside of the docs folder
 ]
-
-# extensions = [
-#     'sphinx.ext.autosummary',
-#     # "sphinx.ext.viewcode",
-#     'sphinx.ext.autodoc',  # autodocument
-#     'sphinx.ext.napoleon',  # google and numpy doc string support
-#     'sphinx.ext.mathjax',  # latex ssrendering of equations using MathJax
-#     "sphinx_autodoc_typehints",
-#     "sphinx.ext.doctest",
-#     'nbsphinx',  # for direct embedding of jupyter notebooks into sphinx docs
-#     'nbsphinx_link'  # to be able to include notebooks from outside of the docs folder
-# ]
-#    "sphinx.ext.doctest",
-#    "sphinx.ext.intersphinx",
 #    "sphinx.ext.viewcode",
 
 templates_path = ['_templates']
@@ -61,28 +45,26 @@ autodoc_mock_imports = [
     'pytest',
     'matplotlib',
     'tqdm',
-    'zarr',
     'pandas',
     'numpy',
+    'numba',
     'fsspec',
     'xarray',
-    'sparse',
-    'pyarrow',
     'networkx',
-    'ipykernel',
     'dask',
     'bottleneck',
     'cloudpickle',
+    'pyarrow',
+    'sparse',
     'ipywidgets',
-    'seaborn',
     'sklearn',
-    'scipy',
-    'jsonpickle',
-    'crick',
-    'pyreadline3',
     'polars',
-    'numba',
+    'scipy',
+    'zarr',
+    'psutil',
+    'seaborn',
     'tlz',
+    'jsonpickle',
 ]
 
 # -- Options for HTML output -------------------------------------------------
@@ -96,5 +78,6 @@ napoleon_google_docstring = True
 napoleon_use_ivar = True
 napoleon_include_init_with_doc = True
 
+nbsphinx_allow_errors = True
 nbsphinx_kernel_name = 'python3'
 nbsphinx_execute = 'never'
