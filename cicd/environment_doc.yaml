@@ -1,6 +1,6 @@
 # Hard requirements for running documentation generator (sphinx)
 # WARNING: Keep this up-to-date!
-name: crest_doc
+name: autodoc
 channels:
  - conda-forge
  - defaults
@@ -18,4 +18,3 @@ dependencies:
      - sphinx_rtd_theme
      - sphinx-design
      - nbsphinx
-     - nbsphinx-link

@@ -3,7 +3,7 @@ In-depth
 
 .. warning::
 
-    This section is very much work in progress!
+   This section is very much work in progress!
 
 Describe CREST components in-depth
 

@@ -16,5 +16,6 @@ The API reference contains detailed descriptions of the CREST classes, functions
    crest.archiver
    crest.base
    crest.data
+   crest.data_server
    crest.model
    crest.utils
