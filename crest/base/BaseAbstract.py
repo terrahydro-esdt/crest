@@ -106,6 +106,7 @@ def istype(val, T):
         return all(all(map(istype, v, types)) for v in elems)
 
 
+
 class EnsureTypes:
     """Ensure type annotations are followed, raising TypeError if not.
 
@@ -118,8 +119,10 @@ class EnsureTypes:
         self._cls_repr = repr(cls_obj)
         self._callable = callable_obj
 
+
     def __repr__(self):
         return f'{self._cls_repr}.{self._callable.__code__.co_name}'
+
 
     def __call__(self, *args, **kwargs):
         """ Wrap the function with an explicit type checker """
@@ -135,9 +138,11 @@ class EnsureTypes:
          for key, value in keyvalue.items() if key in annotate]
         return keyvalue['return']
 
+
     def __getattr__(self, attr):
         """ Pass through attribute lookups to the underlying callable """
         return self if attr == '__call__' else getattr(self._callable, attr)
+
 
     @classmethod
     def wrap(cls, obj, obj_attr):
@@ -149,6 +154,7 @@ class EnsureTypes:
                 and getattr(obj_attr, '__annotations__', {})):
             return cls(obj, obj_attr)
         return obj_attr
+
 
     @classmethod
     def verify_type(cls, obj, annotation, label):
@@ -166,16 +172,19 @@ class EnsureTypes:
             raise TypeError(msg)
 
 
+
 class BaseAbstract(ABC):
     """ Base class for any other 'Base' classes. """
 
     def __repr__(self):
         return self.__class__.__name__
 
+
     def __getattribute__(self, name):
         """ Provides type checking for class functions that use annotations """
         attr = object.__getattribute__(self, name)
         return attr if name.startswith('__') else EnsureTypes.wrap(self, attr)
+
 
     def __new__(cls, *args, **kwargs):
         """ Called whenever a new inheriting class object is instantiated """
@@ -183,6 +192,7 @@ class BaseAbstract(ABC):
         obj = super().__new__(cls)
         cls._refs[id(obj)] = obj
         return obj
+
 
     def __init_subclass__(cls, *args, **kwargs):
         """ Called when an inheriting class is defined.
@@ -202,16 +212,19 @@ class BaseAbstract(ABC):
         cls.__init__ = init_decorator(type_checked)
         cls._refs = weakref.WeakValueDictionary()
 
+
     def __post_init__(self):
         """ Allows inheriting classes to define a function that runs after
             the __init__ method; mainly useful for Base classes to force
             children to perform some operations after initialization """
         pass
 
+
     @classmethod
     def load(cls, obj, *args, **kwargs):
         """ Wrap an object with the parent class if it isn't already one """
         return obj if isinstance(obj, cls) else cls(obj, *args, **kwargs)
+
 
     @classmethod
     def interactive(cls, env={}, style='monokai'):
@@ -379,6 +392,7 @@ class BaseAbstract(ABC):
 
         # Raise a SystemExit if the exception flag was set while running
         if forcestop: raise SystemExit
+
 
     @classmethod
     def verify_type(cls, obj, annotation, label=''):
