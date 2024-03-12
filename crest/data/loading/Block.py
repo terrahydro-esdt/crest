@@ -104,9 +104,9 @@ class Block(BaseAbstract):
         """ Return a Stopwatch function for benchmarking """
         debug = print if not hasattr(self, 'logger') else self.logger.debug
         return lambda label, log=debug: Stopwatch(
-            prefix=f'\t\t\t{self}.{label}',
-            logger=log,
-            silent=not hasattr(self, 'logger'),
+            message = f'\t\t\t{self}.{label}',
+            logger  = log,
+            silent  = not hasattr(self, 'logger'),
         )
 
 
@@ -441,7 +441,7 @@ class Block(BaseAbstract):
         coords = coords[..., sorted(map(self.dims.index, orig_dims[1:]))]
 
         # Extract coordinate vectors
-        coord_vectors = starmap(collapse2, enumerate(coords.T))
+        coord_vectors = starmap(collapse, enumerate(coords.T))
         coord_vectors = list(map(cast_dtype, keep_dims, coord_vectors))
 
         # Transpose data to the correct order: [samples, features, ...]

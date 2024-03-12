@@ -56,9 +56,9 @@ class Blockset(BaseSet):
     def benchmark(self):
         """ Return a Stopwatch function for benchmarking """
         return lambda label, log=self.logger.debug: Stopwatch(
-            prefix=f'\t\tBlockset.{label}',
-            logger=log,
-            silent=not self.timing,
+            message = f'\t\tBlockset.{label}',
+            logger  = log,
+            silent  = not self.timing,
         )
 
 
@@ -69,7 +69,7 @@ class Blockset(BaseSet):
 
         # Benchmark timing for data loading / neighbor finding
         with self.benchmark('find_matches') as timer:
-            timer.prefix += ' | 100% of time spent loading data'
+            timer.message += ' | 100% of time spent loading data'
 
             # Fast return when there are no valid windows for a block
             with self.benchmark('fast_invalid_check'):
@@ -99,13 +99,13 @@ class Blockset(BaseSet):
                 matches, counts = find_neighbors(
                     self.valid_coords, 
                     self.valid_resolution,
-                    logger=self.logger if self.timing else None,
-                    shuffle=self.shuffle,
+                    logger  = self.logger if self.timing else None,
+                    shuffle = self.shuffle,
                 )
 
             complete_time = time.time() - timer.start['time']
             loading_pct   = (loading_time / complete_time) * 100
-            timer.prefix  = timer.prefix.replace('100', f'{loading_pct:.0f}')
+            timer.message = timer.message.replace('100', f'{loading_pct:.0f}')
 
         # Return if there aren't any matches
         if counts.size < 1: return da.from_array(meta)
