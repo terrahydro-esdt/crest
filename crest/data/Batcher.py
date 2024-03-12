@@ -17,6 +17,7 @@ import multiprocessing.synchronize
 import multiprocessing.queues
 import multiprocessing as mp
 import threading, _thread
+# import tensorflow as tf
 import dask.array as da
 import pickle as pkl
 import numpy as np
@@ -141,7 +142,7 @@ class Batcher:
     """
 
     def __init__(self,
-        dataset    : Union[Dataset, StructuredDataset],
+        dataset    : Union[Dataset, StructuredDataset, list[Dataset]],
         batch_size : int,
         features   : list | None = None,
         workers    : int    = 2,
@@ -181,6 +182,9 @@ class Batcher:
 
         # If multiprocessing, fail quickly when dataset can't be pickled
         if self.workers: self._is_picklable()
+
+        # One worker per dataset in the list
+        if isinstance(dataset, list): self.workers = len(dataset)
 
 
     def __getstate__(self):
@@ -413,11 +417,16 @@ class Batcher:
                 self._first_done.clear()
                 self._exit_flag.clear()
 
+            if isinstance(self.dataset, list) and isinstance(self.dataset[0], Dataset):
+                dataset = self.dataset[getattr(self, '_pidx', 0)]
+                if getattr(self, '_pidx', 0) == 1: self.continuous = False
+            else: dataset = self.dataset
+
             # Samples is a list of dask.Delayed objects or a crest Dataset
-            if hasattr(self.dataset, 'generate_samples'):
+            if hasattr(dataset, 'generate_samples'):
                 self.debug('Generating dataset blocks...')
                 with Stopwatch(logger=self.info) as timer:
-                    blocks = self.dataset.generate_samples(**{
+                    blocks = dataset.generate_samples(**{
                         'blocksize' : self.blocksize,
                         'numblocks' : self.numblocks,
                         'compute'   : False, 
@@ -425,8 +434,8 @@ class Batcher:
                         'logger'    : self._logger,
                         'shuffle'   : self.shuffle,
                     })
-                    timer.prefix = f'Generated {len(blocks)} dataset blocks'
-            else: blocks = self.dataset
+                    timer.message = f'Generated {len(blocks)} dataset blocks'
+            else: blocks = dataset
 
             # Verify there are enough sample blocks if we're not duplicating
             if (len(blocks) < self.workers) and (not self.duplicate):
@@ -437,7 +446,7 @@ class Batcher:
             # Create threaded task executors for generating blocks and batches
             kwargs = {
                 'threads'  : min(len(blocks), self.threads),
-                'capacity' : min(len(blocks), self.threads) * 3,
+                'capacity' : min(len(blocks), self.threads) * 2,
                 'exitflag' : (lambda: self._exit),
                 'exitset'  : self._exit_flag.set,
                 'logger'   : self._logger,
@@ -473,6 +482,7 @@ class Batcher:
             # message+= f'Forcing halt in 3 seconds...'
             self.error(message)
             self.close(origin='_generator exception')
+            raise
             # threading.Timer(3, lambda: os._exit(0)).start()
         
         finally:
@@ -611,7 +621,7 @@ class Batcher:
             ntotal = Stopwatch.readable(samples.size)
             nbytes = Stopwatch.readable(samples.nbytes, 'byte')
             nblock = samples.blocks.size
-            timer.prefix += f' -> {ntotal} samples ({nblock} blocks, {nbytes})'
+            timer.message += f' -> {ntotal} samples ({nblock} blocks, {nbytes})'
 
         # Exit early if signaled to do so
         if not self._exit: 
@@ -621,7 +631,7 @@ class Batcher:
                 samples = None 
                 with Stopwatch(f'GC: {len(Block._refs)}', self.debug) as timer:
                     gc.collect()
-                    timer.prefix += f' -> {len(Block._refs)} Block references'
+                    timer.message += f' -> {len(Block._refs)} Block references'
                 if not self._first: self._first_done.set()
                 return
 
@@ -666,6 +676,14 @@ class Batcher:
                 # Wait until the first batch is done, or signaled to exit
                 while not ((self._first or self._block_tasks.threads < 1) or self._exit):
                     time.sleep(WAIT_TIME)
+                
+                if self.continuous: 
+                    # Manually garbage collect Block object as soon as possible
+                    samples = None 
+                    with Stopwatch(f'GC: {len(Block._refs)}', self.debug) as timer:
+                        gc.collect()
+                        timer.message += f' -> {len(Block._refs)} Block references'
+                    break
 
             # Close the background thread manager if exit has been signaled
             if self._exit: 
@@ -717,7 +735,7 @@ class Batcher:
             if self.shuffle: self.random.shuffle(samples)
 
             # Faster, but discards any (samples % batch_size) samples
-            if False:
+            if self.continuous:
                 splits  = np.arange(self.batch_size, len(samples), self.batch_size)
                 list(map(self._queue.put, map(self._finalize_batch, np.array_split(samples, splits))))
                 samples = []
@@ -753,7 +771,7 @@ class Batcher:
             # Manually garbage collect Block object as soon as possible
             with Stopwatch(f'GC: {len(Block._refs)}', self.debug) as timer:
                 gc.collect()
-                timer.prefix += f' -> {len(Block._refs)} Block references'
+                timer.message += f' -> {len(Block._refs)} Block references'
             return samples
 
 
@@ -904,19 +922,24 @@ class Batcher:
             if self.duplicate: self.random = np.random.default_rng(process_ix)
             self.debug(f'{self.process_name} initialized')
 
-            # Start adding batches to the queue
-            for batch in self._generator:
+            import memray
+            with memray.Tracker(f'output.bin.{os.getpid()}'):
 
-                # Ensure exit flag is monitored while waiting on full queue
-                while not self._exit:
-                    try: 
-                        queue.put_nowait(batch)
-                        break
-                    except Full:
-                        while (not self._exit) and queue.full():
-                            time.sleep(WAIT_TIME)
+                # Start adding batches to the queue
+                for batch in self._generator:
+                    # with tf.device('GPU:0'):
+                    #     batch = [{k:tf.convert_to_tensor(v) for k,v in b.items()} for b in batch]
 
-                if self._exit: break
+                    # Ensure exit flag is monitored while waiting on full queue
+                    while not self._exit:
+                        try: 
+                            queue.put_nowait(batch)
+                            break
+                        except Full:
+                            while (not self._exit) and queue.full():
+                                time.sleep(WAIT_TIME)
+
+                    if self._exit: break
 
         except Exception as e:
             self.error(f'{self.process_name} exception: {e}\n' + 
