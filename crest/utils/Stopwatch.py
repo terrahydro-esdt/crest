@@ -41,8 +41,8 @@ class Stopwatch:
     
     Parameters
     ----------
-    prefix  : str
-        String to prefix the logged output with; i.e. f'{prefix}: {metrics}'.
+    message : str
+        String to suffix the logged output with; i.e. f'[{metrics}] {message}'.
     logger  : Callable
         Function which is passed the output string. By default this is just
         'print', which logs to the console - but any callable could be given,
@@ -107,7 +107,7 @@ class Stopwatch:
     }
 
     def __init__(self, 
-        prefix  : str = '', 
+        message : str = '', 
         logger  : Callable = print, 
         timer   : Callable = time,
         memory  : Callable = get_memory,
@@ -118,7 +118,7 @@ class Stopwatch:
         silent  : bool = False,
         stop_gc : bool = False,
     ):
-        self.prefix  = prefix
+        self.message = message
         self.logger  = logger 
         self.metrics = {'dMem': memory} | metrics
         self.formats = self.default_fmt | formats
@@ -154,10 +154,8 @@ class Stopwatch:
         fmt = lambda k,v: f'{k}={self.readable(v, **self.formats.get(k, {}))}'
 
         if not self.silent: 
-            message = ': '.join(
-                ([str(self.prefix)] if self.prefix else []) +
-                ['  '.join(starmap(fmt, self.deltas.items()))]
-            )
+            metrics = '|'.join(starmap(fmt, self.deltas.items()))
+            message = f'[{metrics}] {self.message}'
             try:    self.logger(message, stacklevel=2)
             except: self.logger(message)
 
