@@ -341,11 +341,28 @@ class BaseAbstract(ABC):
             # from history without needing to press up for each command 
             readline.rl.mode._bind_key('return', follow_history)
 
-        except ImportError: pass
+            class InteractiveConsole(code.InteractiveConsole):
+                """ Fix InteractiveConsole raw_input() ANSI coloring.
+
+                    pyreadline breaks full RGB ANSI colors for input().
+                    We circumvent pyreadline's implementation by printing
+                    the input prompt separately from the actual input call. 
+                    Note that this fixes the console prompt, but not input().
+                """
+                def raw_input(self, prompt=''):
+                    print(prompt, end='')
+                    return input()
+
+        except ImportError: from code import InteractiveConsole
+
+        # Set the console prompt colors
+        import sys
+        sys.ps1 = '\x1b[38;5;197m>>>\x1b[0m '
+        sys.ps2 = '\x1b[38;5;141m...\x1b[0m '
 
         # Start the console
         banner += '\nCTRL-Z resumes execution, quit() halts execution'
-        try: code.InteractiveConsole(variables).interact(banner=banner)
+        try: InteractiveConsole(variables).interact(banner=banner)
 
         # Ensure we write the command history after exiting
         finally:
