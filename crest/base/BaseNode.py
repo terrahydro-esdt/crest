@@ -58,7 +58,7 @@ class BaseNode(BaseAbstract):
         which has the signature loss(y_true, y_pred) -> float; or, if multiple
         outputs are returned from this Model, a dictionary mapping output 
         feature names to the respective loss str or callable for that feature.
-    transform_loss : bool
+    transform_loss : bool | tuple[Callable]
         Determines whether losses should be applied before or after the post-
         processing (if any exists). In other words, with transform_loss=True
         (the default), losses will be calculated on the transformed outputs
@@ -67,10 +67,18 @@ class BaseNode(BaseAbstract):
         differently, when multiple sub-model losses are being used to train a
         larger hierarchal model. Note this has no effect if no *normalize
         functions are given. 
+        Alternatively, a tuple of callables (in the same format as normalize)
+        can be given to use as a different normalization procedure than the 
+        feature normalization.
     debug          : bool
         Determines whether y_true/y_pred statistics should be printed on each
         batch inside the loss wrapper (default: False). Note this has no effect
         if no *normalize functions are given, or transform_loss=False. 
+    plot_scatter   : bool
+        Determines whether scatter plots should be created in the loss function
+        to add to TensorBoard. Setting to True will add target vs predicted 
+        scatter plots for each loss function update, which in turn slows down
+        the training process.
 
     """
     inputs  : IO_TYPE
@@ -79,14 +87,19 @@ class BaseNode(BaseAbstract):
     def __init__(self, 
         *normalize     : tuple[Callable], 
         loss           : str | Callable | dict[str, str | Callable | dict] = 'mse',
-        transform_loss : bool = True,
+        transform_loss : bool | tuple[Callable] = True,
         debug          : bool = False,
+        plot_scatter   : bool = False,
     ):
         self.normalize      = normalize
         self.loss           = loss
         self.debug          = debug
         self.transform_loss = transform_loss
+        self.plot_scatter   = plot_scatter
 
+    @property
+    def __name__(self):
+        return self.__class__.__name__
 
     @abstractmethod
     def call(self, X: dict[str, tf.Tensor]) -> dict[str, tf.Tensor]:      
@@ -152,7 +165,7 @@ class BaseNode(BaseAbstract):
                     image = lambda label, *y, **kw: tf.summary.image(label,
                         tf.numpy_function(partial(scatter, **kw), y, tf.uint8))
 
-                    if self.debug: tf.print('\nPrior to transform:',
+                    if self.debug: tf.print(f'\n\nOriginal {feature}:',
                         '\ny_true', *stats(y_true),
                         '\ny_pred', *stats(y_pred))
 
@@ -160,21 +173,32 @@ class BaseNode(BaseAbstract):
                     with tf.name_scope(''): 
                         with tf.name_scope(f'{self}/{feature.replace("@",".")}'):
                             # Preprocess y_true, and gather raw model outputs
-                            image('postprocessed', y_true, y_pred)
-                            tf.summary.histogram('postprocessed/y_true', y_true)
-                            tf.summary.histogram('postprocessed/y_pred', y_pred)
-                            y_true = from_dict(self.preprocess({feature:y_true}))
+                            if self.plot_scatter: image('postprocessed', y_true, y_pred)
+                            tf.summary.histogram('original/y_true', y_true)
+                            tf.summary.histogram('original/y_pred', y_pred)
+
+                            # Use the correct target normalization method
+                            norm   = self.preprocess if isinstance(self.transform_loss, bool) else self.transform_loss[0]
+                            y_true = from_dict(norm({feature:y_true}))
                             y_pred = from_dict(self._call_output)
+        
+                            # Mask where y_true is NaN and calculate loss
+                            mask   = tf.math.is_finite(y_true)
+                            y_pred = tf.boolean_mask(y_pred, mask)
+                            y_true = tf.boolean_mask(y_true, mask)
+                            losses = loss_f(y_true, y_pred)
+
                             tf.summary.histogram('transformed/y_true', y_true)
                             tf.summary.histogram('transformed/y_pred', y_pred)
-                            image('transformed', y_true, y_pred, color='g')
+                            tf.summary.histogram('loss', losses)
+                            if self.plot_scatter: image('transformed', y_true, y_pred, color='g')
 
-                    if self.debug: tf.print('\nAfter transform:',
+                    if self.debug: tf.print(f'\nTransformed {feature}:',
                         '\ny_true', *stats(y_true),
                         '\ny_pred', *stats(y_pred),
-                        '\nloss:',  *stats(loss_f(y_true, y_pred)))
+                        '\nloss:',  *stats(losses))
 
-                    return tf.reduce_mean( loss_f(y_true, y_pred) )
+                    return tf.cond(tf.shape(y_true)[0] == 0, lambda: 0., lambda: tf.reduce_mean(losses))
                 return transform
             return {k: loss_wrapper(k, loss_f) for k, loss_f in losses.items()}
         return losses
@@ -327,6 +351,11 @@ class _NodeWrap(tf.keras.layers.Layer):
         return repr(self.obj)
 
 
+    @property
+    def __name__(self):
+        return f'_NodeWrap({self.obj.__class__.__name__})'
+
+
     def call(self, X, *args, **kwargs):
         """ Adds output histograms for tensorboard visualization """
         output = getattr(self.obj, '_call', self.obj)(X, *args, **kwargs)
@@ -349,6 +378,9 @@ class _NodeWrap(tf.keras.layers.Layer):
     def get_config(self):
         return super().get_config() | {'obj': self.obj}
 
+    @classmethod
+    def from_config(cls, config):
+        return cls(**config)
 
 def scatter(y_true: np.ndarray, y_pred: np.ndarray, **kwargs) -> np.ndarray:
     """ Create a scatter plot using y true and pred, returning as an array """
