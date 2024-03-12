@@ -6,6 +6,7 @@
 import datetime
 import sys
 import os
+
 sys.path.insert(0, os.path.abspath('.'))
 sys.path.insert(0, os.path.abspath('..'))
 
@@ -22,19 +23,18 @@ extensions = [
     'sphinx.ext.autodoc',  # autodocument
     'sphinx.ext.napoleon',  # google and numpy doc string support
     'sphinx.ext.mathjax',  # latex rendering of equations using MathJax
+    "sphinx.ext.doctest",
+    "sphinx_autodoc_typehints",
     'nbsphinx',  # for direct embedding of jupyter notebooks into sphinx docs
     'nbsphinx_link'  # to be able to include notebooks from outside of the docs folder
 ]
-#    "sphinx_autodoc_typehints",
-#    "sphinx.ext.doctest",
-#    "sphinx.ext.intersphinx",
 #    "sphinx.ext.viewcode",
 
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
 # The suffix of source filenames.
-source_suffix = '.rst'
+source_suffix = [".rst", ".md"]
 
 # The master toctree document.
 master_doc = 'index'
@@ -62,7 +62,9 @@ autodoc_mock_imports = [
     'scipy',
     'zarr',
     'psutil',
-    'crest_cpu',
+    'seaborn',
+    'tlz',
+    'jsonpickle',
 ]
 
 # -- Options for HTML output -------------------------------------------------
@@ -76,3 +78,6 @@ napoleon_google_docstring = True
 napoleon_use_ivar = True
 napoleon_include_init_with_doc = True
 
+nbsphinx_allow_errors = True
+nbsphinx_kernel_name = 'python3'
+nbsphinx_execute = 'never'

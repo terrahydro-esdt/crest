@@ -1,47 +1,50 @@
 Examples
-=========
+========
 
-| **HTG_overview**
+CREST Fundamentals
+------------------
 
-Overview of the CREST Hierarchal Tensor Graph
+The Hierarchal Tensor Graph (HTG) is the core object in CREST where the Earth System Model (ESM) is encoded and specified.
 
-| **HTG_algebra**
+In this section we include examples that show how to use the `CREST HTG`_ and how to perform basic `HTG computations`_.
 
-Basic HTG computations
+.. _CREST HTG: HTG_overview.nblink
 
-| **batcher_demo**
+.. _HTG computations: HTG_algebra.nblink
 
-A demo of the batcher package
+The HTG `Keras Node`_ class implements a wrapper around a `Keras` model or layer and the HTG `Lambda Node`_ class implements a wrapper around a `lambda` function. In CREST we can also `serialize`_ an HTG network graph as a JSON string.
 
-| **data_loader_demo**
+.. _Keras Node: HTG_keras.nblink
 
-A demo of the data loader package
+.. _Lambda Node: HTG_lambda.nblink
 
-| **mnist_demo**
+.. _serialize: HTG_tofromJSON.nblink
 
-An end-to-end demo of CREST using the MNIST dataset
+Batch processing is a technique of processing large volumes of data in groups or batches, rather than individually or continuously. The `batcher demo`_ shows how this is done in CREST. Additionally, the `data loader package`_ is responsible for loading data from single or multiple sources.
 
-| **cifar_demo**
+.. _batcher demo: batcher_demo.nblink
 
-CIFAR demo (needs description)
+.. _data loader package: data_loader_demo.nblink
 
-| **climetlab_demo**
+Metrics are quantitative measures that help evaluate the effectiveness and reliability of models. This is implemented in the `CREST metrics`_ class.
 
-CLIMETLAB demo (needs description)
+.. _CREST metrics: metrics_demo.nblink
 
-| **archiver_demo**
+The `Archiver`_ class is responsible for inserting the model predictions into an `xArray` dataset at the correct coordinates and save the results to disk.
 
-ARCHIVER demo (needs description)
+.. _Archiver: archiver_demo.nblink
 
-.. toctree::
-   :maxdepth: 1
-   :caption: Contents:
+Applications
+------------
 
-   HTG_overview
-   HTG_algebra
-   batcher_demo
-   data_loader_demo
-   mnist_demo
-   cifar_demo
-   climetlab_demo
-   archiver_demo
+One can use CREST to load/train/predict with the well-known `MNIST dataset`_ and well as the with the `CIFAR-10 dataset`_.
+
+.. _MNIST dataset: mnist_demo.nblink
+
+.. _CIFAR-10 dataset: cifar_demo.nblink
+
+
+The `Soil Moisture Demo`_ is an end-to-end worflow that shows how to use CREST to build/train a model using soil moisture data.
+
+.. _Soil Moisture Demo: soil_moisture_demo.nblink
+

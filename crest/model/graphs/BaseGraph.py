@@ -2,6 +2,10 @@ from abc import ABC, abstractmethod
 
 
 class BaseGraph(ABC):
+    """
+    Base class for all graph types in CREST. 
+    This class is an abstract class and should not be instantiated.
+    """
     
     def __init__(self):
         self.graph = None
@@ -73,11 +77,6 @@ class BaseGraph(ABC):
     def is_directed_acyclic_graph(self):
          raise NotImplementedError
             
-    @property
-    @abstractmethod
-    def is_empty(self):
-         raise NotImplementedError
-
     @property
     @abstractmethod
     def adj(self):

@@ -16,13 +16,11 @@ from crest.base.BaseAbstract import BaseAbstract
 from crest.data.loading.Dataset import Dataset
 from crest.data.loading.Datafile import Datafile
 
-
 # to supress a warning about the large chunk indexing
 dask.config.set(**{'array.slicing.split_large_chunks': True})
 
 
 class Archiver(BaseAbstract):
-
     """Class which handles inserting the model predictions into the
        corresponding coordinates of an xarray dataset and write the
        result into disk.
@@ -129,7 +127,7 @@ class Archiver(BaseAbstract):
         if self.output_suffix != '.zarr':
             par = self.output_path.parent
             self.output_path_zarr = par / 'temp.zarr'
-            
+
             if self.output_path_zarr.exists():
                 message = 'When the requested file format is not '
                 message += 'zarr, the archiver creates a temporary '
@@ -138,7 +136,7 @@ class Archiver(BaseAbstract):
                 raise FileExistsError(message)
         else:
             self.output_path_zarr = self.output_path
-            
+
         self.out_datafile = self._create_schema()
 
         # create the KDTree if the exact coord matching is asked
@@ -146,16 +144,19 @@ class Archiver(BaseAbstract):
             self.lookup_space = self._create_coord_search_space()
             self.s = KDTree(self.lookup_space)
 
-    def __exit__(self, *args, **kwargs): self.close(origin='__exit__')
-    def __enter__(self): return self
-    
+    def __exit__(self, *args, **kwargs):
+        self.close(origin='__exit__')
+
+    def __enter__(self):
+        return self
+
     # a function to create the data_schema
     def _create_schema(self):
-        
+
         if self.data_schema:
             if isinstance(self.data_schema, dict):
                 out_datafile = xr.Dataset(coords=self.data_schema)
-            
+
             else:
                 # if the data_schema is of type Dataset
                 if isinstance(self.data_schema, Dataset):
@@ -169,15 +170,15 @@ class Archiver(BaseAbstract):
                             message = f'All items of the coords {set(self.coords)} must exist '
                             message += f'in the data_schema {set(all_coords)}.'
                             raise ValueError(message)
-                        
+
                         finest_resolution = dict.fromkeys(self.coords, np.inf)
                         finest_min = dict.fromkeys(self.coords, np.NINF)
                         finest_max = dict.fromkeys(self.coords, np.inf)
                         finest_coordinate = dict.fromkeys(self.coords)
                         for d in self.data_schema:
                             res_val = [np.mean(res) if isinstance(res, np.ndarray) else res for res in d.resolution]
-                            current_res = dict(zip(list(d.coords),res_val))
-                            
+                            current_res = dict(zip(list(d.coords), res_val))
+
                             for cor, val in current_res.items():
                                 if val != 0.:
                                     coord_array = d.coords[cor].to_numpy().astype(np.float64)
@@ -190,12 +191,12 @@ class Archiver(BaseAbstract):
 
                                     if np.min(coord_array) >= finest_min[cor]:
                                         finest_min[cor] = np.min(coord_array)
-                                
+
                         # find the finest resolution and here, limit the coordinates of the finest
                         # resolution to the smallest range among the datafiles        
                         finest_coordinate = {k: val[val <= finest_max[k]] for k, val in finest_coordinate.items()}
                         finest_coordinate = {k: val[val >= finest_min[k]] for k, val in finest_coordinate.items()}
-
+                        print(finest_coordinate)
                         out_datafile = xr.Dataset(coords=finest_coordinate)
 
                     # if the specific datafile must be data schema, 
@@ -204,15 +205,15 @@ class Archiver(BaseAbstract):
                         if self.datafile_index < 0 or self.datafile_index >= len(self.data_schema):
                             message = 'datafile_index is out of range. '
                             message += 'The valid range is '
-                            message += f'(0, {len(self.data_schema)-1})'
+                            message += f'(0, {len(self.data_schema) - 1})'
                             raise ValueError(message)
 
                         out_datafile = self.data_schema[self.datafile_index]
-                
+
                 # if the data schema is a datafile      
                 else:
                     out_datafile = self.data_schema
-                
+
                 # if the data schema is of type datafile,
                 # convert it to an empty xarray dataset
                 if isinstance(out_datafile, Datafile):
@@ -221,36 +222,36 @@ class Archiver(BaseAbstract):
                     # create the empty output dataset using the schema and save it to
                     # the output_dir
                     out_datafile = xr.full_like(out_datafile,
-                                                    np.nan).drop_vars(list(out_datafile.keys()))
-            
+                                                np.nan).drop_vars(list(out_datafile.keys()))
+
             # check if a file with output_path already exists
             if self.output_path.exists():
-                
+
                 # if the user asks for overwriting the existing file
                 if self.overwrite:
                     shutil.rmtree(self.output_path)
-                
+
                 # if overwriting is not asked and the specified data schema
                 # has the exact same structure as the file in output_path,
                 # the file is loaded and serves as the data_schema.
                 # If the structures conflict, an error is raised
                 else:
                     existing_file = self._open_file(output_dir=self.output_path)
-                    existing_file_empty = xr.full_like(existing_file,np.nan).drop_vars(list(existing_file.keys()))
+                    existing_file_empty = xr.full_like(existing_file, np.nan).drop_vars(list(existing_file.keys()))
                     if out_datafile.equals(existing_file_empty):
 
                         message = 'The data_schema matches the structure of the '
-                        message+= 'file already exists at the output_path. '
-                        message+= 'The existing file serves as the data_schema.'
+                        message += 'file already exists at the output_path. '
+                        message += 'The existing file serves as the data_schema.'
                         logging.warning(message)
                         out_datafile = existing_file
-                    
+
                     else:
                         message = f'{self.output_path}  with a different'
                         message += ' structure than the specified data_schema '
-                        message+= 'already exists. For overwriting, use overwrite=True.'
+                        message += 'already exists. For overwriting, use overwrite=True.'
                         raise FileExistsError(message)
-            
+
             else:
                 message = f'initializing {self.output_path_zarr.name} at '
                 message += f'{str(self.output_path_zarr.parent)} ...'
@@ -259,23 +260,23 @@ class Archiver(BaseAbstract):
                               self.output_path_zarr,
                               mode='w')
                 print('Done')
-        
+
         # the case that the data_schema is not specified,
         # check for any existing file at output_path to
         # use as data_schema.
         else:
             if self.output_path.exists():
                 message = f'loading {self.output_path.name} from '
-                message+= f'{str(self.output_path.parent)}'
+                message += f'{str(self.output_path.parent)}'
                 print(message)
                 out_datafile = self._open_file(output_dir=self.output_path)
                 print('Done')
-            
+
             else:
                 message = 'data_schema must be specified if '
                 message += 'output_path does not exist'
                 raise ValueError(message)
-             
+
         out_datafile.attrs = {}
         if set(list(out_datafile.coords)) != set(self.coords):
             message = 'The coordinates of the data_schema must '
@@ -283,7 +284,7 @@ class Archiver(BaseAbstract):
             message += f'{set(list(out_datafile.coords))} '
             message += f'versus {set(self.coords)}'
             raise ValueError(message)
-            
+
         return out_datafile
 
     # a function to create the combination of all coordinate values
@@ -382,39 +383,37 @@ class Archiver(BaseAbstract):
 
         # get all coordinates except for the last one
         # and get their groups
-        levels = list(range(len(self.coords)-1))
+        levels = list(range(len(self.coords) - 1))
         groups = grouped_df.groupby(level=levels)
         group_keys = list(groups.groups.keys())
         index_name = grouped_df.index.names
-        
+
         # create an empty dict so later specify the range of the
         # xarray dataset that must be written by the predictions
         slices = {}
-        
+
         # loop over the groups of coordinates
         for l_group in group_keys:
-            
+
             # get the rows with selected group
             grouped_df_sel = groups.get_group(l_group)
-            
-            
+
             # find the index of the selected coordinate value within the
             # output xarray dataset. for all of the coordinate except
             # the last one, we only have one value so we retrieve only one
             # index.
             for index, dim in enumerate(l_group):
-                
                 l_index = int(np.where(self.out_datafile[index_name[index]] == dim)[0])
-                slices[index_name[index]] = slice(l_index, l_index+1)
+                slices[index_name[index]] = slice(l_index, l_index + 1)
 
             # for the last coordinate we have a range of values so we get a range
             # of coordinates
-            lev = grouped_df_sel.reset_index()[index_name[len(self.coords)-1]]
+            lev = grouped_df_sel.reset_index()[index_name[len(self.coords) - 1]]
             ind_min = int(
                 np.where(self.out_datafile[lev.name] == min(lev))[0])
             ind_max = int(
                 np.where(self.out_datafile[lev.name] == max(lev))[0])
-            slices[lev.name] = slice(ind_min, ind_max+1)
+            slices[lev.name] = slice(ind_min, ind_max + 1)
 
             # capture the region of the output xarray dataset by the indices
             # of the coodinates and insert the model predictions into them
@@ -476,19 +475,18 @@ class Archiver(BaseAbstract):
                  dataset: xr.Dataset,
                  output_dir: str | Path,
                  mode: str | None = None,
-                 region : dict | None = None):
+                 region: dict | None = None):
 
         # only supports netcdf and zarr
         if isinstance(output_dir, str):
             output_dir = Path(output_dir)
         suffix = output_dir.suffix.lower()
-        
+
         if suffix == '.zarr':
             dataset.to_zarr(output_dir,
                             mode=mode,
-                            region = region,
+                            region=region,
                             **self.kwargs)
-
 
         if suffix == '.nc':
             mode = mode if mode else 'w'
@@ -553,7 +551,7 @@ class Archiver(BaseAbstract):
             ['latitude', 'longitude'].
 
         """
-        
+
         # check of the coordinates of the predictions matches the
         # specified data_schema
         if not set(self.coords).issubset(set(list(predictions.keys()))):
@@ -567,6 +565,10 @@ class Archiver(BaseAbstract):
         # match the coordinates of the predictions with the
         # output dataset
         p_dt_dict = self._match_coords(p_dt_dict)
+
+        # handle the cases that only one row exists
+        if np.sum([len(v.shape) for v in p_dt_dict.values()]) == 0.:
+            p_dt_dict = {k: v[np.newaxis] for k, v in p_dt_dict.items()}
 
         # specify the pred_val attribute by the new predictions
         # if the pred_val is empty.
@@ -584,7 +586,7 @@ class Archiver(BaseAbstract):
         else:
             # handle the cases where we only have one dimension
             coords_subset = self.coords[:-1] if len(self.coords) > 1 else self.coords
-            
+
             last_row = self.pred_val.iloc[-1, :][coords_subset]
             first_row = pd.DataFrame.from_dict(
                 p_dt_dict).iloc[0, :][coords_subset]
@@ -609,7 +611,7 @@ class Archiver(BaseAbstract):
 
             # In some cases, the whole prediction batch is prepended
             # to the next batch so p_dt will be empty.
-            if len(p_dt.index)!=0:
+            if len(p_dt.index) != 0:
                 # before archiving, aggregate the rows to handle
                 # multiple predictions for a single coordinate
                 g_dt = self._aggregate(p_dt)
@@ -625,10 +627,9 @@ class Archiver(BaseAbstract):
         """
 
         if not isinstance(self.pred_val, bool):
-
             g_dt = self._aggregate(self.pred_val)
             self._insert_values(g_dt)
-        
+
         # if the requested output file is something other
         # than zarr like netcdf(.nc), convert the archived
         # zarr file to the requested extension and delete it
@@ -636,6 +637,6 @@ class Archiver(BaseAbstract):
             self._to_file(self._open_file(self.output_path_zarr),
                           self.output_path,
                           mode=None
-                         )
-            
+                          )
+
             shutil.rmtree(self.output_path_zarr)

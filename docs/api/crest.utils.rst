@@ -4,10 +4,42 @@ crest.utils package
 Submodules
 ----------
 
+crest.utils.Metrics module
+--------------------------
+
+.. automodule:: crest.utils.Metrics
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 crest.utils.Stopwatch module
 ----------------------------
 
 .. automodule:: crest.utils.Stopwatch
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+crest.utils.classproperty module
+--------------------------------
+
+.. automodule:: crest.utils.classproperty
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+crest.utils.crest\_logger module
+--------------------------------
+
+.. automodule:: crest.utils.crest_logger
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+crest.utils.entropy module
+--------------------------
+
+.. automodule:: crest.utils.entropy
    :members:
    :undoc-members:
    :show-inheritance:
@@ -20,10 +52,18 @@ crest.utils.find\_neighbors module
    :undoc-members:
    :show-inheritance:
 
-crest.utils.Metrics module
+crest.utils.lexsort module
 --------------------------
 
-.. automodule:: crest.utils.Metrics
+.. automodule:: crest.utils.lexsort
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+crest.utils.optimize\_blocks module
+-----------------------------------
+
+.. automodule:: crest.utils.optimize_blocks
    :members:
    :undoc-members:
    :show-inheritance:

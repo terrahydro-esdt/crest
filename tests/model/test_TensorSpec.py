@@ -4,17 +4,13 @@ from crest.model.TensorSpec import TensorSpec
 def test_DictSpec():
     spec = TensorSpec({'shape': (1, 2, 3), 'dtype': 'float32', 'name': 'test'})
 
-    print(spec.shape)
-
     assert spec.shape == (1, 2, 3)
     assert spec.dtype == 'float32'
     assert spec.name == 'test'
 
-    print(spec.specs)
-
     assert spec.specs == {'shape': (1, 2, 3), 'dtype': 'float32', 'name': 'test'}
 
-    keras_spec = spec.keras
+    keras_spec = spec.tf
 
     assert keras_spec.shape == (1, 2, 3)
     assert keras_spec.dtype == 'float32'
@@ -28,7 +24,7 @@ def test_TupleSpec():
     assert spec.name == None
     assert spec.specs == {'shape': (1, 2, 3), 'dtype': 'float32', 'name': None}
 
-    keras_spec = spec.keras
+    keras_spec = spec.tf
 
     assert keras_spec.shape == (1, 2, 3)
     assert keras_spec.dtype == 'float32'
@@ -42,11 +38,22 @@ def test_ListSpec():
     assert spec.name == None
     assert spec.specs == {'shape': [1, 2, 3], 'dtype': 'float32', 'name': None}
 
-    keras_spec = spec.keras
+    keras_spec = spec.tf
 
     assert keras_spec.shape == (1, 2, 3)
     assert keras_spec.dtype == 'float32'
     assert keras_spec.name == None
+
+def test_tf():
+    import tensorflow as tf
+    
+    spec = TensorSpec(tf.TensorSpec((1, 2, 3), 'float32', 'test'))
+
+    keras_spec = spec.tf
+
+    assert keras_spec.shape == (1, 2, 3)
+    assert keras_spec.dtype == 'float32'
+    assert keras_spec.name == 'test'
 
 def test_TupleSpecWithDtype():
     spec = TensorSpec((1, 2, 3), 'int32')
@@ -56,7 +63,7 @@ def test_TupleSpecWithDtype():
     assert spec.name == None
     assert spec.specs == {'shape': (1, 2, 3), 'dtype': 'int32', 'name': None}
 
-    keras_spec = spec.keras
+    keras_spec = spec.tf
 
     assert keras_spec.shape == (1, 2, 3)
     assert keras_spec.dtype == 'int32'
@@ -70,7 +77,7 @@ def test_TupleSpecWithName():
     assert spec.name == 'test'
     assert spec.specs == {'shape': (1, 2, 3), 'dtype': 'int32', 'name': 'test'}
 
-    keras_spec = spec.keras
+    keras_spec = spec.tf
 
     assert keras_spec.shape == (1, 2, 3)
     assert keras_spec.dtype == 'int32'

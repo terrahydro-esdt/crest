@@ -13,6 +13,5 @@ crest_modl = sys.modules['crest'] = module_from_spec(crest_spec)
 crest_spec.loader.exec_module(crest_modl)
 
 # Add tests to the crest submodules; tests should eventually be migrated into crest/crest/tests
-tests_init = Path(__file__).parent.joinpath('tests', '__init__.py') 
-sys.modules['crest.tests'] = module_from_spec( spec_from_file_location('tests', tests_init) )
-
+tests_init = Path(__file__).parent.joinpath('tests', '__init__.py')
+sys.modules['crest.tests'] = module_from_spec(spec_from_file_location('tests', tests_init))

@@ -28,6 +28,22 @@ crest.model.HierarchalTensorGraph module
    :undoc-members:
    :show-inheritance:
 
+crest.model.KerasNode module
+----------------------------
+
+.. automodule:: crest.model.KerasNode
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+crest.model.LambdaNode module
+-----------------------------
+
+.. automodule:: crest.model.LambdaNode
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 crest.model.Model module
 ------------------------
 
@@ -40,6 +56,14 @@ crest.model.TensorGraph module
 ------------------------------
 
 .. automodule:: crest.model.TensorGraph
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+crest.model.TensorSpec module
+-----------------------------
+
+.. automodule:: crest.model.TensorSpec
    :members:
    :undoc-members:
    :show-inheritance:
