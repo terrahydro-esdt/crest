@@ -183,8 +183,10 @@ class Batcher:
         # If multiprocessing, fail quickly when dataset can't be pickled
         if self.workers: self._is_picklable()
 
-        # One worker per dataset in the list
-        if isinstance(dataset, list): self.workers = len(dataset)
+        # One worker per dataset in the list, each worker gets all blocks
+        if isinstance(dataset, list) and isinstance(dataset[0], Dataset): 
+            self.workers   = len(dataset)
+            self.duplicate = True
 
 
     def __getstate__(self):
