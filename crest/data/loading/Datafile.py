@@ -268,7 +268,7 @@ class Datafile(BaseAbstract):
 
         # Include in the summary stats any coordinates requested as features
         for coord in data.coords:
-            if coord in self.features:
+            if (coord in self.features) and (coord != 'datetime'):
                 coords = {c: data[c] for c in data.coords if c != coord}
                 data[f'{coord}_f'] = data[coord]
                 data[f'{coord}_f'] = data[[f'{coord}_f']] \
