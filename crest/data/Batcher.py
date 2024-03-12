@@ -922,24 +922,24 @@ class Batcher:
             if self.duplicate: self.random = np.random.default_rng(process_ix)
             self.debug(f'{self.process_name} initialized')
 
-            import memray
-            with memray.Tracker(f'output.bin.{os.getpid()}'):
+            # import memray
+            # with memray.Tracker(f'output.bin.{os.getpid()}'):
 
-                # Start adding batches to the queue
-                for batch in self._generator:
-                    # with tf.device('GPU:0'):
-                    #     batch = [{k:tf.convert_to_tensor(v) for k,v in b.items()} for b in batch]
+            # Start adding batches to the queue
+            for batch in self._generator:
+                # with tf.device('GPU:0'):
+                #     batch = [{k:tf.convert_to_tensor(v) for k,v in b.items()} for b in batch]
 
-                    # Ensure exit flag is monitored while waiting on full queue
-                    while not self._exit:
-                        try: 
-                            queue.put_nowait(batch)
-                            break
-                        except Full:
-                            while (not self._exit) and queue.full():
-                                time.sleep(WAIT_TIME)
+                # Ensure exit flag is monitored while waiting on full queue
+                while not self._exit:
+                    try: 
+                        queue.put_nowait(batch)
+                        break
+                    except Full:
+                        while (not self._exit) and queue.full():
+                            time.sleep(WAIT_TIME)
 
-                    if self._exit: break
+                if self._exit: break
 
         except Exception as e:
             self.error(f'{self.process_name} exception: {e}\n' + 
