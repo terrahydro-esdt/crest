@@ -377,7 +377,7 @@ class Dataset(BaseSet):
         # while still maintaining the required number of elements along each 
         # dimension to fulfill the requested window size
         required = lambda d_v, data, size: [np.inf if v else len(data[d])//size[d] for d,v in d_v]
-        data_obj = self.data, self.window_total
+        data_obj = self._typed_data, self.window_total
         req_blks = map(required, map(zip, self.dims, self.virtual), *data_obj)
         max_blks = np.min(list(req_blks), axis=0).astype(int)
         cur_blks = self.numblocks.ix[:-1]
@@ -395,7 +395,7 @@ class Dataset(BaseSet):
         rm_nan = lambda blk, dat: list(range(blk)) if virtual(dat) else dat
         binner = lambda blk, dat: np.histogram(rm_nan(blk, dat), int(blk))[0]
         mapper = lambda dim, dat: map(binner, blocks, [dat[d] for d in dim])
-        chunks = list(map(list, map(mapper, self.dims, self.data)))
+        chunks = list(map(list, map(mapper, self.dims, self._typed_data)))
         assert(len(set(map(len, chunks))) == 1), chunks
 
         def merge(chunks, w_size):
@@ -504,7 +504,7 @@ class Dataset(BaseSet):
             Returns self. 
 
         """
-        with Stopwatch(f'Cached {len(self)} Datafiles'):
+        with Stopwatch(f'Cached {len(self)} Datafiles at {cache_dir}'):
             # Rechunk the data first
             self.generate_samples(**{
                 'numblocks' : numblocks, 
@@ -513,6 +513,7 @@ class Dataset(BaseSet):
                 'optimize'  : False,
             })
             self._cache(overwrite, cache_dir, _delay=False)
+        print()
         return self
 
 
