@@ -64,7 +64,6 @@ def check(x, xrl, xrr, y, yrl, yrr):
     return -1, -1#, count
 
 
-
 @nb.njit(cache=True, parallel=True)
 def interleave(a, b):
     """ Interleave the last dimensions of a and b.
@@ -90,7 +89,6 @@ def interleave(a, b):
     for i in nb.prange(x): c[...,   i::x+y] = a[..., i::x]
     for j in nb.prange(y): c[..., x+j::x+y] = b[..., j::y]
     return c 
-
 
 
 @nb.njit([i32[:, :](fx[:, :]) for fx in INPUT_TYPES], cache=True, nogil=True)
@@ -314,8 +312,6 @@ def bruteforce_original(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
     return np.array(match, dtype=np.int32)
 
 
-
-
 @nb.njit([
     UniTuple(i32, 3)(DictType(i32, ListType(i32)), i32, i32, UniTuple(fx[:,:],3), UniTuple(fx[:,:],3), i32[:,:], i32[:], boolean)
     for fx in INPUT_TYPES
@@ -376,7 +372,6 @@ def loop(matches, ix1, start, a1lr, a2lr, skip, steps, swapped):
     return start, n_match, n_loops
 
 
-
 @nb.njit([
     Tuple((UniTuple(fx[:,:], 3), UniTuple(fx[:,:], 3), UniTuple(i32[:,:], 2), i32[:]))(
         fx[:,:], fx[:,:], fx[:,:], fx[:,:], fx[:,:], fx[:,:], boolean[:])
@@ -414,7 +409,6 @@ def bruteforce_setup(a1, a2, a1l, a1r, a2l, a2r, all_nan_col):
     a2r = a2r[..., ~all_nan_col]
 
     return (a1, a1l, a1r), (a2, a2l, a2r), (skip1, skip2), steps
-
 
 
 @nb.njit([
@@ -462,7 +456,6 @@ def bruteforce_single(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
             result[1, index] = m2
             index += 1
     return result
-
 
 
 @nb.njit([

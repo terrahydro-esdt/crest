@@ -1,3 +1,4 @@
+import logging
 from contextlib import nullcontext
 
 import tensorflow as tf
@@ -14,6 +15,8 @@ from .TensorGraph import TensorGraph
 from crest.model.TensorSpec import TensorSpec
 from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
 
+logger = logging.getLogger(__name__)
+
 
 class Model(BaseModel):
     """Builds tensor models using HierarchalTensorGraph
@@ -24,6 +27,10 @@ class Model(BaseModel):
         The Hierarchal TensorGraph
 
     """
+
+    @property
+    def logger(self) -> logging.Logger:
+        return logging.getLogger(__name__)
 
     def __init__(self, graph: TensorGraph, **kwargs):
         self.graph = graph
