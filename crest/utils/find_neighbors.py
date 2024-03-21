@@ -92,7 +92,6 @@ def get_indices(
             contention (see https://github.com/numpy/numpy/issues/24252) """
         return np.fromiter((a[i] for a in array for i in range(len(a))), dtype, count)
 
-
     def mask(coordinates: Collection[np.ndarray]) -> Collection[np.ndarray]:
         """Remove axes which contain all nan values.
         
@@ -126,7 +125,6 @@ def get_indices(
         make_2d = lambda c: c[:, None] if c.ndim < 2 else c
         rm_axes = lambda c: c[:, tuple(set(range(c.shape[1])) - invalid)]
         return tuple(map(rm_axes, map(make_2d, coordinates)))
-
 
     def query_tree(build, query):
         if use_faiss:

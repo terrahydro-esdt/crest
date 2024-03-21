@@ -1,7 +1,8 @@
-import numba as nb 
-import numpy as np 
+import numba as nb
+import numpy as np
 
 TYPES = [nb.float32, nb.float64, nb.int32, nb.int64]
+
 
 def lexsort(array: np.ndarray, inplace: bool = True) -> (np.ndarray, np.ndarray):
     """ Lexicographic sort of an array. 
@@ -46,23 +47,22 @@ def lexsort(array: np.ndarray, inplace: bool = True) -> (np.ndarray, np.ndarray)
     if not inplace: array = array.copy()
     inds = np.arange(len(array), dtype=np.int32)
     lexsort_nb(array, inds, 0)
-    return array, inds 
-
+    return array, inds
 
 
 @nb.njit([nb.boolean(fx[:]) for fx in TYPES], cache=False, inline='always', fastmath=True, nogil=True)
 def is_sorted(a):
     """ Fast check whether array is sorted least to greatest """
-    for i in nb.prange(len(a)-1):
-        if a[i] > a[i+1]: return False
+    for i in nb.prange(len(a) - 1):
+        if a[i] > a[i + 1]: return False
     return True
 
 
 @nb.njit([nb.boolean(fx[:]) for fx in TYPES], cache=False, inline='always', fastmath=True, nogil=True)
 def is_unique_sorted(a):
     """ Fast check whether array is sorted least to greatest, with only unique values """
-    for i in nb.prange(len(a)-1):
-        if a[i] >= a[i+1]: return False
+    for i in nb.prange(len(a) - 1):
+        if a[i] >= a[i + 1]: return False
     return True
 
 
@@ -82,7 +82,9 @@ run - which can add 10-20 seconds to the time to first batch. See here for more 
     https://github.com/numba/numba/issues/6061#issuecomment-1216381263
 
 """
-@nb.njit([(fx[:,:], nb.int32[:], nb.int32) for fx in TYPES], parallel=False, cache=False, fastmath=True, nogil=True)
+
+
+@nb.njit([(fx[:, :], nb.int32[:], nb.int32) for fx in TYPES], parallel=False, cache=False, fastmath=True, nogil=True)
 def lexsort_nb(vals, inds, c=0):
     if (len(vals) > 1) and not is_unique_sorted(vals[:, c]):
         if not is_sorted(vals[:, c]):
@@ -90,25 +92,25 @@ def lexsort_nb(vals, inds, c=0):
             vals[:] = vals[argsort]
             inds[:] = inds[argsort]
 
-        if c < (vals.shape[1]-1):
+        if c < (vals.shape[1] - 1):
             groups = np.where(vals[:-1, c] != vals[1:, c])[0] + 1
             start = np.append([0], groups)
             end = np.append(groups, [len(vals)])
             for i in nb.prange(len(start)):
-                lexsort_nb(vals[start[i]:end[i]], inds[start[i]:end[i]], c+1)
+                lexsort_nb(vals[start[i]:end[i]], inds[start[i]:end[i]], c + 1)
 
 
-@nb.njit([(fx[:,:], nb.int32[:], nb.int32) for fx in TYPES], parallel=True, cache=True, fastmath=True, nogil=True)
+@nb.njit([(fx[:, :], nb.int32[:], nb.int32) for fx in TYPES], parallel=True, cache=True, fastmath=True, nogil=True)
 def lexsort_nb(vals, inds, c=0):
-    if (len(vals) > 1) and not is_unique_sorted(vals[:,c]):
+    if (len(vals) > 1) and not is_unique_sorted(vals[:, c]):
         if not is_sorted(vals[:, c]):
             argsort = np.argsort(vals[:, c], kind='mergesort')
             vals[:] = vals[argsort]
             inds[:] = inds[argsort]
 
-        if c < (vals.shape[1]-1):
+        if c < (vals.shape[1] - 1):
             groups = np.where(vals[:-1, c] != vals[1:, c])[0] + 1
             start = np.append([0], groups)
             end = np.append(groups, [len(vals)])
             for i in nb.prange(len(start)):
-                lexsort_nb(vals[start[i]:end[i]], inds[start[i]:end[i]], c+1)
+                lexsort_nb(vals[start[i]:end[i]], inds[start[i]:end[i]], c + 1)

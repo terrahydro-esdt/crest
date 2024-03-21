@@ -35,7 +35,6 @@ def get_memory(priority: list[str] = ['uss', 'vms', 'rss']) -> int:
     raise Exception(f'No valid keys available in {usage}')
 
 
-
 class Stopwatch:
     """Context manager to time code blocks.
     
@@ -130,7 +129,6 @@ class Stopwatch:
         # Time is handled separately to avoid influence by other metrics
         self.timer = timer
 
-
     def __enter__(self):
         """ Begin tracking the requested metrics """
         # Only disable (and later re-enable) the gc if it's currently enabled
@@ -140,8 +138,7 @@ class Stopwatch:
         # Store the initial values for all metrics, fetching time last
         self.start = {k: self._sample(v) for k,v in self.metrics.items()}
         self.start|= {'time': self.timer()}
-        return self 
-
+        return self
 
     def __exit__(self, *args, **kwargs):
         """ Finish tracking metrics, calculate deltas, and log if requested """
@@ -158,7 +155,6 @@ class Stopwatch:
             message = f'[{metrics}] {self.message}'
             try:    self.logger(message, stacklevel=2)
             except: self.logger(message)
-
 
     def __getitem__(self, key):
         """ Return the delta value for the requested metric """
@@ -254,7 +250,6 @@ class Stopwatch:
             if '.' not in value: value += '.'
             return add_unit(value.rstrip('0').rstrip('.'))
         return fmt(value, units)
-
 
     def _sample(self, function: Callable) -> Number:
         """ Average multiple function values with delays in between calls """

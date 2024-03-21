@@ -3,6 +3,7 @@
 *.log
 *.log.backup
 *.json
+!crest/utils/crest_logging_configs/*.json
 *.h5
 __pycache__
 .pytest_cache

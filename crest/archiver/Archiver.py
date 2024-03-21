@@ -1,4 +1,3 @@
-import os
 import logging
 import shutil
 import typing
@@ -18,6 +17,8 @@ from crest.data.loading.Datafile import Datafile
 
 # to supress a warning about the large chunk indexing
 dask.config.set(**{'array.slicing.split_large_chunks': True})
+
+logger = logging.getLogger(__name__)  # create logger here or...
 
 
 class Archiver(BaseAbstract):
@@ -93,6 +94,10 @@ class Archiver(BaseAbstract):
           zarr.
 
     """
+
+    @property
+    def logger(self) -> logging.Logger:
+        return logging.getLogger(__name__)
 
     def __init__(self,
                  output_path: str | Path,
@@ -196,7 +201,7 @@ class Archiver(BaseAbstract):
                         # resolution to the smallest range among the datafiles        
                         finest_coordinate = {k: val[val <= finest_max[k]] for k, val in finest_coordinate.items()}
                         finest_coordinate = {k: val[val >= finest_min[k]] for k, val in finest_coordinate.items()}
-                        print(finest_coordinate)
+                        self.logger.info(finest_coordinate)
                         out_datafile = xr.Dataset(coords=finest_coordinate)
 
                     # if the specific datafile must be data schema, 
@@ -255,11 +260,11 @@ class Archiver(BaseAbstract):
             else:
                 message = f'initializing {self.output_path_zarr.name} at '
                 message += f'{str(self.output_path_zarr.parent)} ...'
-                print(message)
+                self.logger.info(message)
                 self._to_file(out_datafile,
                               self.output_path_zarr,
                               mode='w')
-                print('Done')
+                self.logger.info('Done')
 
         # the case that the data_schema is not specified,
         # check for any existing file at output_path to
@@ -268,9 +273,9 @@ class Archiver(BaseAbstract):
             if self.output_path.exists():
                 message = f'loading {self.output_path.name} from '
                 message += f'{str(self.output_path.parent)}'
-                print(message)
+                self.logger.info(message)
                 out_datafile = self._open_file(output_dir=self.output_path)
-                print('Done')
+                self.logger.info('Done')
 
             else:
                 message = 'data_schema must be specified if '

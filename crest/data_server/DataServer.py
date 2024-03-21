@@ -1,8 +1,13 @@
+import logging
+
 from crest.data.loading.StructuredDataset import StructuredDataset
 from urllib.request import urlretrieve
 import os
 import pickle as pkl
 import xarray as xr
+
+logger = logging.getLogger(__name__)
+
 
 class DataServer:
     """ Data Server for loading files from crest server"""
