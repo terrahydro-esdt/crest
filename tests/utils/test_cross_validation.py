@@ -5,7 +5,7 @@ import xarray as xr
 import dask.array as da
 
 from crest.data.loading.Datafile import Datafile
-from crest.utils.cross_validation import SpatialKfoldRandomSplit
+from crest.utils.cross_validation import KfoldSplit
 
 
 np.random.seed(0)
@@ -35,8 +35,7 @@ ds = xr.Dataset(
 
 def test_get_second_fold():
     
-    splitter = SpatialKfoldRandomSplit(folds=3)
-    splitter_third_fold = splitter[2]
+    splitter = KfoldSplit(folds=3)
     
     df_train = Datafile(location=ds,
                         extent={'latitude': [24.396, 49.384],
@@ -46,7 +45,7 @@ def test_get_second_fold():
                                 },
                         invalid_value=np.nan,
                         features=['var1'],
-                        preprocessors=[splitter_third_fold.train]
+                        preprocessors=[splitter[2]['train']]
                         )
     
     df_test = Datafile(location=ds,
@@ -57,7 +56,7 @@ def test_get_second_fold():
                                 },
                         invalid_value=np.nan,
                         features=['var1'],
-                        preprocessors=[splitter_third_fold.test]
+                        preprocessors=[splitter[2]['test']]
                         )
     
     train = df_train.data.to_dataset('features')['var1'].to_numpy()
@@ -72,9 +71,7 @@ def test_get_second_fold():
     
 def test_get_all_folds():
     
-    k1 = SpatialKfoldRandomSplit(folds=3)[1].test
-    k2 = SpatialKfoldRandomSplit(folds=3)[2].test
-    k3 = SpatialKfoldRandomSplit(folds=3)[3].test
+    splitter = KfoldSplit(folds=3)
     
     df1 = Datafile(location=ds,
                     extent={'latitude': [24.396, 49.384],
@@ -84,7 +81,7 @@ def test_get_all_folds():
                             },
                     invalid_value=np.nan,
                     features=['var1'],
-                    preprocessors=[k1]
+                    preprocessors=[splitter[1]['test']]
                     )
     
     df2 = Datafile(location=ds,
@@ -95,7 +92,7 @@ def test_get_all_folds():
                             },
                     invalid_value=np.nan,
                     features=['var1'],
-                    preprocessors=[k2]
+                    preprocessors=[splitter[2]['test']]
                     )
     
     df3 = Datafile(location=ds,
@@ -106,7 +103,7 @@ def test_get_all_folds():
                             },
                     invalid_value=np.nan,
                     features=['var1'],
-                    preprocessors=[k3]
+                    preprocessors=[splitter[3]['test']]
                     )
     
     
@@ -120,4 +117,42 @@ def test_get_all_folds():
                                 'latitude': slice(24.396, 49.384),
                                 'longitude': slice(-124.848, -66.885)})['var1'].to_numpy(),
                         equal_nan=True))
+    
+    
+def test_select_axis_and_ordered():
+        
+        splitter = KfoldSplit(folds=3, split_type='ordered', axis=['datetime'])
+    
+        df_train = Datafile(location=ds,
+                                extent={'latitude': [24.396, 49.384],
+                                        'longitude': [-124.848, -66.885],
+                                        'datetime': [np.datetime64('2015-04-01 00:00:00'),
+                                                np.datetime64('2015-05-01 23:00:01')]
+                                        },
+                                invalid_value=np.nan,
+                                features=['var1'],
+                                preprocessors=[splitter[2]['train']]
+                                )
+        
+        df_test = Datafile(location=ds,
+                                extent={'latitude': [24.396, 49.384],
+                                        'longitude': [-124.848, -66.885],
+                                        'datetime': [np.datetime64('2015-04-01 00:00:00'),
+                                                     np.datetime64('2015-05-01 23:00:01')]
+                                        },
+                                invalid_value=np.nan,
+                                features=['var1'],
+                                preprocessors=[splitter[2]['test']]
+                                )
+        
+        train = df_train.data.to_dataset('features')['var1'].to_numpy()
+        test = df_test.data.to_dataset('features')['var1'].to_numpy()
+        combine_ds = np.nansum(np.stack((train,test)),0)
+        
+        assert np.all(np.isclose(combine_ds, 
+                                ds.sel({'datetime': slice('2015-04-01','2015-05-01 23:00:01'),
+                                        'latitude': slice(24.396, 49.384),
+                                        'longitude': slice(-124.848, -66.885)})['var1'].to_numpy(),
+                                equal_nan=True))
+            
     
