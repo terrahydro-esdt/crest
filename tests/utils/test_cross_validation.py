@@ -32,7 +32,6 @@ ds = xr.Dataset(
     )
 ).chunk('auto')
 
-
 def test_get_second_fold():
     
     splitter = KfoldSplit(folds=3)
@@ -118,7 +117,6 @@ def test_get_all_folds():
                                 'longitude': slice(-124.848, -66.885)})['var1'].to_numpy(),
                         equal_nan=True))
     
-    
 def test_select_axis_and_ordered():
         
         splitter = KfoldSplit(folds=3, split_type='ordered', axis=['datetime'])
@@ -155,4 +153,40 @@ def test_select_axis_and_ordered():
                                         'longitude': slice(-124.848, -66.885)})['var1'].to_numpy(),
                                 equal_nan=True))
             
-    
+def test_invalid_pixel_includes_unequal_folds():
+        
+        var2 = var1.copy()
+        var2[:200,] = np.nan
+        ds1 = xr.Dataset(
+                        data_vars=dict(
+                                var2=(["datetime", "latitude", "longitude"], var2)
+                        ),
+                        coords=dict(
+                                datetime=datetime,
+                                latitude=(["latitude"], latitude),
+                                longitude=(["longitude"], longitude)
+                        )
+                        ).chunk('auto')
+        
+        splitter = KfoldSplit(folds=3,
+                              split_type='ordered',
+                              axis=['datetime'],
+                              only_valid=False,
+                              unequal_split={1:200},
+                              )
+        
+        df_test = Datafile(location=ds1,
+                                extent={'latitude': [24.396, 49.384],
+                                        'longitude': [-124.848, -66.885],
+                                        'datetime': [np.datetime64('2015-04-01 00:00:00'),
+                                                     np.datetime64('2015-05-01 23:00:01')]
+                                        },
+                                invalid_value=np.nan,
+                                features=['var2'],
+                                preprocessors=[splitter[1]['test']]
+                                )
+
+        test = df_test.data.to_dataset('features')['var2'].to_numpy()
+        
+        assert np.nansum(test) == 0.
+  
