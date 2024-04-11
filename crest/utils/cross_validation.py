@@ -8,13 +8,29 @@ import dask.array as da
 from crest.base.BaseAbstract import BaseAbstract
 from crest.data.loading import Datafile
 
-def _partial_to_function(partial_obj):
-    def new_function(*args, **kwargs):
-        # Combine the preset arguments from the partial with new arguments
-        combined_args = partial_obj.args + args
-        all_kwargs = {**partial_obj.keywords, **kwargs}
-        return partial_obj.func(*combined_args, **all_kwargs)
-    return new_function
+class PartialToFunction:
+    
+    """Class to transform partial function
+        to regular one. This is necessary for
+        KfoldSplit __getitem__ because the preprocessor
+        of a crest Datafile cannot be a partial function
+        
+        Parameters
+        ----------
+        partial_obj      : functools.partial,
+            Partial function to be transformed.
+    """
+    
+    def __init__(self, partial_obj):
+        self.partial_obj = partial_obj
+    
+    def _new_function(self, *args, **kwargs):
+        combined_args = self.partial_obj.args + args
+        all_kwargs = {**self.partial_obj.keywords, **kwargs}
+        return self.partial_obj.func(*combined_args, **all_kwargs)
+    
+    def _get_function(self):
+        return self._new_function
 
 class KfoldSplit(BaseAbstract):
     
@@ -35,6 +51,19 @@ class KfoldSplit(BaseAbstract):
     split_type  :   str
         The strategy for selecting pixels within folds. It can be
         either 'random' (default) or 'ordered'.
+    only_valid  :   bool, Optional
+        Specify if all pixels are being considered in splitting
+        process. Default is False which means NaN pixels are
+        ignored and the rest are splitted into multiple folds.
+    unequal_split : dict, Optional
+        A dictionary that shows the size of each fold.
+        By default, all folds have an equal number of pixels.
+        If unequal_split is used, specific number of pixels
+        can be allocated to the folds. For instance, 
+        {1: 25, 2: 49} assigns 25 pixels to fold 1 and 49 pixels to fold 2.
+        Folds not specified share the remaining pixels equally.
+        If the sum of pixels in unequal_split exceeds the total available,
+        an error is raised.
     target_var : list[str], Optional
         The variables of a Datafile which must be considered
         in splitting. The Splitter considers all
@@ -83,6 +112,8 @@ class KfoldSplit(BaseAbstract):
                  folds: int = 5,
                  axis: list[str] | None = None,
                  split_type: str = 'random',
+                 only_valid: bool = True,
+                 unequal_split: dict | None = None,
                  target_var: list[str] | None = None,
                  fill_values: dict[str, list[numbers.Number]] | None = None,
                  seed: int = 0):
@@ -90,12 +121,12 @@ class KfoldSplit(BaseAbstract):
         self.folds = folds
         self.axis = axis
         self.split_type = split_type
+        self.only_valid = only_valid
+        self.unequal_split = unequal_split
         self.target_var = target_var
         self.fill_values = fill_values
         self.seed = seed
         
-        
-    
     def __getitem__(self, index):
         """A function to specify the fold that the splitter must return
            the train/test split for
@@ -151,7 +182,7 @@ class KfoldSplit(BaseAbstract):
                 # to a regular function. Datafile preprocessor cannot be
                 # a partial function
                 self.get_split = functools.partial(self.get_split, k=index)
-                return _partial_to_function(self.get_split)
+                return PartialToFunction(self.get_split)._get_function()
 
             # if a partial version of get_split does not exists
             # create one
@@ -179,7 +210,7 @@ class KfoldSplit(BaseAbstract):
                 # a partial function
                 self.get_split = functools.partial(self.get_split, split=index)
         
-                return _partial_to_function(self.get_split)
+                return PartialToFunction(self.get_split)._get_function()
             
             # if a partial version of get_split does not exists
             # create one
@@ -193,7 +224,6 @@ class KfoldSplit(BaseAbstract):
         else:
             raise ValueError('invalid index, must be either int or str')
     
-    
     def _apply_split(self,
                      data_axis,
                      k,
@@ -205,17 +235,45 @@ class KfoldSplit(BaseAbstract):
         # and get the pixels with valid values
         ref_shape = grid.shape
         grid = grid.ravel()
+        if not self.only_valid:
+            grid = da.ones_like(grid)
         i = da.stack(da.nonzero(grid),
-                     allow_unknown_chunksizes=True,
-                     axis=1).compute_chunk_sizes()
-
+                    allow_unknown_chunksizes=True,
+                    axis=1).compute_chunk_sizes()
+        
         # get the size and starting point of the
         # requested fold
-        split_size = i.shape[0]//self.folds
-        if split_size < 1:
-            raise ValueError(f'Cannot split with fold size of {self.folds}')
-        split_start = split_size * (k - 1)
-        
+        # for the case that unequal_split is specified
+        if self.unequal_split:
+            # check unequal_split for having valid keys and not have sizes sum up to an invalid value
+            if not set(self.unequal_split.keys()).issubset(range(1,self.folds+1)):
+                raise ValueError(f'invalid fold(s) in unequal_split. Must be in range {1, self.folds}')
+            
+            sum_of_folds = sum(self.unequal_split.values())
+            if sum_of_folds > i.shape[0] or sum_of_folds <= 0:
+                raise ValueError(f'Sum of the fold sizes in unequal_split must be in range {0, i.shape[0]}')
+
+            # add the folds that are not included in unequal_split.
+            # recursively add fold and split the remaining sizes 
+            # to each one of them.
+            for f in range(1,self.folds+1):
+                if not f in self.unequal_split.keys():
+                    sum_of_folds = sum(self.unequal_split.values())
+                    remaining_sizes = i.shape[0] - sum_of_folds
+                    specified_folds = self.folds - len(self.unequal_split.keys())
+                    self.unequal_split[f] = np.ceil(remaining_sizes/specified_folds)
+            # and get the split size and starting point
+            split_size = self.unequal_split[k]
+            split_start = sum({key:v for key,v in self.unequal_split.items() if key<k}.values())
+            split_start = int(split_start)
+        # for the case the unequal_split is None
+        else:
+            # get the split size and starting point
+            split_size = i.shape[0]//self.folds
+            if split_size < 1:
+                raise ValueError(f'Cannot split with fold size of {self.folds}')
+            split_start = split_size * (k - 1)
+                
         # randomly shuffle the ravelled mask if style is random
         if self.split_type == 'random':
             i = da.random.RandomState(seed=self.seed).permutation(i)
@@ -243,7 +301,6 @@ class KfoldSplit(BaseAbstract):
             
         return data_axis
         
-      
     def get_split(self,
                   datafile : Datafile,
                   data : xr.Dataset,
@@ -333,7 +390,7 @@ class KfoldSplit(BaseAbstract):
         
         # combine the valid pixels from all features of the datafile
         data_axis = data_axis.to_array('features').sum('features')
-
+        
         # apply split
         data_axis = self._apply_split(data_axis=data_axis,
                                         k = k,
