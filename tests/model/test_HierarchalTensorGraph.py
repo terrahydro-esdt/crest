@@ -59,6 +59,24 @@ def test_add_edges():
     m.add_edges_from(edges)
     assert m({'scalar': 2, 'x': 3}) == {'mult': 6}
 
+def test_edges_init():
+    # A multinode HierarchalTensorGraph
+    mult = HierarchalTensorGraph(
+        node=lambda X: {'mult': X['scalar'] * X['x']},
+        name='mult'
+    )
+
+    # Adding a multinode HierarchalTensorGraph
+    m = HierarchalTensorGraph(
+        name='multiply',
+        inputs={'scalar': None, 'x': None},
+        outputs={'mult': None},
+        edges=[('input', mult), (mult, 'output')]
+    )
+
+    # Adding a HierarchalTensorGraph
+    assert m({'scalar': 2, 'x': 3}) == {'mult': 6}
+
 
 def test_contains():
     m = AddMultExp()

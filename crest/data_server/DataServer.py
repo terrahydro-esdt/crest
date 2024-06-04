@@ -56,7 +56,11 @@ class DataServer:
 
             # Download from server if needed
             if not os.path.isfile(file):
-                urlretrieve(url + name, file)
+                try:
+                    urlretrieve(url + name, file)
+                except Exception as e:
+                    print('Could not retrieve file from url:' + url, e)
+                    return None
 
             # Create StructuredDatasets
             with open(file, 'r') as f:
@@ -108,7 +112,11 @@ class DataServer:
 
         # Download from server if needed
         if not os.path.isfile(file):
-            urlretrieve(url + name, file)
+            try:
+                urlretrieve(url + name, file)
+            except Exception as e:
+                print('Could not retrieve file from url: ' + url, e)
+                return None
 
         # Create StructuredDatasets
         with open(file, 'rb') as f:
@@ -168,7 +176,7 @@ class DataServer:
                 try:
                     urlretrieve(url + n, file)
                 except Exception as e:
-                    print(e)
+                    print('Could not retrieve file from url: ' + url, e)
                     return None
             
                 # convert files to the zarr format
@@ -231,7 +239,7 @@ class DataServer:
                 try:
                     urlretrieve(url + n, file)
                 except Exception as e:
-                    print(e)
+                    print('Could not retrieve file from url: ' + url, e)
                     return None
             
                 # convert files to the zarr format
