@@ -448,16 +448,15 @@ class Archiver(BaseAbstract):
                     raise ValueError(message)
 
                 # check if the predicted variables exist in the output dataset
-                message = 'dataset contains non-pre-existing variables[^"]*'
-                message += ', which is not allowed in [^"]*'
-                message += 'with mode=[^"]*. To allow writing new variables, '
-                message += 'set mode=[^"]*.'
+                message = r"dataset contains non-pre-existing variables \[[^\]]+\], "
+                message += "which is not allowed in ``xarray\.Dataset\.to_zarr\(\)`` with "
+                message += "mode='[^']+?'.*?To allow writing new variables, set mode='[^']+?'."
                 if re.search(message, e):
 
                     # if the predicted variables do not exist in the output dataset
                     # create them
                     vars_to_add = ast.literal_eval(
-                        e.split(',')[0].split(' ')[-1])
+                        e.split('variables ')[1].split(', which')[0])
                     for c in vars_to_add:
                         self.out_datafile[c] = (self.coords,
                                                 da.full(shape=tuple(self.out_datafile.sizes.values()),
