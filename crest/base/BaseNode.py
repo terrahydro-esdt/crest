@@ -313,8 +313,6 @@ class BaseNode(BaseAbstract):
                 'callables which define forward and inverse transformations'
             self._add_data_transform(*self.normalize)
 
-
-
 class _NodeWrap(tf.keras.layers.Layer):
     """ Wraps a callable / object in a keras layer, adding any internal 
         tensorflow / keras objects to the wrapped object to allow keras

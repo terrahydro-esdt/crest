@@ -22,6 +22,7 @@ def test_basenode():
     )
     assert m({'scalar': 2, 'input': 3}) == {'output': 6}
 
+
 def test_add_node():
     # A multinode HierarchalTensorGraph
     mult = HierarchalTensorGraph(
@@ -58,6 +59,7 @@ def test_add_edges():
     edges = [('input', mult), (mult, 'output')]
     m.add_edges_from(edges)
     assert m({'scalar': 2, 'x': 3}) == {'mult': 6}
+
 
 def test_edges_init():
     # A multinode HierarchalTensorGraph
@@ -303,16 +305,18 @@ def test_hanging_sinks_nodes():
     with pytest.raises(ImproperTensorGraphError):
         model({'i': 2})
 
+
 def test_node_as_basenode():
     m = HierarchalTensorGraph(
         node=lambda X: {'output': X['scalar'] * X['input']},
         name='mult'
     )
     with pytest.raises(ImproperTensorGraphError):
-         HierarchalTensorGraph(
-                 node=m,
-                 name='mult'
-                 )
+        HierarchalTensorGraph(
+            node=m,
+            name='mult'
+        )
+
 
 def test_pickling():
     X = {'x_1': 0.2, 'x_2': 0.3, 'scalar': 1.5}
@@ -328,19 +332,23 @@ def compare_htg(node_1, node_2):
     inps = node_1.inputs.keys() == node_2.inputs.keys()
 
     for k in node_1.inputs.keys():
-        inps = (TensorSpec(node_1.inputs[k]).spec_dict == TensorSpec(node_2.inputs[k]).spec_dict) and inps
+        inps = (TensorSpec(node_1.inputs[k]).spec_dict == TensorSpec(
+            node_2.inputs[k]).spec_dict) and inps
 
     if not inps:
         print(node_1.inputs.keys(), node_2.inputs.keys())
-        print(TensorSpec(node_1.inputs['x']).spec_dict, node_2.inputs['x'].spec_dict)
-    
+        print(TensorSpec(node_1.inputs['x']).spec_dict,
+              node_2.inputs['x'].spec_dict)
+
     outs = node_1.outputs.keys() == node_2.outputs.keys()
 
     for k in node_1.outputs.keys():
-        outs = (TensorSpec(node_1.outputs[k]).spec_dict == TensorSpec(node_2.outputs[k]).spec_dict) and outs
+        outs = (TensorSpec(node_1.outputs[k]).spec_dict == TensorSpec(
+            node_2.outputs[k]).spec_dict) and outs
 
     if not outs:
-        print(TensorSpec(node_1.outputs['y']).spec_dict, node_2.outputs['y'].spec_dict)
+        print(TensorSpec(node_1.outputs['y']).spec_dict,
+              node_2.outputs['y'].spec_dict)
 
     edge = node_1.edges == node_2.edges
 
@@ -369,14 +377,19 @@ def test_json_basic_exception():
         htg_1.to_json()
 
 # Test htg lambdabase node serialized locally and attempted to deserialize via HTG
+
+
 def test_basenode_exception():
-    l = LambdaNode(lambda X: X['x'] + 10, name='add', inputs={'x': None}, outputs={'add': None})
+    l = LambdaNode(lambda X: X['x'] + 10, name='add',
+                   inputs={'x': None}, outputs={'add': None})
 
     assert HierarchalTensorGraph.from_json(l.to_json())
 
+
 def test_json_basic():
     def add(x): return {'add': x['a'] + x['b']}
-    l = LambdaNode(add, name='add', inputs={'a': None, 'b': None}, outputs={'add': None})
+    l = LambdaNode(add, name='add', inputs={
+                   'a': None, 'b': None}, outputs={'add': None})
 
     htg_1 = HierarchalTensorGraph(name='add')
     htg_1.add_edge('input', l)
@@ -394,6 +407,7 @@ def test_json_basic():
 
     assert (htg_1(
         {'a': 1, 'b': 2}) == htg_2({'a': 1, 'b': 2}))
+
 
 def test_json_model_exception():
     htg_1 = AddSequentialLayer()
@@ -413,7 +427,7 @@ def test_json_model():
     htg_1.outputs = {'y': None}
 
     json_data = htg_1.to_json()
-    
+
     htg_2 = HierarchalTensorGraph.from_json(json_data)
     assert (not htg_2 == None)
 
@@ -437,9 +451,10 @@ def test_json_double():
     assert (htg_1.get_node('output') and htg_2.get_node('output'))
     assert (htg_1.edges == htg_2.edges)
 
+
 def test_json_triple():
     htg_1 = LogAddSquareNode()
-    
+
     json_data = htg_1.to_json()
 
     htg_2 = HierarchalTensorGraph.from_json(json_data)
@@ -467,8 +482,6 @@ def test_json_triple():
         htg_2.get_node('square')
 
 
-
-
 def test_sqjson_custom():
 
     base_node = SquareRoot()
@@ -488,6 +501,7 @@ def test_sqjson_custom():
 
     HierarchalTensorGraph.from_json(json_data)
 
+
 def test_logjson_custom():
 
     htg = HierarchalTensorGraph(
@@ -498,3 +512,68 @@ def test_logjson_custom():
     json_data = htg.to_json()
 
     HierarchalTensorGraph.from_json(json_data)
+
+
+def test_recurrent_single():
+    htg = SingleRecurrent()
+
+    result = htg({'x_1': np.array([[1, 2, 3]])})
+
+    # {'add_1': {'s_1': [array([1]), array([3]), array([6])]}}
+    assert ('add_1' in result)
+    assert ('s_1' in result['add_1'])
+    assert (result['add_1']['s_1'] == [
+            np.array([1]), np.array([3]), np.array([6])])
+
+
+def test_recurrent_single_order():
+    htg = IdentityPlusSingleRecurrent()
+
+    result = htg({'x_1': np.array([[1, 2, 3]])})
+
+    assert ('add_single' in result)
+    assert ('s_1' in result['add_single'])
+    assert (result['add_single']['s_1'] == [
+            np.array([1]), np.array([3]), np.array([6])])
+
+
+def test_recurrent_dual():
+    htg = DualRecurrent()
+
+    result = htg({'x_1': np.array([[1, 2, 3]]), 'x_2': np.array([[1, 2, 3]])})
+
+    assert ('add_1' in result and 'add_2' in result)
+    assert ('s_1' in result['add_1'])
+    assert ('s_2' in result['add_2'])
+    assert (result['add_1']['s_1'] == [
+            np.array([1]), np.array([4]), np.array([11])])
+    assert (result['add_2']['s_2'] == [
+            np.array([1]), np.array([4]), np.array([11])])
+
+
+def test_recurrent_dual_order():
+    htg = IdentityPlusDualRecurrent()
+
+    result = htg({'x_1': np.array([[1, 2, 3]]), 'x_2': np.array([[1, 2, 3]])})
+
+    assert (result['add_2_dual']['s_2'] == [
+            np.array([1]), np.array([4]), np.array([10])])
+
+
+def test_recurrent_dual():
+    htg = TripleRecurrent()
+
+    result = htg({'x_1': np.array([[1, 2, 3]]), 'x_2': np.array(
+        [[1, 2, 3]]), 'x_3': np.array([[1, 2, 3]])})
+
+    # {'add_1': {'s_1': [array([1]), array([5]), array([18])]}, 'add_2': {'s_2': [array([1]), array([5]), array([18])]}, 'add_3': {'s_3': [array([1]), array([5]), array([18])]}}
+    assert ('add_1' in result and 'add_2' in result and 'add_3' in result)
+    assert ('s_1' in result['add_1'])
+    assert ('s_2' in result['add_2'])
+    assert ('s_3' in result['add_3'])
+    assert (result['add_1']['s_1'] == [
+            np.array([1]), np.array([5]), np.array([18])])
+    assert (result['add_2']['s_2'] == [
+            np.array([1]), np.array([5]), np.array([18])])
+    assert (result['add_3']['s_3'] == [
+            np.array([1]), np.array([5]), np.array([18])])

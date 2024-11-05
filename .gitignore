@@ -13,3 +13,4 @@ __pycache__
 crest_cache/
 soil_moisture/
 *.pkl
+*.log.jsonl*

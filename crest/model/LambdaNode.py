@@ -41,9 +41,14 @@ class LambdaNode(HierarchalTensorGraph):
         lambda_json.pop('graph')
         lambda_json.pop('output')
 
+        if 'parent' in lambda_json:
+            lambda_json.pop('parent')
+
         lambda_json['node'] = func_json
         lambda_json['node_class'] = self.__class__.__name__
         lambda_json['node_module'] = self.__module__
+
+        print(f'LambdaNode.to_json: {lambda_json}')
         
         return json.dumps(lambda_json)
 
