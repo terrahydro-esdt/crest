@@ -151,6 +151,9 @@ class KerasNode(HierarchalTensorGraph):
         keras_json.pop('graph')
         keras_json.pop('keras_obj')
         keras_json.pop('output')
+        
+        if ('parent' in keras_json):
+            keras_json.pop('parent')
 
         keras_json['node'] = self.keras_obj.to_json()
         keras_json['node_class'] = self.__class__.__name__

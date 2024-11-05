@@ -57,6 +57,9 @@ class NetworkXGraph(BaseGraph):
     def out_edges(self, nbunch=None, data=False, default=None):
         return self.graph.out_edges(nbunch,data,default)
     
+    def set_edge_attributes(self, attr: dict):
+        nx.set_edge_attributes(self.graph, attr)
+    
     def is_directed(self):
         return self.graph.is_directed()
     

@@ -407,6 +407,8 @@ class Block(BaseAbstract):
         xr_kwargs = {'dims': orig_dims, 'requested_features': req_features} | (
             {'attrs' : {'resolution': dict(zip(self.dims, self.resolution))}}
             if self.is_uniform else {})
+        
+        print(self.resolution, '\n', self.data.shape, '\n', self.coords.shape)
 
         def cast_dtype(key: str, value: np.ndarray) -> np.ndarray:
             """ Cast the given value array back to its original dtype """

@@ -1,0 +1,31 @@
+                asctime |    pid | threadName | lineno:filename |   level | message
+========================|========|============|=================|=========|========
+2024-10-11 16:25:10,798 |  51307 | MainThread | 446:Batcher.p.. |    INFO | Process 1 (pid=51307) Batcher generator starting
+2024-10-11 16:25:11,174 |  51307 | MainThread | 465:Batcher.p.. |    INFO | [time=0.372 seconds|dMem=69.8 MB] Generated 1 dataset blocks
+2024-10-11 16:25:11,176 |  51307 | MainThread | 580:Batcher.p.. |    INFO | Using 1 block/task, 1 task total
+2024-10-11 16:25:11,181 |  51307 | _blocker_0 | 650:Batcher.p.. |    INFO | [time=0.000614 seconds|dMem=64 KB] Computed 1 blocks -> 60K samples (1 blocks, 469 KB)
+2024-10-11 16:25:11,181 |  51307 | _blocker_0 | 699:Batcher.p.. |    INFO | Adding 1 batch tasks: 1 blocks/task, ~469 KB/block
+2024-10-11 16:25:11,186 |  51307 | _blocker_0 | 710:Batcher.p.. |    INFO | [time=0.00307 seconds|dMem=32 KB] Queued 1 batch tasks
+2024-10-11 16:25:11,188 |  51307 | MainThread | 605:Batcher.p.. |    INFO | 0 tasks left @ 0.0122 seconds/task -> ~0 seconds
+
+2024-10-11 16:25:11,656 |  51307 | _batcher_0 | 775:Batcher.p.. |    INFO | [time=0.117 seconds|dMem=29.6 MB] Generated 300 batches
+2024-10-11 16:25:15,251 |  51307 | MainThread | 500:Batcher.p.. |    INFO | [time=4.07 seconds|dMem=15.7 MB] 
+	---------------------------------------------------------
+	Completed epoch
+2024-10-11 16:25:15,253 |  51307 | MainThread | 580:Batcher.p.. |    INFO | Using 1 block/task, 1 task total
+2024-10-11 16:25:15,259 |  51307 | _blocker_0 | 650:Batcher.p.. |    INFO | [time=0.00125 seconds|dMem=160 KB] Computed 1 blocks -> 60K samples (1 blocks, 469 KB)
+2024-10-11 16:25:15,259 |  51307 | _blocker_0 | 699:Batcher.p.. |    INFO | Adding 1 batch tasks: 1 blocks/task, ~469 KB/block
+2024-10-11 16:25:15,264 |  51307 | _blocker_0 | 710:Batcher.p.. |    INFO | [time=0.00119 seconds|dMem=0 B] Queued 1 batch tasks
+2024-10-11 16:25:15,399 |  51307 | MainThread | 605:Batcher.p.. |    INFO | 0 tasks left @ 0.147 seconds/task -> ~0 seconds
+
+2024-10-11 16:25:15,712 |  51307 | _batcher_0 | 775:Batcher.p.. |    INFO | [time=0.13 seconds|dMem=25.8 MB] Generated 300 batches
+2024-10-11 16:25:21,075 |  51307 | MainThread | 500:Batcher.p.. |    INFO | [time=5.82 seconds|dMem=3.8 MB] 
+	---------------------------------------------------------
+	Completed epoch
+2024-10-11 16:25:21,077 |  51307 | MainThread | 580:Batcher.p.. |    INFO | Using 1 block/task, 1 task total
+2024-10-11 16:25:21,084 |  51307 | _blocker_0 | 650:Batcher.p.. |    INFO | [time=0.00111 seconds|dMem=0 B] Computed 1 blocks -> 60K samples (1 blocks, 469 KB)
+2024-10-11 16:25:21,084 |  51307 | _blocker_0 | 699:Batcher.p.. |    INFO | Adding 1 batch tasks: 1 blocks/task, ~469 KB/block
+2024-10-11 16:25:21,088 |  51307 | _blocker_0 | 710:Batcher.p.. |    INFO | [time=0.000346 seconds|dMem=0 B] Queued 1 batch tasks
+2024-10-11 16:25:21,217 |  51307 | MainThread | 605:Batcher.p.. |    INFO | 0 tasks left @ 0.14 seconds/task -> ~0 seconds
+
+2024-10-11 16:25:21,539 |  51307 | _batcher_0 | 775:Batcher.p.. |    INFO | [time=0.147 seconds|dMem=22.8 MB] Generated 300 batches
