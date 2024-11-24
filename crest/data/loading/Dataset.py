@@ -219,71 +219,22 @@ class Dataset(BaseSet):
 
 
     def ensure_extents(self):
-        """ TODO: Make this function idempotent (i.e. before/after cache should calculate same extents) 
+        """ Ensure all Datafile extents represent equivalent bounding boxes.
 
-        a: [0, 1, 2, 3, 4, 5]
-        b: [0,    2,    4   ]
-        c: [   1,    3,    5]
+        A universal extent is found by calculating the maximal intersection 
+        of all Datafile extents. This is then set as the new extent for each
+        Datafile using its nearest respective coordinates, with an additional 
+        1-element buffer included at edges (if data is available) to allow for 
+        potential sample matches at coordinate extrema. These new Datafile 
+        extents will always generate the same intersecting area and so this
+        function is idempotent. 
 
-        Global extent could be either [0, 5] or [1, 4]
-        Either way, the final individual extents should be:
-            a: [0, 5]
-            b: [0, 4 or 5]
-            c: [0 or 1, 5]
-
-        Maybe the process should be:
-            1. find minimum intersecting global extent
-            2. apply found global extent, using +1 (<) outside rather than bfill/ffill (<=) 
-            3. find maximum global extent 
-            4. set individual extents to this maximum
-            5. apply individual extents
-
-        So we would get:
-            1. global extent = [1, 4]
-            2. a=[0,5] b=[0,4] c=[1,5]
-            3. global extent = [0, 5]
-            4. a=[0,5] b=[0,5] c=[0,5] 
-            5. a=[0-5] b=[0-4] c=[1-5] 
+        Still uncertain whether this should be performed automatically (risking
+        data being unexpectedly excluded); or left up to the user to correctly
+        bound their data (allowing the potential for unnecessary data that 
+        slows down sample generation, or possibly a bad block schema).
 
         """
-
-        # def get_subset(extent, data, offset=False):
-        #     """ Extract the data subset requested by the given extent """
-        #     select = lambda dim, ext, m: data[dim].sel({dim: ext}, method=m)
-        #     for dim, ext in extent.items():
-        #         if dim in data and not data[dim].isnull().any():
-
-        #             # Select by 'outside' nearest values according to requested extents
-        #             try:             lo = select(dim, ext[0], 'nearest' if offset else 'ffill')
-        #             except KeyError: lo = select(dim, ext[0], 'nearest')
-        #             try:             hi = select(dim, ext[1], 'nearest' if offset else 'bfill')
-        #             except KeyError: hi = select(dim, ext[1], 'nearest')
-
-        #             # Offset by one additional index outside
-        #             if offset:
-        #                 lo = data[dim].sel({dim: slice(None, lo)}).isel({dim: slice(-2, None)}).isel({dim:0})
-        #                 hi = data[dim].sel({dim: slice(hi, None)}).isel({dim: slice(None, 2)}).isel({dim:-1})
-        #             data = data.sel({dim: slice(lo, hi)})
-        #     return data
-
-        # def get_subset2(extent, data):
-        #     """ Extract the data subset requested by the given extent """
-        #     select = lambda dim, ext, m: data[dim].sel({dim: ext}, method=m)
-        #     for dim, ext in extent.items():
-        #         if dim in data and not data[dim].isnull().any():
-
-        #             # Select by 'outside' nearest values according to requested extents
-        #             # This doesn't work for all datatypes, e.g. datetime will fail to multiply with float
-        #             try:                 lo = select(dim, ext[0]*0.999, 'ffill')
-        #             except:
-        #                 try:             lo = select(dim, ext[0], 'ffill')
-        #                 except KeyError: lo = select(dim, ext[0], 'nearest')
-        #             try:                 hi = select(dim, ext[1]*1.001, 'bfill')
-        #             except:
-        #                 try:             hi = select(dim, ext[1], 'bfill')
-        #                 except KeyError: hi = select(dim, ext[1], 'nearest')
-        #             data = data.sel({dim: slice(lo, hi)})
-        #     return data
 
         def get_extents(data):
             # Handles datetime: https://github.com/pydata/xarray/issues/3256
@@ -291,7 +242,6 @@ class Dataset(BaseSet):
                 data[dim].min().to_numpy().min(),
                 data[dim].max().to_numpy().max(),
             ) for dim in data.coords if not data[dim].isnull().any()}
-
 
         def print_extent(extent, prefix='\t\t'): 
             """ Printing helper """
@@ -301,67 +251,53 @@ class Dataset(BaseSet):
         # Iterate over all Datafiles to find the global extent
         extent = {}
         for df in self:
+
+            # Get the full extent available in the zarr
             raw = df._raw_data
             ext = get_extents(raw)
-
             for dim, raw_ext in ext.items():
-                gbl_ext = extent.get(dim, raw_ext)
-                d_range = raw[dim].sel({dim: slice(*df.extent.get(dim, raw_ext))})
-                sub_ext = get_extents(d_range)[dim]
 
+                # Get the Datafile's subset extent and current global extent
+                d_slice = slice(*df.extent.get(dim, raw_ext))
+                sub_ext = get_extents(raw[dim].sel({dim: d_slice}))[dim]
+                gbl_ext = extent.get(dim, raw_ext)
+
+                # Store the running maximin/minimax extent for each dimension
                 extent[dim] = (
                     max(raw_ext[0], sub_ext[0], gbl_ext[0]),
                     min(raw_ext[1], sub_ext[1], gbl_ext[1]),
                 )
 
-
-            # sub = get_subset(df.extent, raw, offset=False)
-
-            # raw_ext = get_extents(raw)
-            # sub_ext = get_extents(sub)
-            # gbl_ext = {dim: extent.get(dim,ext) for dim,ext in sub_ext.items()}
-
-            # print(f'\n\tExtent for {df}:')
-            # print(f'\t\tAvailable:')
-            # print_extent(raw_ext, '\t\t\t')
-            # print(f'\t\tRequested:')
-            # print_extent(sub_ext, '\t\t\t')
-            
-            # # Update current global extent 
-            # extent.update( {dim: (
-            #     max(raw_ext[dim][0], sub_ext[dim][0], gbl_ext[dim][0]),
-            #     min(raw_ext[dim][1], sub_ext[dim][1], gbl_ext[dim][1]),
-            # ) for dim in raw_ext} )
-
         print(f'\n\tSetting new global extent:')
         print_extent(extent)
 
-        # Update each Datafile
+        # Update each Datafile extent using the found global extent
         for df in self: 
-
             raw = df._raw_data
             ext = {}
+
+            # Generate new Datafile extent for each dimension
             for dim in df.dims:
-                if raw[dim].isnull().any(): continue
+                vals = raw[dim]
 
-                minim, maxim = extent[dim]
-                in_bound = lambda coord: max(0, min(coord, len(raw[dim])-1))
-                location = lambda val, side: np.searchsorted(raw[dim], val, side)
-                ext[dim] = (
-                    raw[dim][in_bound( location(minim, 'right')-2 )].to_numpy().min(),
-                    raw[dim][in_bound( location(maxim, 'left' )+2 )].to_numpy().max(),
-                )
-            # Apply twice to ensure idempotency (get +/- 1 step outside)
-            # sub = get_subset2(extent, df._raw_data)
-            # ext = dict(df.extent)
-            # ext.update( get_extents(sub) )
+                # Skip any virtual dimensions
+                if not vals.isnull().any():
+                    minim, maxim = extent[dim]
 
+                    # Find nearest coords, taking the element one index outside
+                    find_idx = lambda v, side: np.searchsorted(vals, v, side)
+                    in_bound = lambda index: max(0, min(index, len(vals)-1))
+                    to_coord = lambda index: vals[in_bound(index)].to_numpy()
+
+                    # +/-1 gives nearest, +/-2 gives one index further outside
+                    ext[dim] = ( to_coord( find_idx(minim, 'right')-2 ).min(),
+                                 to_coord( find_idx(maxim, 'left' )+2 ).max() )
+
+            # Set the final extent and ensure Datafile.data is regenerated
             print(f'\n\tSetting new extent for {df}:')
             print_extent(ext)
-
             df.extent = ext
             df.__dict__.pop('data', None)
-
 
 
     def create_blocks(self, 
