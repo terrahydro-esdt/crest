@@ -1,11 +1,8 @@
-from numpy.lib.stride_tricks import as_strided
 from collections.abc import Collection
-from dask.delayed import Delayed
-from contextlib import nullcontext
+from contextlib import nullcontext, contextmanager
 from functools import partial, cached_property
 from itertools import chain, islice
 from tqdm.auto import tqdm
-from numbers import Number
 from pathlib import Path
 from ctypes import c_int
 from typing import Union
@@ -16,14 +13,15 @@ import multiprocessing.sharedctypes
 import multiprocessing.synchronize
 import multiprocessing.queues
 import multiprocessing as mp
-import threading, _thread
-# import tensorflow as tf
 import dask.array as da
 import pickle as pkl
 import numpy as np
 import faulthandler
 import traceback
+import threading
 import logging
+import numbers
+import signal
 import psutil
 import shutil
 import time
@@ -31,13 +29,15 @@ import os
 import re
 import gc
 
-from crest.utils import Stopwatch
+from crest.utils import Stopwatch, TimedHandler
 from .ThreadedFunction import ThreadedFunction
 from .loading import Dataset, StructuredDataset, SampleSet, Block
 
-from crest.utils.setup_logging import logger_setup
+# from crest.utils.setup_logging import logger_setup
+# logger = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
+# Some type checkers report Literal numbers aren't compatible with Number
+Number = numbers.Real | int | float
 
 # Amount of time to sleep when waiting on something to complete
 #   This should be a small value, but large enough that there won't be
@@ -88,9 +88,9 @@ class Batcher:
         from the chunks within a block. Must be >= 1.
     shuffle    : bool
         Whether samples should be shuffled to generate batches, or returned in
-        the original order of the sample array. When shuffle=False, multiple
-        processes and threads may not be used, as completion progress across
-        processes cannot be consistently ordered.
+        the original order of the sample array. If correctly ordered batches
+        are desired with shuffle=False, multiple processes and threads should 
+        not be used as completion progress cannot be consistently ordered.
     repeat     : bool
         Whether the Batcher should repeat iteration over the batches once all
         batches have been yielded. Note that this means the Batcher will yield
@@ -139,14 +139,81 @@ class Batcher:
     loglevel   : int
         Level that log file will display. Should be a level defined by the
         logging module, i.e. logging.INFO, logging.DEBUG, etc.
+    logdelay   : float
+        When multiple workers are used, `logdelay` controls the amount of time
+        (in seconds) that will be used as a buffer for logging records. In this
+        way, logs coming from a given worker will be grouped together when they
+        are near in time to one another. This has the consequence of creating
+        log files in which the records are not strictly ordered in time, as
+        records may be grouped such that writing them to the log file is 
+        delayed by <= `logdelay` sec. To disable this functionality, set 
+        logdelay=0 (or any value <= 0).
+    block_sync : bool
+        Controls block synchronization across workers: once a worker finishes
+        computing samples for a block, it waits for all other workers to finish
+        a block before moving on to a new block. This is made available to be 
+        used in combination with `valid_percents` or `drop_datafiles`, when it
+        is useful to have a guarantee for batches to be generated from all 
+        configurations before repeating a configuration. It is recommended for 
+        this to be set to False since it will force workers to wait for other 
+        workers before moving on with their workload (thus slowing overall
+        batch generation to be proportional to the slowest workload).
     seed       : int | None
         Seed for reproducible randomness.
+    valid_percents : list[dict[str, dict]]
+        Note: in general, the `drop_datafiles` parameter should be preferred 
+        over the use of `valid_percents`. With multiple sources of data, it may
+        be necessary to allow for some sources to be missing to find any valid 
+        samples from others. For instance, sparse data coming from ground 
+        stations (e.g. FLUXNET) would have few (if any) spatial overlaps with 
+        other sparse data sources (e.g. SNOTEL); in order to generate samples 
+        from both of these sources, we can rotate through allowing and 
+        disallowing missing values for each of them with this parameter: 
+            ```valid_percents=[ {'FLUXNET' : {'datetime':0}},
+                                {'SNOTEL'  : {'datetime':0}}, ]```
+        This has two valid_percent configurations to rotate through, which will
+        be used independently by each worker. In other words, when a worker is
+        preparing to compute samples for a block, it will first randomly choose
+        one of the configurations provided in the `valid_percents` list, then
+        use that chosen configuration to specify the appropriate Datafile 
+        `valid_percent` values for that block computation. For detail on the
+        format of `valid_percent`, see the docstring for Datafile. 
+    drop_datafiles : list[list[str]]
+        Similar to the `valid_percents` parameter, this keyword addresses the
+        same goal of allowing a single Batcher to generate samples from
+        multiple different Datafile combinations. However, `drop_datafiles` 
+        will actually drop the specified Datafiles during block computation
+        rather than just allowing values to be missing. Consequently, computing
+        blocks is much faster (as there are fewer Datafiles to match up) - but 
+        Datafiles which are dropped in a block will produce NaN features, even
+        if those features are actually valid for a given sample location. The
+        usage of this parameter follows the same format of `valid_percents`,
+        but only requires the name of Datafiles to drop: 
+            `drop_datafiles = [['FLUXNET'], ['SNOTEL']]`
+        This list contains two configurations that will be rotated through: 
+        one which drops the FLUXNET Datafile during block computation, and one
+        which drops the SNOTEL Datafile. Multiple names can be specified for a
+        single configuration, and any number of configurations can be provided.
+    samples_per_block : int | None
+    batches_per_epoch : int | None
+        Both of these parameters control the same logic, and so only one should
+        be used at a time. `samples_per_block` determines how many samples are
+        to be pulled from each block of the data (at most, since block may not
+        have enough samples due to NaN values). Likewise, `batches_per_epoch`
+        indirectly controls the number of samples which are pulled from each
+        block by computing 
+            `samples_per_block = (batches_per_epoch*batch_size) / n_blocks`
+        In this way, both parameters affect how many batches are required to 
+        complete a full cycle through the spatiotemporal extent of the data 
+        (i.e. an epoch), but batches_per_epoch takes care of the sample 
+        calculation automatically, whereas samples_per_epoch allows more 
+        fine-grained control. In addition, setting this parameter to None (the
+        default) will return all samples across all blocks - care must be taken
+        to ensure a full epoch is completed if the entire data extent needs to
+        be sampled, as returning all samples can mean a very large number of
+        batches are required to complete an epoch. 
 
     """
-
-    @property
-    def logger(self) -> logging.Logger:
-        return logging.getLogger(__name__)
 
     def __init__(self,
         dataset    : Union[Dataset, StructuredDataset, list[Dataset]],
@@ -160,17 +227,24 @@ class Batcher:
         continuous : bool   = False,
         blocksize  : Number = 1e9,
         numblocks  : int    = 0,
-        max_queue  : int    = 100,
-        task_bytes : float  = 5e7,
+        max_queue  : int    = 50,
+        task_bytes : float  = 1e8,
         logfile    : str    = 'Batcher.log',
         loglevel   : int    = logging.INFO,
+        logdelay   : float  = 3,
+        fastpath   : bool   = False,
+        block_sync : bool   = False,
         seed       : int | None = None,
+        valid_percents : list[dict[str, dict]] = [],
+        drop_datafiles : list[list[str]] = [],
+        samples_per_block : int | None = None,
+        batches_per_epoch : int | None = None,
     ):
         self.dataset    = dataset
         self.batch_size = batch_size
         self.features = features
-        self.workers = workers if shuffle else 0
-        self.threads = threads if shuffle else 1
+        self.workers = workers# if shuffle else 0
+        self.threads = threads# if shuffle else 1
         self.shuffle = shuffle
         self.repeat = repeat
         self.duplicate = duplicate
@@ -181,8 +255,17 @@ class Batcher:
         self.task_bytes = task_bytes
         self.logfile = logfile
         self.loglevel = loglevel
+        self.logdelay = logdelay
+        self.fastpath = fastpath
+        self.block_sync = block_sync
         self.seed = seed
+        self.valid_percents = valid_percents
+        self.drop_datafiles = drop_datafiles
+        self.samples_per_block = samples_per_block
+        self.batches_per_epoch = batches_per_epoch
         self.random = random = np.random.default_rng(seed)
+        assert((len(valid_percents) == 0) or (len(drop_datafiles) == 0)), (
+            'Cannot specify both valid_percents and drop_datafiles')
 
         # Store initialization parameter names for pickling
         self._init_keys = locals().keys() - {'self'}
@@ -191,46 +274,54 @@ class Batcher:
         if self.workers: self._is_picklable()
 
         # One worker per dataset in the list, each worker gets all blocks
-        if isinstance(dataset, list) and isinstance(dataset[0], Dataset): 
-            self.workers   = len(dataset)
-            self.duplicate = True
+        if isinstance(dataset, list) and isinstance(dataset[0], Dataset):
+            self._handle_dataset_list(dataset)
+    
 
+    def __repr__(self):
+        return f'Batcher({self.dataset})'
 
     def __getstate__(self):
-        """ Ensure unpickle-able objects are not included """
+        """ Ensures unpickle-able objects are not included """
         return {key: getattr(self, key) for key in self._init_keys}
 
-    def __del__(self):
-        self.close(0, origin='__del__')
-
     def __iter__(self):
+        """ Batchers are iterable via their (cached) generator function """
         yield from self.generator()
 
     def __next__(self):
+        """ Next batch can be retrieved via the (cached) generator """
         return next(self.generator())
-
-    def __exit__(self, *args, **kwargs):
-        self.close(0, origin='__exit__')
 
     def __enter__(self):
         """ Create any necessary resources and start generating batches """
-        if self.workers > 0:
-            self._processes
-        else:
-            self._generator
+        if self.workers > 0: self._processes
+        else:                self._generator
         return self
 
-    def debug(self, *args, **kwargs):
-        self._log('debug', *args, **kwargs)
+    def __del__(self):
+        """ Release resources prior to Batcher object deletion """
+        self.close(0, origin='__del__')
 
-    def info(self, *args, **kwargs):
-        self._log('info', *args, **kwargs)
+    def __exit__(self, *args, **kwargs):
+        """ Release resources upon exit of the context manager """
+        self.close(0, origin='__exit__')
 
-    def warning(self, *args, **kwargs):
-        self._log('warning', *args, **kwargs)
+    # Logging helper fun
+    def   debug(self, *args, **kwargs): self._log('debug',   *args, **kwargs)
+    def    info(self, *args, **kwargs): self._log('info',    *args, **kwargs)
+    def warning(self, *args, **kwargs): self._log('warning', *args, **kwargs)
+    def   error(self, *args, **kwargs): self._log('error',   *args, **kwargs)
 
-    def error(self, *args, **kwargs):
-        self._log('error', *args, **kwargs)
+
+    @cached_property
+    def benchmark(self):
+        """ Return a Stopwatch function for benchmarking """
+        return lambda label, logger=self.debug, **kwargs: Stopwatch(**({
+            'message' : f'Batcher.{label}',
+            'logger'  : logger,
+        } | kwargs))
+
 
     def generator(self, show_timing=False):
         """Top-level function to generate batches.
@@ -251,60 +342,56 @@ class Batcher:
             'disable': not show_timing,
         }
         with tqdm(unit=' Batches', **bar_kwargs) as pbar, \
-                tqdm(unit=' Samples', **bar_kwargs) as pbar2:
+             tqdm(unit=' Samples', **bar_kwargs) as pbar2:
             start = time.time()
-            for i, batch in enumerate(self._iter_process_batches()):
+            for i, batch in enumerate(self._iterate_process_batches()):
                 if show_timing and (i == 0):
                     elapsed = time.time() - start
-                    pbar.clear();
-                    pbar2.clear()
-                    self.logger.info(f'Time to first batch: {elapsed:.1f} seconds\n')
-                    pbar.unpause();
-                    pbar2.unpause()
-                pbar.update(1);
-                pbar2.update(self.batch_size)
-                yield batch
+                    pbar.clear();   pbar2.clear()
+                    print(f'Time to first batch: {elapsed:.1f} seconds\n')
+                    pbar.unpause(); pbar2.unpause()
+                pbar2.update(self.batch_size); pbar.update(1)   
+                yield tuple(batch) if isinstance(batch, list) else batch
+
 
     def close(self, timeout: Number = 10, origin: str = ''):
         """ Close and delete all thread / process resources """
 
         class suppress:
             """ contextlib.suppress which is available at interpreter exit """
-
             def __enter__(self):                  yield
-
             def __exit__(self, *args, **kwargs):  return True
 
         # If close was called from __del__, we need to wrap all calls such that
         # exceptions are ignored (as there are no guarantees anything still
         # exists outside of this class, e.g. at interpreter exit)
         handler = (suppress if origin == '__del__' else nullcontext)()
-        with handler:
-            self.debug(f'Called close from: {origin}')
+        with handler: self.debug(f'Called close from: {origin}')
 
         # Signal threads/workers to exit
-        if ('_exit_flag' in self.__dict__) and not self._exit:
-            # In certain situations, Event.set can deadlock
-            #  (see https://stackoverflow.com/a/73341335/22210498)
-            with handler: self._exit_flag.set()
+        with handler:
+            if ('_exit_flag' in self.__dict__) and not self._exit:
+                # In certain situations, Event.set can deadlock
+                #  (see https://stackoverflow.com/a/73341335/22210498)
+                with handler: self._exit_flag.set()
 
         # Close background thread managers
         for key in ['_block_tasks', '_batch_tasks']:
-            if key in self.__dict__:
-                with handler: self.__dict__.pop(key).close()
+            with handler:
+                if key in self.__dict__:
+                    self.__dict__.pop(key).close()
 
         # Exhaust queue if this is the main process
-        if hasattr(self, '_queue') and not hasattr(self, '_ppid'):
+        with handler:
+            if hasattr(self, '_queue') and not hasattr(self, '_ppid'):
 
-            # Discard any queue items if we need to close immediately
-            if timeout == 0:
-                self._queue.cancel_join_thread()
-            else:
-                while not self._queue.empty():
-                    try:
-                        self._queue.get_nowait()
-                    except:
-                        break
+                # Discard any queue items if we need to close immediately
+                if timeout == 0:
+                    self._queue.cancel_join_thread()
+                else:
+                    while not self._queue.empty():
+                        try:    self._queue.get_nowait()
+                        except: break
 
         # Delete cached attributes
         for key in ['_generator', '_queue']:
@@ -313,26 +400,21 @@ class Batcher:
         # Clean up background processes
         for job in self.__dict__.pop('_processes', []):
             pid = code = 'Unknown'
-            with handler:
-                pid = job.pid
-            with handler:
-                code = job.exitcode
-            with handler:
-                self.debug(f'Joining pid={pid} (code={code})')
+            with handler: pid = job.pid
+            with handler: code = job.exitcode
+            with handler: self.debug(f'Joining pid={pid} (code={code})')
             with handler:
 
                 # Wait a maximum of `timeout` seconds to join
                 try:
-                    if timeout:
-                        job.join(timeout) or job.close()
-                    else:
-                        job.terminate()
+                    if timeout: job.join(timeout) or job.close()
+                    else:       job.terminate()
                 except ValueError:
-                    try:
-                        job.terminate()
-                    except:
-                        pass
+                    try:        job.terminate()
+                    except:     pass
                     self.warning(f'Process {pid} needed to be terminated')
+        with handler: self.debug(f'Finished closing Batcher via {origin}')
+
 
     @property
     def active_workers(self) -> list[mp.process.BaseProcess]:
@@ -353,31 +435,102 @@ class Batcher:
     @property
     def process_name(self) -> str:
         """ Return a label for the current process """
-        if hasattr(self, '_pidx'):
-            return f'Process {self._pidx} (pid={os.getpid()})'
-        return f'Main process (pid={os.getpid()})'
+        return f'Process {getattr(self,"_pidx","Main")} (pid={os.getpid()})'
+
+    @property
+    def pidx(self) -> int:
+        """ Return the process index (or 0 if no index is set) """
+        return getattr(self, '_pidx', 0)
+
+    @classmethod
+    def load_cached(cls, 
+        *args, 
+        cache_path : str | Path, 
+        n_samples  : int  = -1,
+        verbose    : bool = True,
+        **kwargs,
+    ):
+        """Return context manager for iterating batches cached at a location.
+            
+        Parameters
+        ----------
+        *args
+            Any positional arguments for the Batcher.
+        cache_path : str | Path
+            Location that batches should be cached at. 
+        
+
+        Returns
+        -------
+        contextmanager
+            Context manager enabling drop-in integration where Batcher is
+            used. Users can just add '.load_cached' to the standard Batcher
+            'with' statement, along with the location to cache at.
+
+
+        Examples
+        --------
+        >>> cache = 'BatcherCache/cache.pkl'
+        >>> with Batcher.load_cached(dataset, cache_path=cache) as batches:
+        ...    for batch in batches:
+        ...        print(batch)
+
+        """
+
+        # Create the cache if it does not yet exist
+        cache_path = Path(cache_path)
+        if not cache_path.exists():
+            if verbose: print(f'\nStoring batches to "{cache_path}"')
+            cache_path.parent.mkdir(exist_ok=True, parents=True)
+
+            # Create a Batcher object using the given parameters
+            with cls(*args, **kwargs) as batcher:
+                assert((n_samples > 0) or (not batcher.repeat)), \
+                    'Must give n_samples if repeat=True'
+
+                with Stopwatch(silent=not verbose) as timer:
+                    # Load all/n_samples batches from the created Batcher
+                    batcher = batcher.generator(show_timing=verbose)
+                    batches = ( list(batcher) if n_samples <= 0 else 
+                               [next(batcher) for _ in range(n_samples)] )
+
+                    # Store them to the requested cache location and log timing
+                    try:
+                        with cache_path.open('wb') as f: pkl.dump(batches, f)                 
+                    except: cache_path.unlink(missing_ok=True)
+                    timer.message = f'Stored {len(batches)} batches'
+
+        # Return the batches wrapped in a context manager to allow load_cached
+        # to be dropped in where a Batcher object is normally created and used
+        @contextmanager
+        def CachedBatcher(batches):
+            yield batches
+
+        with cache_path.open('rb') as f:
+            return CachedBatcher( pkl.load(f) )
+
 
     # Internal functions: shouldn't need to be directly accessed by users
     # ===================================================================
     # 
     # High level flow of batch creation:
     # ----------------------------------
-    # Batcher.__iter__ -> 
-    #   generator ->
-    #     _iter_process_batches ->
-    #       _queue_batches (if workers > 0)
-    #       _generator ->
-    #         _generate_batches ->
-    #           _blocker ->
-    #             Blockset.find_matches
-    #             _batcher ->
-    #               Blockset._parse
-    #               _extract_features
-    #               _finalize_batch
-    #               yield batch
+    # Batcher.__iter__ or Batcher.__next__ -> 
+    #     generator ->
+    #         _iterate_process_batches ->
+    #             _queue_batches (if workers > 0)
+    #             _generator ->
+    #                 _generate_batches ->
+    #                     _blocker ->
+    #                         Blockset.find_matches
+    #                         _batcher ->
+    #                             Blockset._parse
+    #                             _extract_features
+    #                             _finalize_batch
+    #                             yield batch
 
-    def _iter_process_batches(self):
-        """ Helper which unifies interface for single/multiple processes """
+    def _iterate_process_batches(self):
+        """ Unified interface for single/multiprocessing, yielding batches. """
         try:
             # If using multiprocessing, yield batches from the queue
             if self.workers > 0:
@@ -395,10 +548,8 @@ class Batcher:
                 # Poll the queue for new batches until all workers exit
                 jobs = list(self._processes)
                 while not self._exit and any(alive(j, False) for j in jobs):
-                    try:
-                        yield self._queue.get(timeout=0.1)
-                    except Empty:
-                        pass
+                    try:          yield self._queue.get(timeout=0.1)
+                    except Empty: pass
                     # while not self._exit and self._queue.poll(timeout=0.2):
                     #     yield self._queue.recv()
                     jobs = list(filter(alive, jobs))
@@ -423,13 +574,15 @@ class Batcher:
             self.info('KeyboardInterrupt')
             self.close(timeout=0, origin='KeyboardInterrupt') 
             raise
-        except Exception as e:    self.error(f'Exception: {e}\n{traceback.format_exc()}')
+        except Exception as e: 
+            self.error(f'Exception: {e}\n{traceback.format_exc()}')
 
         # Clean up resources once all batches have been yielded
         # Do not wrap in 'finally', as this will also prematurely
         # close the _generator object when Batcher.generator is
         # garbage collected.
-        self.close(origin='Batcher._iter_process_batches')
+        self.close(origin='Batcher._iterate_process_batches')
+
 
     @cached_property
     def _generator(self):
@@ -446,23 +599,24 @@ class Batcher:
             self.info(f'{self.process_name} Batcher generator starting')
             process = psutil.Process()
             start_t = time.time()
+            dataset = self._datasets[self.pidx] if len(self._datasets) > 1 else self.dataset
             psutil.cpu_percent()
+
+            # Only the first Dataset in the list should be continuous
+            if (len(self._datasets) > 1) and self.pidx: 
+                self.continuous = False
 
             # Ensure the lock and flags are created before starting threads
             self._remainder_lock
-            if getattr(self, '_pidx', 0) == 0:
+            self._barrier
+            if self.pidx == 0:
                 self._first_done.clear()
                 self._exit_flag.clear()
-
-            if isinstance(self.dataset, list) and isinstance(self.dataset[0], Dataset):
-                dataset = self.dataset[getattr(self, '_pidx', 0)]
-                if getattr(self, '_pidx', 0) == 1: self.continuous = False
-            else: dataset = self.dataset
 
             # Samples is a list of dask.Delayed objects or a crest Dataset
             if hasattr(dataset, 'generate_samples'):
                 self.debug('Generating dataset blocks...')
-                with Stopwatch(logger=self.info) as timer:
+                with self.benchmark('_generator', self.info) as timer:
                     blocks = dataset.generate_samples(**{
                         'blocksize' : self.blocksize,
                         'numblocks' : self.numblocks,
@@ -471,14 +625,38 @@ class Batcher:
                         'logger'    : self._logger,
                         'shuffle'   : self.shuffle,
                     })
-                    timer.message = f'Generated {len(blocks)} dataset blocks'
+                    timer.message += f' Generated {len(blocks)} dataset blocks'
             else: blocks = dataset
 
             # Verify there are enough sample blocks if we're not duplicating
             if (len(blocks) < self.workers) and (not self.duplicate):
                 self.warning('Not enough sample blocks for workers! ' +
                              'Set Batcher.duplicate=True.')
-                if getattr(self, '_pidx', 0) >= len(blocks): return
+                if self.pidx >= len(blocks): return
+
+            # Calculate number of samples to be pulled from each block
+            if (self.batches_per_epoch or self.samples_per_block):
+                if self.batches_per_epoch is not None:
+                    spb = (self.batches_per_epoch * self.batch_size) / len(blocks)
+                    self.samples_per_block = max(1, int(spb))
+
+                elif self.samples_per_block is not None:
+                    bpe = (self.samples_per_block * len(blocks)) / self.batch_size
+                    self.batches_per_epoch = max(1, round(bpe))
+
+                if self.pidx == 0:
+                    self.info(f'\n\tTo guarantee the full spatiotemporal data '
+                            + f'extent has been sampled (an epoch completed), '
+                            + f'pull at least {self.batches_per_epoch} batches\n')
+                    self.debug(f'samples/block: {self.samples_per_block}   '
+                             + f'batches/epoch: {self.batches_per_epoch}')
+
+            # Warn if multiple blocks need to be computed for each batch
+            if (self.samples_per_block or self.batch_size) < self.batch_size:
+                self.warning(f'Samples/block ({self.samples_per_block}) < '
+                    +f'batch size ({self.batch_size}), which means multiple'
+                    +' blocks need to be computed for each batch (likely '
+                    +'resulting in slow batch generation)')
 
             # Create threaded task executors for generating blocks and batches
             kwargs = {
@@ -488,16 +666,16 @@ class Batcher:
                 'exitset'  : self._exit_flag.set,
                 'logger'   : self._logger,
             }
-
             self._batch_tasks = ThreadedFunction(self._batcher, **kwargs)
             self._block_tasks = ThreadedFunction(self._blocker, **kwargs)
 
             divider = ''.join(['-'] * 57)
             message = '\n\t'.join(['', divider, 'Completed epoch'])
+            message = f'_generator {message}'
 
             # If requested, yield batches indefinitely
             while not self._exit:
-                with Stopwatch(message, self.info, silent=True) as epoch_log:
+                with self.benchmark(message, self.info, silent=True) as epoch_log:
                     yield from self._generate_batches(blocks)
 
                     # Only log a completed epoch if one has actually finished
@@ -533,10 +711,11 @@ class Batcher:
             message += f'\n\t Elapsed: ' + Stopwatch.readable(elapsed, 'time')
             self.info(f'\n{divider}\n{message}\n{divider}')
 
+
     def _generate_batches(self, blocks: list):
         """ Core generator loop which yields batches """
         # Ensure we're only operating on a copy of the list of blocks
-        subsets = list(blocks)
+        subsets = list(enumerate(blocks))
         start_t = time.time()
 
         if self.shuffle:
@@ -552,7 +731,7 @@ class Batcher:
         n_block = len(subsets)
 
         # Send off first block ASAP to minimize time to first batch
-        if not self._first and (getattr(self, '_pidx', 0) == 0):
+        if not self._first and (self.pidx == 0):
             first, *subsets = subsets
             self._block_tasks([first])
 
@@ -560,7 +739,7 @@ class Batcher:
         if not self._first:
             self.info('Waiting for first set to be completed...')
 
-            if getattr(self, '_pidx', 0) == 0:
+            if self.pidx == 0:
                 if self._block_tasks.threads < 1:
                     next(self._block_tasks)
                 if self._batch_tasks.threads < 1:
@@ -568,7 +747,8 @@ class Batcher:
                         time.sleep(WAIT_TIME)
                     yield from self._batch_tasks
 
-            with Stopwatch('Finished waiting on first set', self.info):
+            message = 'Finished waiting on first set'
+            with self.benchmark(f'_generate_batches {message}', self.info):
                 while not (self._first or self._exit):
                     time.sleep(WAIT_TIME)
 
@@ -578,11 +758,16 @@ class Batcher:
             n_split = max(1, len(subsets) // pertask)
             subsets = np.array_split(subsets, n_split)
             self.info(f'Using {pertask} block/task, {len(subsets)} task total')
+        
+        # Generator is running if there are any subsets or tasks remaining
+        runtime = lambda r: (time.time()-start_t) / (n_block-r)
+        running = lambda: (subsets or getattr(self, '_block_tasks', None) or 
+                                      getattr(self, '_batch_tasks', None))
 
-        runtime = lambda r: (time.time() - start_t) / (n_block - r)
-        eta_est = lambda r: Stopwatch.readable(runtime(r) * r, 'time')
-        running = lambda: self._block_tasks or self._batch_tasks or subsets
-        blk_lim = getattr(self.dataset, '__len__', lambda: 10)() * 6
+        # The number of Block objects currently held in memory should always
+        # be <= (number of Datafiles) * (_block_tasks capacity + 1) 
+        get_len = lambda d: getattr(d, '__len__', lambda: 1)()
+        blk_lim = max(map(get_len, self._datasets)) * self.threads * 3
 
         # Keep executing until all blocks and batches are processed
         while running() and not self._exit:
@@ -598,17 +783,17 @@ class Batcher:
             # Clear out any completed block tasks (as no value is returned)
             if self._block_tasks.threads > 0:
                 if len(list(self._block_tasks)):
-                    left = len(subsets) + len(self._block_tasks)
-                    tps = runtime(left)
-                    rate = Stopwatch.readable(tps, 'time')
-                    eta = Stopwatch.readable(tps * left, 'time')
-                    self.info(f'{left} tasks left @ {rate}/task -> ~{eta}\n')
+                    remaining = len(subsets) + len(self._block_tasks)
+                    task_secs = runtime(remaining)
+                    tps = Stopwatch.readable(task_secs, 'time')
+                    eta = Stopwatch.readable(task_secs * remaining, 'time')
+                    self.info(f'{remaining} tasks left @ {tps}/task: ~{eta}\n')
 
                     # Verify Block objects are being cleared from memory
                     if len(Block._refs) > blk_lim:
-                        blk_lim = len(Block._refs)
-                        self.warning(f'Blocks may not be clearing memory: ' +
-                                     f'{blk_lim} block objects held')
+                        blk_lim = len(Block._refs) + 1
+                        self.warning(f'Blocks may not be clearing memory: '+
+                                     f'{blk_lim-1} block objects held')
             elif len(self._batch_tasks) == 0:
                 next(self._block_tasks)
 
@@ -620,6 +805,7 @@ class Batcher:
         # Yield any remaining samples as the final batch
         if not self._exit and len(self._remainder):
             yield self._finalize_batch(self._remainder)
+
 
     def _blocker(self, blocks: Collection) -> None:
         """Step 1: Combine the given dataset blocks into a single dask Array.
@@ -645,32 +831,73 @@ class Batcher:
             be computed to gather the dask.Array[Sample] objects.
 
         """
+
+        # Hack-y solution for allowing multiple valid_percent Datafiles in a
+        # single batcher, rather than requiring multiple Batchers to be used 
+        def set_mods(name, mods):
+            if len(mods):
+                # On the first call, we start the rotation at the worker index
+                if not hasattr(self, name):
+                    mods = list(mods)
+                    pidx = self.pidx % len(mods)
+
+                # All subsequent calls just rotate the list forward by 1 index
+                else: 
+                    mods = getattr(self, name)
+                    pidx = 1
+                return mods[pidx:] + mods[:pidx]
+            else: return [None]
+            
+        self.__pcts_mods = set_mods('__pcts_mods', self.valid_percents)
+        self.__drop_mods = set_mods('__drop_mods', self.drop_datafiles)
+
+        # Blocks is a list of tuples: [(index, block), ...] 
+        try: 
+            block_idxs, blocks = zip(*blocks)
+            self.debug(f'Now processing block number(s) {block_idxs} ...')
+        except Exception as e: 
+            block_idxs = []
+            self.debug(f'Unknown structure: {e} {blocks}')
+
         # Combine multiple blocks into a single array
-        self.debug(f'Starting compute of find_matches for {len(blocks)} blocks')
-        with Stopwatch(f'Computed {len(blocks)} blocks', self.info) as timer:
+        message = f'Computed {len(blocks)} blocks'
+        with self.benchmark(f'_blocker {message}', self.info) as timer:
+            
             # Need to find a better way to do this
-            compute = lambda blocks: da.hstack(da.compute(*blocks))
+            compute = lambda blocks: da.hstack(da.compute(*blocks)) #pyright: ignore
+            
             try:
-                samples = compute([b(self.task_bytes) for b in blocks])
-            except TypeError:
-                samples = compute(blocks)
+                # Each element in blocks is the Block.find_matches function
+                samples = compute([find_matches(**{
+                    'task_bytes'      : self.task_bytes,
+                    'n_block_samples' : self.samples_per_block,
+                    'valid_pct'       : self.__pcts_mods[0],
+                    'features'        : self.features if self.fastpath else None,
+                    'dropped'         : self.__drop_mods[0],
+                }) for find_matches in blocks])
+
+            # But we can handle the case where find_matches was already called
+            except TypeError: samples = compute(blocks)
 
             # Log infomation about the samples that were just computed
-            blocks = None
+            blocks = [None]
             ntotal = Stopwatch.readable(samples.size)
             nbytes = Stopwatch.readable(samples.nbytes, 'byte')
             nblock = samples.blocks.size
             timer.message += f' -> {ntotal} samples ({nblock} blocks, {nbytes})'
 
+        # If block synchronization was requested, we force workers to wait
+        # here until all workers have reached this point
+        if self.block_sync: self._synchronize_workers()
+
         # Exit early if signaled to do so
+        task_count = 0
         if not self._exit:
 
             # Ensure the _first_done flag is set, and Blocks are cleaned up
             if not samples.size:
                 samples = None
-                with Stopwatch(f'GC: {len(Block._refs)}', self.debug) as timer:
-                    gc.collect()
-                    timer.message += f' -> {len(Block._refs)} Block references'
+                self._cleanup_blocks()
                 if not self._first: self._first_done.set()
                 return
 
@@ -704,10 +931,9 @@ class Batcher:
             order = np.arange(samples.blocks.size)
             if self.shuffle: self.random.shuffle(order)
             order = iter(order)
-        else:
-            task_count = 0
 
-        with Stopwatch(f'Queued {task_count} batch tasks', self.info) as timer:
+        message = f'Queued {task_count} batch tasks'
+        with self.benchmark(f'_blocker {message}', self.info) as timer:
 
             # Extract batches from blocks in the sample array
             while not self._exit and (idx := list(islice(order, task_blocks))):
@@ -717,12 +943,14 @@ class Batcher:
                 while not ((self._first or self._block_tasks.threads < 1) or self._exit):
                     time.sleep(WAIT_TIME)
                 
-                if self.continuous: 
+                # Only use the first sub-block within each block to improve diversity
+                if self.samples_per_block is not None:
+                    timer.message = f'Queued 1 / {task_count} sub-blocks, discarding remainder'
+                    self.debug(f'Queued sub-block slice {idx} for block(s) {block_idxs}')
+
                     # Manually garbage collect Block object as soon as possible
                     samples = None 
-                    with Stopwatch(f'GC: {len(Block._refs)}', self.debug) as timer:
-                        gc.collect()
-                        timer.message += f' -> {len(Block._refs)} Block references'
+                    self._cleanup_blocks()
                     break
 
             # Close the background thread manager if exit has been signaled
@@ -732,6 +960,7 @@ class Batcher:
                 except:
                     pass
                 timer.silent = True
+
 
     def _batcher(self, samples: da.Array) -> list:
         """Step 2: Separate the given sample array into batches.
@@ -763,57 +992,93 @@ class Batcher:
             of Batcher.features.
 
         """
+
         # Compute the current samples and extract features if requested
-        with Stopwatch(f'Compute/extract {len(samples):,} samples', self.debug):
-            samples = self._extract_features(samples.compute())
+        message = f'Compute/extract {len(samples):,} samples'
+        with self.benchmark(f'_batcher {message}', self.debug):
+            samples = samples.compute()
+
+            if getattr(samples, 'make_objs', True):
+                samples = self._extract_features(samples)
+                n_remain = len(self._remainder)
+            else: n_remain = len((self._remainder or [[]])[0])
 
         if self._exit:
             self.debug(f'Exiting _batcher early due to exit flag')
             return
 
-        n_batch = len(samples) // self.batch_size
-        with Stopwatch(f'Generated {n_batch} batches', self.info):
-            if self.shuffle: self.random.shuffle(samples)
+        def create_batches(samples, remainder, put_in_queue=False):
+            if 0 < len(remainder) < self.batch_size:
+                samples = np.append(remainder, samples, 0)
 
-            # Faster, but discards any (samples % batch_size) samples
-            if self.continuous:
-                splits  = np.arange(self.batch_size, len(samples), self.batch_size)
-                list(map(self._queue.put, map(self._finalize_batch, np.array_split(samples, splits))))
-                samples = []
-            else:
+            splits  = np.arange(self.batch_size, len(samples), self.batch_size)
+            samples = np.array_split(samples, splits)
+
+            if put_in_queue:
+                for batch in map(self._finalize_batch, samples):
+                    self._queue.put(batch)
+                return [], []
+
+            if len(samples[-1]) < self.batch_size:
+                *samples, remainder = samples
+            else: remainder = []
+            return samples, remainder
+
+
+        with self.benchmark('_batcher', self.info) as gen_timer:
+            
+            # Fast path which does not create Sample objects
+            if not getattr(samples, 'make_objs', True):
+                self._dtypes = samples.ele_dtype
+                samples = samples.container
+
+                if self.shuffle:
+                    index = np.arange(len(samples[0]))
+                    self.random.shuffle(index)
+                    samples = [s[index] for s in samples]
+
                 # Use a lock to ensure _remainder is handled by only one thread
                 with self._remainder_lock:
-                    if 0 < len(self._remainder) < self.batch_size:
-                        samples = np.append(self._remainder, samples, 0)
+                    samples, remainder = zip( *map(create_batches,
+                        samples, self._remainder or ([[]] * len(samples))) )
 
-                    splits  = np.arange(self.batch_size, len(samples), self.batch_size)
-                    samples = np.array_split(samples, splits)
-                    if len(samples[-1]) < self.batch_size:
-                        *samples, self._remainder = samples
-                    else: self._remainder = []
-                    # # Calculate attributes to create a view of the samples
-                    # n_group = len(samples) // self.batch_size
-                    # i_size  = samples.itemsize
-                    # shape   = (n_group, self.batch_size) + samples.shape[1:]
-                    # strides = (self.batch_size*i_size,i_size) + samples.strides[1:]
+                    if len(remainder[0]):
+                        self._remainder = remainder
+                samples = list(map(self._finalize_batch, zip(*samples)))
 
-                    # # Save any remainder samples
-                    # self._remainder = samples[n_group * self.batch_size:]
+            else:
+                if self.shuffle: self.random.shuffle(samples)
 
-                # Create a strided view and create the batch feature dicts
-                # samples = as_strided(samples, shape=shape, strides=strides)
-                # list(map(self._queue.put, map(self._finalize_batch, samples)))
-                # list(map(self._queue.send, map(self._finalize_batch, samples)))
-                samples = list(map(self._finalize_batch, samples))
+                # Faster, but discards any (samples % batch_size) samples
+                if self.continuous:
+                    samples, _ = create_batches(samples, self._remainder, True)
+                else:
+
+                    # Use a lock to ensure _remainder is handled by only one thread
+                    with self._remainder_lock:
+                        samples, self._remainder = create_batches(samples, self._remainder)
+
+                        # # Calculate attributes to create a view of the samples
+                        # n_group = len(samples) // self.batch_size
+                        # i_size  = samples.itemsize
+                        # shape   = (n_group, self.batch_size) + samples.shape[1:]
+                        # strides = (self.batch_size*i_size,i_size) + samples.strides[1:]
+
+                        # # Save any remainder samples
+                        # self._remainder = samples[n_group * self.batch_size:]
+
+                    # Create a strided view and create the batch feature dicts
+                    # samples = as_strided(samples, shape=shape, strides=strides)
+                    # list(map(self._queue.put, map(self._finalize_batch, samples)))
+                    # list(map(self._queue.send, map(self._finalize_batch, samples)))
+                    samples = list(map(self._finalize_batch, samples))
 
             # Signal that the first batch set is now completed
             if not self._first: self._first_done.set()
-
-            # Manually garbage collect Block object as soon as possible
-            with Stopwatch(f'GC: {len(Block._refs)}', self.debug) as timer:
-                gc.collect()
-                timer.message += f' -> {len(Block._refs)} Block references'
+            self._cleanup_blocks()
+            gen_timer.message += f' Generated {len(samples)} batches'
             return samples
+
 
     def _extract_features(self, samples: Union[SampleSet, np.ndarray]) -> np.ndarray:
         """Step 2.1: Extract the requested features from the Sample objects.
@@ -854,6 +1119,7 @@ class Batcher:
 
         return np.frompyfunc(partial(_extract, features=self.features), nin=1, nout=1)(samples)
 
+
     def _finalize_batch(self, batch: np.ndarray) -> Union[np.ndarray, dict, list]:
         """Step 2.2: Transform the batch array into the final feature dict.
 
@@ -888,6 +1154,17 @@ class Batcher:
 
         """
 
+        if getattr(self, '_dtypes', None) is not None:
+            batch: dict = {feature: data[:, i].astype(T) 
+                for data, dtype in zip(batch, self._dtypes, strict=True)
+                for i, (feature, T) in enumerate(dtype.items())}
+            def _nest(features):
+                """ Follow the nesting structure given by the features """
+                if isinstance(features[0], str):
+                    return {f: batch[f] for f in features}
+                return type(features)(map(_nest, features))
+            return _nest(self.features) if self.features else batch
+
         def _parse(batch, features):
             """ Follow the nesting structure given by the features """
             if len(features) and isinstance(features[0], list):
@@ -896,14 +1173,16 @@ class Batcher:
 
         return batch if self.features is None else _parse(batch, self.features)
 
+
     def _queue_batches(self,
-                       process_ix: int,
-                       parent_pid: int,
-                       queue: mp.queues.Queue,
-                       exit_flag: mp.synchronize.Event,
-                       first_done: mp.synchronize.Event,
-                       sub_blocks: mp.sharedctypes.Synchronized,
-                       ) -> None:
+       process_ix : int,
+       parent_pid : int,
+       queue      : mp.queues.Queue,
+       exit_flag  : mp.synchronize.Event,
+       first_done : mp.synchronize.Event,
+       sub_blocks : mp.sharedctypes.Synchronized,
+       barrier    : mp.synchronize.Barrier,
+    ) -> None:
         """Helper to put batches into a multiprocessing queue.
 
         Notes
@@ -950,6 +1229,17 @@ class Batcher:
             # Ensure we are properly catching any segmentation faults
             faulthandler.enable()
 
+            # This function only runs inside a worker process, which means
+            # KeyboardInterrupts should be ignored (as it will be caught and 
+            # handled by the main process, which can signal through _exit 
+            # if this child should actually exit). 
+            # Without this set, the Batcher workers will _always_ receive a 
+            # KeyboardInterrupt signal when ctrl-c is pressed, even if the 
+            # main process that's using the Batcher is gracefully catching it,
+            # and wants to continue execution and generate more batches.
+            # https://stackoverflow.com/a/5050521
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
+
             # Store the process metadata and shared objects
             self.__dict__.update({
                 '_pidx': process_ix,
@@ -958,6 +1248,7 @@ class Batcher:
                 '_exit_flag'     : exit_flag,
                 '_first_done'    : first_done,
                 '_subset_blocks' : sub_blocks,
+                '_barrier'       : barrier,
                 '_queue'         : queue,
             })
 
@@ -999,7 +1290,8 @@ class Batcher:
                 time.sleep(WAIT_TIME)
             self.info(f'{self.process_name} exiting')
 
-    def _is_picklable(self):
+
+    def _is_picklable(self) -> None:
         """ Checks that the dataset is picklable before spawning processes """
         try:
             pkl.dumps(self.dataset)
@@ -1008,6 +1300,27 @@ class Batcher:
             message += 'when using multiprocessing (i.e. Batcher.workers > 0)'
             self.error(message)
             raise Exception(message)
+
+
+    def _handle_dataset_list(self, datasets: list[Dataset]) -> None:
+        """ Configure to handle a list of Dataset objects, one per worker """
+        if len(datasets) > 1:
+            if self.workers and (self.workers != len(datasets)):
+                raise Exception(f'Batcher.workers={self.workers}, but a list '+
+                    f'with {len(datasets)} Datasets was given. The number of '+
+                    f'workers must be either 0 (for non-multiprocessing), or '+
+                    f'{len(datasets)} (to allow one Dataset per worker).')
+            self.duplicate = True # Workers get all blocks in their Dataset
+        else: self.dataset = datasets[0]
+
+
+    def _cleanup_blocks(self) -> None:
+        """ Manually garbage collect Block object as soon as possible """
+        message = f'GC: {len(Block._refs)}'
+        with self.benchmark(f'_cleanup_blocks {message}', self.debug) as timer:
+            gc.collect()
+            timer.message += f' -> {len(Block._refs)} Block references'
+
 
     @cached_property
     def _processes(self) -> list[mp.process.BaseProcess]:
@@ -1045,6 +1358,7 @@ class Batcher:
             self._exit_flag,
             self._first_done,
             self._subset_blocks,
+            self._barrier,
         )
 
         # Create and start the background processes
@@ -1060,9 +1374,11 @@ class Batcher:
             message += 'possibly due to issues pickling the given Dataset, if '
             message += 'no other exceptions are logged.'
             message += f'\nExit codes: {[job.exitcode for job in jobs]}'
-            self.error(message)
-            raise Exception(message)
+            self.warning(message)
+            if not any(job.is_alive() for job in jobs):
+                raise Exception(message)
         return jobs
+
 
     @cached_property
     def _exit_flag(self) -> mp.synchronize.Event:
@@ -1077,11 +1393,13 @@ class Batcher:
         """
         return mp.get_context('spawn').Event()
 
+
     @property
     def _exit(self) -> bool:
         """ Shortcut to check if the exit flag has been set """
         orphaned = hasattr(self, '_ppid') and not psutil.pid_exists(self._ppid)
         return self._exit_flag.is_set() or orphaned
+
 
     @cached_property
     def _first_done(self) -> mp.synchronize.Event:
@@ -1102,10 +1420,61 @@ class Batcher:
         """
         return mp.get_context('spawn').Event()
 
+
     @property
     def _first(self) -> bool:
         """ Shortcut to check if the first batch has been computed """
+        # If using block synchronization, waiting on the first block is skipped
+        if self.block_sync:
+            return True
         return self._first_done.is_set()
+
+
+    @cached_property
+    def _barrier(self) -> mp.synchronize.Barrier:
+        """ Multiprocessing Barrier.
+
+        Synchronization object that prevents workers from moving forward until
+        all workers have reached and called the Barrier.
+        
+        Returns
+        -------
+        multiprocessing.synchronize.Barrier
+            Only used to synchronize workers across processes such that workers
+            will wait until all other workers have completed their block before
+            moving on to a new block.
+
+        """
+        return mp.get_context('spawn').Barrier(max(1, self.workers))
+
+
+    def _synchronize_workers(self):
+        """ Block until all workers have called this function.
+
+        This function creates a new thread to monitor the exit signal, so that 
+        if signaled the timer thread will abort the barrier to allow exiting.
+
+        """
+        class CheckExit(threading.Timer):
+            def run(T):
+                while not T.finished.wait(T.interval):
+                    if self._exit:
+                        self._barrier.abort()
+                        break
+        # Check the exit signal once per second
+        timer = CheckExit(1, lambda: None)
+        timer.start()
+        if not self._barrier.broken:
+            left = self._barrier.parties - (self._barrier.n_waiting + 1)
+            name = self.process_name
+            if left: self.info(f'{name}: {left} more workers to synchronize..')
+            else:    self.info(f'{name} is last to synchronize')
+        else: self.info(f'{self.process_name} encountered a broken barrier')      
+        try: self._barrier.wait()
+        except threading.BrokenBarrierError:
+            if not self._exit: raise
+        finally: timer.cancel()        
+    
 
     @cached_property
     def _subset_blocks(self) -> mp.sharedctypes.Synchronized:
@@ -1114,10 +1483,21 @@ class Batcher:
         shared_value.value = 1
         return shared_value
 
+
     @cached_property
-    def _remainder_lock(self) -> _thread.LockType:
+    def _remainder_lock(self) -> threading.Lock:
         """ Lock ensuring _remainder is modified by one thread at a time """
         return threading.Lock()
+
+
+    @cached_property
+    def _datasets(self) -> list[Dataset] | list[StructuredDataset]:
+        """ Circumvents the need to check if dataset is a list everywhere """
+        if isinstance(self.dataset, list):
+            if isinstance(self.dataset[0], (Dataset, StructuredDataset)):
+                return self.dataset
+        return [self.dataset]
+
 
     @cached_property
     def _logger(self):
@@ -1126,7 +1506,7 @@ class Batcher:
             '%(asctime)23s',
             '%(process)6s',
             '%(threadName)10.10s',
-            '%(lineno)3s:%(filename)-9.9s..',
+            '%(lineno)4s:%(filename)-9.9s..',
             '%(levelname)7s',
             '%(message)s',
         ]
@@ -1149,12 +1529,16 @@ class Batcher:
             logger.addHandler(handler)
 
             # A rotating handler would be nice, but doesn't work in Windows
+            #   Note that if a rotating handler does ever get added, we need to
+            #   make sure the first log file generated is always kept since it
+            #   will contain various configuration info useful for debugging
             handler = logging.FileHandler(self.logfile)
 
             # Define the log header
             replace = {
-                'process': 'pid',
-                'levelname': 'level',
+                'process'   : 'pid',
+                'levelname' : 'level',
+                'lineno'    : 'lineNum',
             }
             pattern = re.compile(r'\((.*?)\)')
             labels = list(chain(*map(pattern.findall, format_key)))
@@ -1200,11 +1584,20 @@ class Batcher:
         # Otherwise just log to sys.stderr
         else:
             handler = logging.StreamHandler()
-
         handler.setFormatter(log_format)
+
+        # Use a time-based MemoryBuffer to allow logs generated by 
+        # different worker processes to be grouped together in the log
+        # file when they are within `logdelay` seconds of each other.
+        #   Note that when this is used, it means the log file might have
+        #   logs that are out of order temporally (by <= `logdelay` secs)
+        if (self.workers > 1) and (self.logdelay > 0):
+            handler = TimedHandler(self.logdelay, capacity=50, target=handler)
+
         logger.setLevel(self.loglevel)
         logger.addHandler(handler)
         return logger
+
 
     def _log(self, method, *args, **kwargs):
         """ Helper which allows modifying the stacklevel for correct labels """

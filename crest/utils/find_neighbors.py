@@ -14,10 +14,13 @@ import polars as pl
 import pandas as pd 
 import logging 
 
-from ._bruteforce import *
+# from ._bruteforce import *
+from .print_table import print_table
+from .Stopwatch import Stopwatch
+from .matchup.bruteforce.utils import entropy  
+from .matchup import brute
 # from .lexsort import lexsort
-from .entropy import entropy  
-
+from .matchup.bruteforce.utils.bruteforce_numba import *
 
 def get_indices(
     coordinates : Collection[np.ndarray],
@@ -248,6 +251,8 @@ def find_neighbors(
     debug       : bool  = False,
     logger      : logging.Logger | None = None,
     eps         : float = 1e-5,
+    grid_labels : Collection[str] | None = None,
+    axis_labels : Collection[str] | None = None,
     **kwargs,
 ) -> (np.ndarray, np.ndarray):
     """ Find all nearest neighbors for the given coordinates.
@@ -381,15 +386,24 @@ def find_neighbors(
         have lengths 2 and 1; and for grid_3 have lengths 1 and 2. 
 
     """
-    # Rough guess on what dtype can be used to hold indices
+
+    # Rough guess on what dtype can be used to hold indices and values
     large = max(map(np.log10, map(len, coordinates))) > 8
-    dtype = np.int64 if large else np.int32
+    itype = np.int64 if large else np.int32
+    isflt = lambda v: np.issubdtype(v, np.floating) 
+    ftype = max(filter(isflt, [c.dtype for c in coordinates]+[np.float32]))
+
+    # If there's only one grid, we can just return the indices for it
+    if len(coordinates) == 1:
+        table = np.arange(len(coordinates[0]), dtype=itype)[None]
+        count = np.ones_like(table)
+        return table, count 
 
     # Add small value to radius to account for numerical instability
     # Bear in mind this is related to the resolution's rounding
     kwargs.update({
         'radius' : radius + eps,
-        'dtype'  : dtype,
+        'dtype'  : itype,
         'p'      : kwargs.get('p', np.inf),
     })
 
@@ -397,9 +411,10 @@ def find_neighbors(
     get_matches = partial(get_indices, **kwargs)
 
     if resolutions is not None:
-        # Sanity check
+        # Sanity checks
         for c, r in zip(coordinates, resolutions):
             r = np.atleast_1d(r)
+            if r.ndim >  3: raise Exception(f'Found resolution ndim > 3: {r.shape}')
             if r.ndim == 3: r = r[..., 0]
             if r.ndim == 2: r = r.max(0)
             if ((np.abs(c).max(0) > 0) & (r > np.abs(c).max(0))).any():
@@ -407,11 +422,15 @@ def find_neighbors(
 
     # Set a default value for the resolutions if None was given
     resolutions = resolutions or [np.ones(c.shape[-1]) for c in coordinates]
+    grid_labels = grid_labels or [f'Grid_{i}' for i in range(len(coordinates))]
+    axis_labels = axis_labels or [[f'Dim_{i}' for i in range(c.shape[-1])] for c in coordinates]
 
-    if len(coordinates) == 1:
-        table = np.arange(len(coordinates[0]), dtype=dtype)[None]
-        count = np.ones_like(table)
-        return table, count 
+    # Update dtypes
+    coordinates = [c.astype(ftype) for c in coordinates]
+    resolutions = [r.astype(ftype) for r in map(np.atleast_1d, resolutions)]
+
+    # For anisotropic grids, the only available method is bruteforce
+    if any(r.ndim > 2 for r in resolutions): method = 'brute'
 
     # Single anchor grid, checked against all other grids
     if method == 'anchor':
@@ -423,9 +442,9 @@ def find_neighbors(
 
         # Include the reference set indices in the final list of neighbors
         ix    = np.empty(n_ref, dtype=object)
-        ix[:] = list(np.arange(n_ref, dtype=dtype)[:, None])
+        ix[:] = list(np.arange(n_ref, dtype=itype)[:, None])
         table = np.c_[[ix] + match]
-        count = np.array([[1]*n_ref] + [list(map(len, m)) for m in match], dtype=dtype)
+        count = np.array([[1]*n_ref] + [list(map(len, m)) for m in match], dtype=itype)
 
         # Filter neighbor lists in which any of the grids are missing
         if (len(table) > 1) and (not allow_empty):
@@ -455,7 +474,7 @@ def find_neighbors(
         table = reduce(join, frames)
 
         if method=='pandas':
-            table = np.array(table.reorder_levels(columns).to_list(), dtype=dtype).T
+            table = np.array(table.reorder_levels(columns).to_list(), dtype=itype).T
        
         # If we're using polars and not imploding, collect the lazy dataframe data
         elif not use_implode:
@@ -464,203 +483,253 @@ def find_neighbors(
     # [Multiple anchors] Extended dimension tree search over all grids
     # [Multiple non-uniform grids] Extended dimension brute force search optimized with numba
     elif method in ['brute', 'tree']:
-        ftype = max([c.dtype for c in coordinates if np.issubdtype(c.dtype, np.floating)] + [np.float32])
-
-        # Ensure resolutions are in the correct format
-        resolutions = list(map(np.atleast_1d, resolutions))
-        if method == 'brute':
-            # Format resolutions into (left side, right side) 2D resolution arrays
-            for i, res in enumerate(resolutions):
-                c_shp = coordinates[i].shape 
-
-                # Uniform resolution, simply duplicate for left/right side
-                if res.ndim == 1:
-                    res = np.tile(res, (2, 1)).T[None]
-                    assert(res.shape == (1, c_shp[-1], 2)), [res.shape, c_shp]
-                
-                # Non-uniform resolution, extend to endpoints for left and right
-                elif res.ndim == 2:
-                    assert(res.shape[1] == (c_shp[0]-1)), [res.shape, c_shp]
-                    res = np.stack([
-                        np.c_[res[:, :1], res].T,
-                        np.c_[res, res[:,-1:]].T,
-                    ], axis=-1)
-                    assert(res.shape[0] == c_shp[0]), [res.shape, c_shp]
-
-                # Full left/right resolution vectors already provided
-                else: assert(res.shape[0] == c_shp[0]), [res.shape, c_shp]
-                assert(res.shape[-1] == 2), res.shape
-
-                # Place left/right dimension on the first axis
-                res = np.moveaxis(res, -1, 0)
-
-                # Left/right tolerance is half the resolution (plus a small epsilon)
-                resolutions[i] = res.astype(ftype) * radius + eps
+        if False:#method == 'brute':
+            table = brute(
+                coordinates,
+                resolutions,
+                grid_labels,
+                axis_labels,
+                radius, eps,
+                logger,
+            )
         else:
-            resolutions = [r[..., 0] if len(r.shape) > 2 else r for r in resolutions]
-            resolutions = [np.nanmean(r, axis=0) if len(r.shape) > 1 else r for r in resolutions]
+        # if True:
+            # ftype = max([c.dtype for c in coordinates if np.issubdtype(c.dtype, np.floating)] + [np.float32])
+
+            # Ensure resolutions are in the correct format
             resolutions = list(map(np.atleast_1d, resolutions))
-
-        # Optimize column and grid orderings
-        optimizations = True
-        if optimizations: 
-            make_sizes = lambda c, r: float(f'{r.size}.{c.size}')
-            grid_sizes = starmap(make_sizes, zip(coordinates, resolutions))
-            grid_order = np.argsort(list(grid_sizes))[::-1]
-        else: grid_order = list(range(len(coordinates)))
-        coordinates = [coordinates[i] for i in grid_order]
-        resolutions = [resolutions[i] for i in grid_order]
-        
-        # Create the grids to iterate over and pull out the first query
-        grids = zip([c.astype(ftype) for c in coordinates], resolutions)
-        query = next(grids)
-
-        # Initialize the table of neighbor indices, along with the column order 
-        table = np.arange(len(query[0]), dtype=dtype)[:, None]
-        order = [0]
-        if debug:
-            print('\nCoordinates & Resolutions:')
-            for c, r in zip(coordinates, resolutions):
-                print(f'\t{c.shape}  {r.shape}  cmin={c.min(0)}  cmax={c.max(0)}  rmin={r[0].min(0)}  rmax={r[0].max(0)}')
-        
-        # Find simultaneously matching indices across all grids
-        for i, build in enumerate(grids, 1):
-            if debug:
-                print(f'\nIteration {i}/{len(coordinates)-1}')
-                print('--------------')
-                print('Query shape:', query[0].shape, query[1].shape, query[0].dtype)
-                print('Build shape:', build[0].shape, build[1].shape, build[0].dtype)
-                print('Table shape:', table.shape, table.dtype)
-                # print('Virtual dim:', np.isnan(build[0]).all(0).sum(), np.isnan(query[0]).all(0).sum())
-                # print('Unique vals:', list(map(len, map(np.unique, build[0].T))), list(map(len, map(np.unique, query[0].T))))
-
-            # Duplicate the next grid to align with the current table
-            build_dup = [np.tile(b, i) for b in build]
-            
-            # Extract the build/query coordinates/resolutions
-            b,q,br,qr = chain.from_iterable( zip(*[build_dup, query]) )
-
-            # Drop any all NaN (virtual) columns from the build and query tables
-            b_nan_col = np.isnan(b).all(0)
-            q_nan_col = np.isnan(q).all(0)
-            skip_dims = b_nan_col | q_nan_col
-
-            # If requested, swap build/query as necessary to use optimal order
-            if optimizations:
-                # Check virtual dims count (i.e. all values in column are NaN):
-                #  Grid with fewer samples is build when same number of virtual
-                #  Otherwise, grid with more virtual dims is the build
-                b_virt = b_nan_col.sum()
-                q_virt = q_nan_col.sum()
-                switch = (len(b)>len(q)) if q_virt==b_virt else (b_virt<q_virt)
-                if debug: print(f'\t{b_virt=} {q_virt=} {switch=}')
-
-                # Switch build/query if necessary, based on above criteria
-                bq_order = slice(None, None, -1 if switch else 1)
-            else: bq_order = slice(None, None, 1)
-            (b, br), (q, qr) = [(b, br), (q, qr)][bq_order]
-
-            # Reorder the columns
-            if optimizations:
-                sort = lambda i,b_col: np.inf if skip_dims[i] else entropy(b_col)[0]
-                cols = np.argsort(list(starmap(sort, enumerate(b.T))))
-
-                b = b[:, cols]
-                q = q[:, cols]
-                skip_dims = skip_dims[cols]
-
-                # Can't use lexsort until numba's recursion support is fixed
-                # b, b_orig = lexsort(b)
-                # q, q_orig = lexsort(q)
-                # br = (br[:, b_orig] if br.ndim > 1 and br.shape[1] > 1 else br)[..., cols]
-                # qr = (qr[:, q_orig] if qr.ndim > 1 and qr.shape[1] > 1 else qr)[..., cols]
-
-                b_orig = np.lexsort(b.T[::-1])
-                q_orig = np.lexsort(q.T[::-1])
-                # b_orig = np.arange(len(b))[bo]
-                # q_orig = np.arange(len(q))[qo]
-                b = b[b_orig]
-                q = q[q_orig]
-                br = (br[:, b_orig] if br.ndim > 1 and br.shape[1] > 1 else br)[..., cols]
-                qr = (qr[:, q_orig] if qr.ndim > 1 and qr.shape[1] > 1 else qr)[..., cols]
-
-                if debug:
-                    print(f'After optimizations:')
-                    print('\tQuery shape:', q.shape, qr.shape, q.dtype)
-                    print('\tBuild shape:', b.shape, br.shape, b.dtype)
-                    # print('\tVirtual dim:', np.isnan(b).all(0).sum(), np.isnan(q).all(0).sum())
-                    # print('\tUnique vals:', list(map(len, map(np.unique, b.T))), list(map(len, map(np.unique, q.T))))
-            
-            if debug:
-                print('  b q shape:', b.shape, q.shape)
-                print('br qr shape:', br.shape, qr.shape)
-                print('  skip dims:', skip_dims)
-
-            # Double check that build and query are already lexographically sorted
-            # assert((q[np.lexsort(q.T[::-1])] == q).all()), [q, q[np.lexsort(q.T[::-1])]]
-            # assert((b[np.lexsort(b.T[::-1])] == b).all()), [b, b[np.lexsort(b.T[::-1])]]
-
-            # Find the matching indices between the build/query grids
             if method == 'brute':
-                progress = nullcontext(None)
-                if logger is not None:
-                    if ProgressBar is not None:
-                        streamer = StreamToLogger(logger, logging.DEBUG)
-                        progress = ProgressBar(
-                            total=len(b), 
-                            file=streamer, 
-                            update_interval=30, 
-                            dynamic_ncols=False,
-                            notebook=False, 
-                            postfix='find_neighbors progress',
-                        )
-                # progress = ProgressBar(total=len(b), update_interval=1)
+                # Format resolutions into (left side, right side) 2D resolution arrays
+                for i, res in enumerate(resolutions):
+                    c_shp = coordinates[i].shape 
 
-                with progress as pbar:
-                    b_ix, q_ix = bruteforce_double(b, q, *br, *qr, skip_dims, pbar)[bq_order]
-                    # b_ix, q_ix = bruteforce_single(b, q, *br, *qr, skip_dims, pbar)[bq_order] # Original w/ dict
-                    # b_ix, q_ix = bruteforce_original(b, q, *br, *qr, skip_dims, pbar).T[bq_order] # Original
-                if debug: print('b q i shape:', b_ix.shape, q_ix.shape)
+                    # Uniform resolution, simply duplicate for left/right side
+                    if res.ndim == 1:
+                        res = np.tile(res, (2, 1)).T[None]
+                        assert(res.shape == (1, c_shp[-1], 2)), [res.shape, c_shp]
+                    
+                    # Non-uniform resolution, extend to endpoints for left and right
+                    elif res.ndim == 2:
+                        assert(res.shape[1] == (c_shp[0]-1)), [res.shape, c_shp]
+                        res = np.stack([
+                            np.c_[res[:, :1], res].T,
+                            np.c_[res, res[:,-1:]].T,
+                        ], axis=-1)
+                        assert(res.shape[0] == c_shp[0]), [res.shape, c_shp]
+
+                    # Full left/right resolution vectors already provided
+                    else: assert(res.shape[0] == c_shp[0]), [res.shape, c_shp]
+                    assert(res.shape[-1] == 2), res.shape
+
+                    # Place left/right dimension on the first axis
+                    res = np.moveaxis(res, -1, 0)
+
+                    # Left/right tolerance is half the resolution (plus a small epsilon)
+                    resolutions[i] = res.astype(ftype) * radius + eps
             else:
-                b,q,br,qr = [arr[..., ~skip_dims] for arr in [b,q,br,qr]]
-                b_ix,q_ix = get_matches([b,q], [br,qr], expand=True)[bq_order]
+                resolutions = [r[..., 0] if len(r.shape) > 2 else r for r in resolutions]
+                resolutions = [np.nanmean(r, axis=0) if len(r.shape) > 1 else r for r in resolutions]
+                resolutions = list(map(np.atleast_1d, resolutions))
 
-            # If no matches are found, we can immediately return 
-            if min(b_ix.size, q_ix.size) == 0: return (np.empty((0, 0)),) * 2
+            # Optimize column and grid orderings
+            optimizations = True
+            if optimizations: 
+                make_sizes = lambda c, r: float(f'{r.size}.{c.size}')
+                grid_sizes = starmap(make_sizes, zip(coordinates, resolutions))
+                grid_order = np.argsort(list(grid_sizes))[::-1]
+            else: grid_order = list(range(len(coordinates)))
+            # grid_order = [2, 3, 5, 0, 4, 1]
+            coordinates = [coordinates[i] for i in grid_order]
+            resolutions = [resolutions[i] for i in grid_order]
+            grid_labels = [grid_labels[i] for i in grid_order]
+            axis_labels = [axis_labels[i] for i in grid_order]
 
-            if optimizations:
-                b_orig, q_orig = [b_orig, q_orig][bq_order]
-                b_ix = b_orig[b_ix]
-                q_ix = q_orig[q_ix]
+            # Create the grids to iterate over and pull out the first query
+            grids = zip([c.astype(ftype) for c in coordinates], resolutions)
+            query = next(grids)
 
-            # Save time/memory by skipping unnecessary work on the final loop
-            if (i+1) < len(coordinates):
-                _,bqr = (b, q), (br, qr) = list(zip(build, query)) 
+            # Initialize the table of neighbor indices, along with the column order 
+            table = np.arange(len(query[0]), dtype=itype)[:, None]
+            order = [0]
+            # debug=True
+            if debug:
+                print('\nShapes:')
+                with print_table(['Grid', 'Coordinates', 'Resolutions']):
+                    for g, c, r in zip(grid_labels, coordinates, resolutions):
+                        print('|'.join(map(str, [g, c.shape, r.shape])))
 
-                # If resolution can be non-unifor (i.e. brute method)
-                if max(br.ndim, qr.ndim) > 1:
+                for i, (label, values) in enumerate([
+                    ('Coordinate', coordinates), 
+                    ('Resolution', [r[0] for r in resolutions]),
+                ]):
+                    print(f'\n{label} Extents:')
+                    with print_table(['Grid', 'Axis', 'Minimum', 'Maximum']):
+                        for g, axes, v in zip(grid_labels, axis_labels, values):
+                            for a, minim, maxim in zip(axes, v.min(0), v.max(0)):
+                                if (a == 'datetime') and np.isfinite(v).all():
+                                    otype = np.timedelta64 if i else np.datetime64
+                                    minim = otype(int(minim), 'm')
+                                    maxim = otype(int(maxim), 'm')
+                                print('|'.join(map(str, [g, a, minim, maxim])))
+                                g = ''
 
-                    # If either grid uses a non-uniform resolution, both need to
-                    if max(br.shape[1], qr.shape[1]) > 1:
-                        if br.shape[1] == 1: br = np.tile(br, (1, len(b), 1))
-                        if qr.shape[1] == 1: qr = np.tile(qr, (1, len(q), 1))
-                        br_qr = [br[:, b_ix], qr[:, q_ix]]
-                    else: br_qr = bqr
-                    br_qr = np.dstack(br_qr[bq_order])
-                else: br_qr = np.hstack(bqr[bq_order])
+                print(f'\nStarting neighbor search with {grid_labels[0]}: {len(table):,} possible matches')
 
-                # Construct the next query set by combining the current two grids
-                query = np.c_[(b[b_ix], q[q_ix])[bq_order]], br_qr
-                if debug: print(' next query:', query[0].shape, query[1].shape)
+            if logger is not None:
+                logger.debug(f'\tStarting neighbor search with {grid_labels[0]}: {len(table):,} possible matches')
 
-            # Separate the coordinates/resolutions and extract the locations
-            table = np.c_[(b_ix, table[q_ix])[bq_order]]
-            order = sum([[i], order][bq_order], [])
-            if debug: print(' next table:', table.shape)
+            # Find simultaneously matching indices across all grids
+            for i, build in enumerate(grids, 1):
+                if debug:
+                    iter_timer = Stopwatch(f'Iteration {i}/{len(coordinates)-1}')
+                    iter_timer.__enter__()
+                    print(f'\n{iter_timer}')
+                    print(''.join(['-']*len(str(iter_timer))))
+                    print('Build label:', grid_labels[i])
+                    print('Query shape:', query[0].shape, query[1].shape, query[0].dtype)
+                    print('Build shape:', build[0].shape, build[1].shape, build[0].dtype)
+                    print('Table shape:', table.shape, table.dtype)
+                    # print('Virtual dim:', np.isnan(build[0]).all(0).sum(), np.isnan(query[0]).all(0).sum())
+                    # print('Unique vals:', list(map(len, map(np.unique, build[0].T))), list(map(len, map(np.unique, query[0].T))))
 
-        # Reorder the columns correctly 
-        if debug: print('\nReordering table...')
-        table = table[:, np.argsort(order)[np.argsort(grid_order)]]
+                # Duplicate the next grid to align with the current table
+                build_dup = [np.tile(b, i) for b in build]
+                
+                # Extract the build/query coordinates/resolutions
+                b,q,br,qr = chain.from_iterable( zip(*[build_dup, query]) )
+
+                # Drop any all NaN (virtual) columns from the build and query tables
+                b_nan_col = np.isnan(b).all(0)
+                q_nan_col = np.isnan(q).all(0)
+                skip_dims = b_nan_col | q_nan_col
+
+                # If requested, swap build/query as necessary to use optimal order
+                if optimizations:
+                    # Check virtual dims count (i.e. all values in column are NaN):
+                    #  Grid with fewer samples is build when same number of virtual
+                    #  Otherwise, grid with more virtual dims is the build
+                    b_virt = b_nan_col.sum()
+                    q_virt = q_nan_col.sum()
+                    switch = (len(b)>len(q)) if q_virt==b_virt else (b_virt<q_virt)
+                    if debug: print(f'\t{b_virt=} {q_virt=} {switch=}')
+
+                    # Switch build/query if necessary, based on above criteria
+                    bq_order = slice(None, None, -1 if switch else 1)
+                else: bq_order = slice(None, None, 1)
+                (b, br), (q, qr) = [(b, br), (q, qr)][bq_order]
+
+                # Reorder the columns
+                if optimizations:
+                    sort = lambda i,b_col: np.inf if skip_dims[i] else entropy(b_col)[0]
+                    cols = np.argsort(list(starmap(sort, enumerate(b.T))))
+                    # assert(0), cols
+                    b = b[:, cols]
+                    q = q[:, cols]
+                    skip_dims = skip_dims[cols]
+
+                    # Can't use lexsort until numba's recursion support is fixed
+                    # b, b_orig = lexsort(b)
+                    # q, q_orig = lexsort(q)
+                    # br = (br[:, b_orig] if br.ndim > 1 and br.shape[1] > 1 else br)[..., cols]
+                    # qr = (qr[:, q_orig] if qr.ndim > 1 and qr.shape[1] > 1 else qr)[..., cols]
+
+                    b_orig = np.lexsort(b.T[::-1])
+                    q_orig = np.lexsort(q.T[::-1])
+                    # b_orig = np.arange(len(b))[bo]
+                    # q_orig = np.arange(len(q))[qo]
+                    b = b[b_orig]
+                    q = q[q_orig]
+                    br = (br[:, b_orig] if br.ndim > 1 and br.shape[1] > 1 else br)[..., cols]
+                    qr = (qr[:, q_orig] if qr.ndim > 1 and qr.shape[1] > 1 else qr)[..., cols]
+
+                    if debug:
+                        print(f'After optimizations:')
+                        print('\tQuery shape:', q.shape, qr.shape, q.dtype)
+                        print('\tBuild shape:', b.shape, br.shape, b.dtype)
+                        # print('\tVirtual dim:', np.isnan(b).all(0).sum(), np.isnan(q).all(0).sum())
+                        # print('\tUnique vals:', list(map(len, map(np.unique, b.T))), list(map(len, map(np.unique, q.T))))
+                
+                if debug:
+                    print('  b q shape:', b.shape, q.shape)
+                    print('br qr shape:', br.shape, qr.shape)
+                    print('  skip dims:', skip_dims)
+
+                # Double check that build and query are already lexographically sorted
+                # assert((q[np.lexsort(q.T[::-1])] == q).all()), [q, q[np.lexsort(q.T[::-1])]]
+                # assert((b[np.lexsort(b.T[::-1])] == b).all()), [b, b[np.lexsort(b.T[::-1])]]
+
+                # Find the matching indices between the build/query grids
+                if method == 'brute':
+                    progress = nullcontext(None)
+                    if debug or (logger is not None):
+                        if ProgressBar is not None:
+                            streamer = None if debug else StreamToLogger(logger, logging.DEBUG)
+                            progress = ProgressBar(
+                                total=len(b), 
+                                file=streamer, 
+                                update_interval=10, 
+                                dynamic_ncols=False,
+                                notebook=False, 
+                                postfix='find_neighbors progress',
+                            )
+                    # progress = ProgressBar(total=len(b), update_interval=1)
+
+                    with progress as pbar:
+                        b_ix, q_ix = bruteforce_double(b, q, *br, *qr, skip_dims, pbar)[bq_order]
+                        # b_ix, q_ix = bruteforce_single(b, q, *br, *qr, skip_dims, pbar)[bq_order] # Original w/ dict
+                        # b_ix, q_ix = bruteforce_original(b, q, *br, *qr, skip_dims, pbar).T[bq_order] # Original
+                    if debug: print('b q i shape:', b_ix.shape, q_ix.shape)
+                else:
+                    b,q,br,qr = [arr[..., ~skip_dims] for arr in [b,q,br,qr]]
+                    b_ix,q_ix = get_matches([b,q], [br,qr], expand=True)[bq_order]
+
+                # If no matches are found, we can immediately return 
+                if min(b_ix.size, q_ix.size) == 0: 
+                    if logger: logger.debug(f'\tNo matches left after {grid_labels[i]}')
+                    if debug:  print(f'\tNo matches left after {grid_labels[i]}')
+                    return (np.empty((0, 0)),) * 2
+
+                if optimizations:
+                    b_orig, q_orig = [b_orig, q_orig][bq_order]
+                    b_ix = b_orig[b_ix]
+                    q_ix = q_orig[q_ix]
+
+                # Save time/memory by skipping unnecessary work on the final loop
+                if (i+1) < len(coordinates):
+                    _,bqr = (b, q), (br, qr) = list(zip(build, query)) 
+
+                    # If resolution can be non-uniform (i.e. brute method)
+                    if max(br.ndim, qr.ndim) > 1:
+
+                        # If either grid uses a non-uniform resolution, both need to
+                        if max(br.shape[1], qr.shape[1]) > 1:
+                            if br.shape[1] == 1: br = np.tile(br, (1, len(b), 1))
+                            if qr.shape[1] == 1: qr = np.tile(qr, (1, len(q), 1))
+                            br_qr = [br[:, b_ix], qr[:, q_ix]]
+                        else: br_qr = bqr
+                        br_qr = np.dstack(br_qr[bq_order])
+                    else: br_qr = np.hstack(bqr[bq_order])
+
+                    # Construct the next query set by combining the current two grids
+                    query = np.c_[(b[b_ix], q[q_ix])[bq_order]], br_qr
+                    if debug: print(' next query:', query[0].shape, query[1].shape)
+
+                # Separate the coordinates/resolutions and extract the locations
+                table = np.c_[(b_ix, table[q_ix])[bq_order]]
+                order = sum([[i], order][bq_order], [])
+
+                if debug: 
+                    print(' next table:', table.shape)
+                    iter_timer.__exit__()
+                if logger is not None:
+                    logger.debug(f'\t{len(table):>11,} matches remain after {grid_labels[i]}')
+
+            # Reorder the columns correctly 
+            if debug: print('\nReordering table...')
+            table = table[:, np.argsort(order)[np.argsort(grid_order)]]
+
+        if table.size == 0:
+            return (np.empty((0, 0)),) * 2
 
         # Random sample ordering
         if shuffle:
@@ -678,10 +747,9 @@ def find_neighbors(
     if debug: print('Finishing...')
     if use_implode:
         table = implode(table)
-        count = np.array([list(map(len, col)) for col in table], dtype=dtype)
+        count = np.array([list(map(len, col)) for col in table], dtype=itype)
     else:
-        count = np.ones_like(table, dtype=dtype)
-
+        count = np.ones_like(table, dtype=itype)
     return table, count
 
 

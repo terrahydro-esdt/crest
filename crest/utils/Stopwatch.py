@@ -74,7 +74,7 @@ class Stopwatch:
         Number of times to repeatedly call metric functions, in order to obtain
         an averaged value over time. Should be used in combination with the 
         `delay` parameter in order to add a time delay between function calls.
-    delay   : Number
+    delay   : float | int
         Amount of time (in seconds) to wait between function calls when taking
         multiple samples. If `samples` <= 1, this parameter has no effect.  
     silent  : bool
@@ -101,30 +101,30 @@ class Stopwatch:
     GC_DISABLE = 0
 
     default_fmt = {
-        'time': {'units': 'time'},
-        'dMem': {'units': 'byte'},
+        'time': {'units':'time', 'align':4, 'rounding':1},
+        'dMem': {'units':'byte', 'align':4, 'rounding':0},
     }
 
     def __init__(self, 
-        message : str = '', 
-        logger  : Callable = print, 
-        timer   : Callable = time,
-        memory  : Callable = get_memory,
-        metrics : dict[str, Callable] = {},
-        formats : dict[str, dict]     = {}, 
-        samples : int = 1,
-        delay   : Number = 0,
-        silent  : bool = False,
-        stop_gc : bool = False,
+        message  : str = '', 
+        logger   : Callable = print, 
+        timer    : Callable = time,
+        memory   : Callable = get_memory,
+        metrics  : dict[str, Callable] = {},
+        formats  : dict[str, dict]     = {}, 
+        samples  : int = 1,
+        delay    : float | int = 0,
+        silent   : bool = False,
+        stop_gc  : bool = False,
     ):
-        self.message = message
-        self.logger  = logger 
-        self.metrics = {'dMem': memory} | metrics
-        self.formats = self.default_fmt | formats
-        self.samples = samples
-        self.delay   = delay 
-        self.silent  = silent
-        self.stop_gc = stop_gc
+        self.message  = message
+        self.logger   = logger 
+        self.metrics  = {'dMem': memory} | metrics
+        self.formats  = self.default_fmt | formats
+        self.samples  = samples
+        self.delay    = delay 
+        self.silent   = silent
+        self.stop_gc  = stop_gc
 
         # Time is handled separately to avoid influence by other metrics
         self.timer = timer
@@ -148,7 +148,7 @@ class Stopwatch:
         if self.stop_gc: gc.enable()
 
         # Format the metric delta into the final output string
-        fmt = lambda k,v: f'{k}={self.readable(v, **self.formats.get(k, {}))}'
+        fmt = lambda k,v: f'{k}:{self.readable(v, **self.formats.get(k, {}))}'
 
         if not self.silent: 
             metrics = '|'.join(starmap(fmt, self.deltas.items()))
@@ -164,12 +164,17 @@ class Stopwatch:
             raise Exception(f'Unknown key "{key}": {list(self.deltas)}')
         raise Exception('Stopwatch has not yet exited or calculated metrics')
 
+    def __repr__(self):
+        return self.message or repr(super())
+
 
     @staticmethod
     def readable( 
-        value   : Number, 
-        units   : str | list[str] = 'size', 
-        divisor : Number | None   = None,
+        value    : Number, 
+        units    : str | list[str]    = 'size', 
+        divisor  : int | float | None = None,
+        rounding : int | None         = None,
+        align    : int                = 0,
     ) -> str:
         """Format a value to have reasonable rounding and units.
         
@@ -192,15 +197,22 @@ class Stopwatch:
 
         Parameters
         ----------
-        value   : Number
+        value    : Number
             The number to get the string representation for.
-        units   : str | list[str]
+        units    : str | list[str]
             Units to label the number with; one of ['time', 'byte', 'size'].
             A custom list of unit strings can also be provided.
-        divisor : Number | None
+        divisor  : int | float | None
             Signifies moving to the next unit when the current number
             can be completely divided by the divisor. If divisor is None
             (default) then a value is chosen based on the given units.
+        rounding : int | None
+            If a number is given, metrics are rounded to that many decimal 
+            places after applying Stopwatch.readable (with zero-padding added
+            to ensure exactly the requested precision).
+        align    : int
+            Value will be space-padded to ensure it contains at least `align`
+            number of characters.
 
         Returns
         -------
@@ -232,14 +244,14 @@ class Stopwatch:
         }.get(units if isinstance(units, str) else 'size', 1000)
 
         units = units if isinstance(units, list) else {
-            'time' : [' seconds', ' minutes', ' hours'],
-            'byte' : [' B', ' KB', ' MB', ' GB', ' TB'],
-            'size' : ['', 'K', 'M', 'G', 'T'],
+            'time' : ['s', 'm', 'h'],#[' seconds', ' minutes', ' hours  '],
+            'byte' : [' B ', ' KB', ' MB', ' GB', ' TB'],
+            'size' : [' ', 'K', 'M', 'G', 'T'],
         }.get(units, [])
 
         def fmt(value, units):
             """ Recurse until value is small enough or we run out of units """
-            add_unit = lambda v: ''.join([v]+units[:1])
+            add_unit = lambda v: [v]+units[:1]
             if value == 0: return add_unit('0')
             decimals = max(-1, -floor(log10(abs(value))) + 2)
 
@@ -249,9 +261,17 @@ class Stopwatch:
             value = f'{value:.{max(0, decimals)}f}'
             if '.' not in value: value += '.'
             return add_unit(value.rstrip('0').rstrip('.'))
-        return fmt(value, units)
 
-    def _sample(self, function: Callable) -> Number:
+        # Create the {value}{units} string, then apply rounding if requested
+        val, unit = fmt(value, units)
+        if rounding is not None:
+            try:    val = round(float(val), rounding)
+            except: raise Exception(f'Stopwatch rounding failed: {val}')
+            val = f'{val:0.{rounding}f}'
+        return f'{val:>{align}}{unit}'
+
+    
+    def _sample(self, function: Callable) -> Number | float | int:
         """ Average multiple function values with delays in between calls """
         if self.samples > 1:
             call = lambda: sleep(self.delay) or function()

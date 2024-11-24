@@ -102,4 +102,15 @@ def test_features(batch_size, n_features, shape):
     recurse(features, batch)
 
     
+def sync_generate(i):
+    time.sleep(i % 4)
+    return da.from_array(np.array([i]), chunks=-1)
+
+def test_block_sync():
+    """ Ensure batches are delivered in order when workers are synchronized """
+    dataset = list(map(dask.delayed(sync_generate), range(6)))
+    batcher = Batcher(dataset, 1, shuffle=False, workers=3, block_sync=True)
+    batches = [b for batch in batcher for b in list(batch)]
+    assert(set(batches[:3]) == {0,1,2}), batches
+    assert(set(batches[3:]) == {3,4,5}), batches
 

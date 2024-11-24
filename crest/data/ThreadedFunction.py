@@ -43,7 +43,7 @@ class ThreadedFunction(set):
         function : Callable, 
         threads  : int = 3,
         capacity : int = 6,
-        timeout  : Number | None = 0.01, 
+        timeout  : float  | None = 0.01, 
         exitflag : Event  | None | Callable = None,
         exitset  : Event  | None | Callable = None,
         logger   : Logger | None = None,
@@ -56,8 +56,8 @@ class ThreadedFunction(set):
         self.logger   = logger or getLogger(function.__name__)
 
         _event = Event()
-        self.exitflag = getattr(exitflag or _event, 'is_set', exitflag)
-        self.exitset  = getattr(exitset or exitflag or _event, 'set', exitset or _event.set)
+        self.exitflag: Callable = getattr(exitflag or _event, 'is_set', exitflag)
+        self.exitset:  Callable = getattr(exitset or exitflag or _event, 'set', exitset or _event.set)
 
         # Count of total tasks submitted, and thread pool
         self._items = []
@@ -145,7 +145,7 @@ class ThreadedFunction(set):
     @property
     def name(self) -> str:
         return self.function.__name__
-    
+
 
     def is_full(self) -> bool:
         """ Checks if this container is at capacity """

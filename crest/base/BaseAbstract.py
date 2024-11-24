@@ -1,21 +1,17 @@
 from collections.abc import Callable
 from functools import partial
-from itertools import starmap
+from pathlib import Path
 from typing import get_args, get_origin, _type_repr
 from typing import Union, Iterator, TypeVar
 from types import UnionType
-from abc import ABCMeta, ABC
+from abc import ABC
 
-import linecache
-import traceback
 import weakref
 import inspect
-import code
-import os
 
 
-def type_repr(val=None, T=None, _maxdepth=4):
-    """ Recursive type representation """
+def type_repr(val=None, T=None, _maxdepth: int = 4):
+    """ Recursive version of typing._type_repr for type representation """
     if isinstance(T, str):        return T
     if T is not None:             return _type_repr(T)
     if isinstance(val, Iterator): return type(val)
@@ -141,7 +137,7 @@ class EnsureTypes:
 
     def __getattr__(self, attr):
         """ Pass through attribute lookups to the underlying callable """
-        return self if attr == '__call__' else getattr(self._callable, attr)
+        return self if attr == '__call__' else getattr(object.__getattribute__(self, '_callable'), attr)
 
 
     @classmethod
@@ -162,14 +158,19 @@ class EnsureTypes:
         try:
             invalid_type = not istype(obj, annotation)
         except TypeError:
-            raise TypeError(f'{label} annotation ' +
-                            f'"{annotation}" is not a valid type annotation')
+            raise TypeError(f'{label} annotation "{annotation}" is not valid')
 
         if invalid_type:
             req = type_repr(T=annotation)
             typ = type_repr(obj)
             msg = f'{label} must be of type {req}, but found type {typ}'
             raise TypeError(msg)
+
+
+    @property
+    def object(self):
+        """ Try to return the underlying object this function is bound to """
+        return getattr(self._callable, '__self__')
 
 
 
@@ -227,171 +228,31 @@ class BaseAbstract(ABC):
 
 
     @classmethod
-    def interactive(cls, env={}, style='monokai'):
-        """ Start an interactive console wherever this function is called. 
+    def interactive(cls, environment: dict = {}, n_prior_frames: int = 0):
+        """ Start an interactive console wherever this function is called.
 
         Parameters
         ----------
-        env   : dict
-            Any extra objects to include in the terminal environment.
-        style : str
-            Pygments style name for code highlighting.
+        environment : dict
+            Any extra objects to include in the console environment.
+        n_prior_frames : int
+            Extra frames to rewind when getting the calling context for this
+            function. If `interactive` is called directly, this value should
+            be 0 to use the context where it was called (default); if this
+            function is e.g. called by a helper function and so the desired
+            context is where the helper was used at, the helper should use
+            `interactive(n_prior_frames=1)`; etc.
 
         """
 
-        def get_context(frame, n_lines=20):
-            """ Get code context at given frame """
-            name = frame.f_code.co_filename 
-            line = frame.f_lineno + 1 
-            size = len(str(line-1))
+        # Need to step one additional frame backwards if this function was
+        # called from an instance of a class, rather than by a class itself,
+        # due to type check wrapping performed in this file
+        filename = inspect.currentframe().f_back.f_code.co_filename
+        n_prior_frames += Path(filename).stem == 'BaseAbstract'
 
-            getline = lambda i: f'{i:<{size}} {linecache.getline(name, i)}'
-            context = f'{name}:{line-1} called interactive:'
-            divider = ''.join(['-']*len(context))
-            srccode = ''.join(map(getline, range(max(0, line-n_lines), line)))
-            return '\n'.join(['', divider, context, '', srccode, divider, ''])
-
-        # Include variables from the frame this function was called in
-        callframe = inspect.currentframe().f_back
-        variables = callframe.f_globals | callframe.f_locals | env
-
-        # Define flag to indicate exception in the console
-        global forcestop
-        forcestop = False
-
-        # Show code context as the console banner
-        try:
-            banner = get_context(callframe)
-
-            # Add syntax highlighting
-            try:
-                from pygments import highlight
-                from pygments.lexers import Python3Lexer
-                from pygments.styles import get_style_by_name
-                from pygments.formatters import Terminal256Formatter
-                srcfmt = Terminal256Formatter(style=get_style_by_name(style))
-                banner = highlight(banner, Python3Lexer(), srcfmt)
-
-                # On windows, for some versions of python, ANSI escape codes
-                # are not processed by the console. A solution is to run 
-                # `os.system('')`, which will indirectly set the windows
-                # terminal ENABLE_VIRTUAL_TERMINAL_PROCESSING flag - thus
-                # enabling the parsing of control sequences. For more details,
-                # see https://stackoverflow.com/a/64222858
-                if os.name == 'nt': 
-                    os.system('')
-
-                    # Another potential source of breaking ANSI codes can 
-                    # come from using colorama, or importing anything that
-                    # uses colorama on initialization (e.g. tqdm). The fix
-                    # for this is to call `colorama.deinit()`; however it
-                    # has been noted that although calling this fixes ANSI
-                    # ANSI code parsing in some cases, it can also break it
-                    # in other cases. To that end, the following code is 
-                    # left commented out by default; users can choose to 
-                    # enable it or use it as reference when fixing an issue
-                    # in their specific environment. For more details, see
-                    # https://github.com/tqdm/tqdm/issues/678#issuecomment-70662706
-                    # import colorama
-                    # colorama.deinit()
-                    
-            except ImportError: pass
-        except Exception as e: banner = f'\n{e}\n{traceback.format_exc()}'
-
-        try:
-            # Import readline if available to pull interpreter command history
-            import readline, rlcompleter
-            variables = locals() | variables
-
-            # Allow tab completion
-            # https://tiswww.case.edu/php/chet/readline/readline.html
-            readline.set_completer(rlcompleter.Completer(variables).complete)
-            readline.parse_and_bind('tab: complete')
-
-            # Read previous command history
-            readline.read_history_file()
-
-            def follow_history(*args, **kwargs):
-                """ implements operate-and-get-next: allows successive commands
-                    from history to be selected (i.e. after navigating history
-                    and executing a command, the cursor will still be at the 
-                    same location in the console history) """
-
-                def _handle_exc(e):
-                    # if there's an exception, print info, set flag, and exit
-                    print(f'\n{traceback.format_exc()}\nException in ' +
-                          f'BaseAbstract.interactive.follow_history: {e}')
-                    global forcestop
-                    forcestop = True
-                    raise EOFError
-
-                def _set_cursor(index, *args, **kwargs):
-                    # Set the index and remove this function from the queue
-                    try:
-                        terminal = readline.rl.mode
-                        terminal._history.set_history_cursor(index)
-                        terminal.process_keyevent_queue.pop(-1)
-                        return terminal.process_keyevent(*args, **kwargs)
-                    except Exception as e:
-                        _handle_exc(e)
-
-                try:
-                    # Get the current index in history and total length
-                    terminal = readline.rl.mode  # e.g. pyreadline3.modes.emacs
-                    hist_len = len(terminal._history.history)
-                    hist_idx = terminal._history.get_history_cursor() + 1
-
-                    # If we're examining somewhere in previous command history
-                    if hist_idx < hist_len:
-                        prev_cmd = terminal._history.get_history_item(hist_idx)
-                        curr_cmd = terminal.l_buffer.get_line_text()
-
-                        # If command is unchanged, keep history cursor at index
-                        if curr_cmd == prev_cmd:
-                            set_cursor = partial(_set_cursor, hist_idx - 1)
-                            terminal.process_keyevent_queue.append(set_cursor)
-                except Exception as e:
-                    _handle_exc(e)
-
-                # Otherwise just accept the line as usual
-                return terminal.accept_line(*args, **kwargs)
-
-            # Bind the enter key so that we can execute multiple commands
-            # from history without needing to press up for each command 
-            readline.rl.mode._bind_key('return', follow_history)
-
-            class InteractiveConsole(code.InteractiveConsole):
-                """ Fix InteractiveConsole raw_input() ANSI coloring.
-
-                    pyreadline breaks full RGB ANSI colors for input().
-                    We circumvent pyreadline's implementation by printing
-                    the input prompt separately from the actual input call. 
-                    Note that this fixes the console prompt, but not input().
-                """
-                def raw_input(self, prompt=''):
-                    print(prompt, end='')
-                    return input()
-
-        except ImportError: from code import InteractiveConsole
-
-        # Set the console prompt colors
-        import sys
-        sys.ps1 = '\x1b[38;5;197m>>>\x1b[0m '
-        sys.ps2 = '\x1b[38;5;141m...\x1b[0m '
-
-        # Start the console
-        banner += '\nCTRL-Z resumes execution, quit() halts execution'
-        try: InteractiveConsole(variables).interact(banner=banner)
-
-        # Ensure we write the command history after exiting
-        finally:
-            try:
-                readline.write_history_file()
-            except Exception as e:
-                print(f'Failed to write history: {e}')
-
-        # Raise a SystemExit if the exception flag was set while running
-        if forcestop: raise SystemExit
+        from crest.utils import interactive
+        interactive(environment, n_prior_frames + 1)
 
 
     @classmethod
