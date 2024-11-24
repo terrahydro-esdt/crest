@@ -66,8 +66,9 @@ class Sample:#(BaseAbstract):
         return a
 
 
-    def __getitem__(self, idx: int) -> xr.Dataset:
+    def __getitem__(self, idx: int | str) -> xr.Dataset:
         """ Retrieve a subset of the full collection """
+        if isinstance(idx, str): idx = self.index(idx)
         return self.cache.setdefault(idx, self._load(idx))
 
 
@@ -86,6 +87,14 @@ class Sample:#(BaseAbstract):
         return xr.DataArray(**self.container[idx]).to_dataset('features')
 
 
+    def index(self, feature: str) -> int:
+        """ Find the index of the (first) item containing the feature """
+        for i, item in enumerate(self.container):
+            if feature in item['coords']['features']:
+                return i
+        raise Exception(f'Feature "{feature}" not found in: {self.features}')
+
+
     @property
     def nbytes(self) -> int:
         """ Get the total number of bytes used by the data """
@@ -100,14 +109,14 @@ class Sample:#(BaseAbstract):
 
 
     @property
-    def coords(self) -> dict[list]:
+    def coords(self) -> dict[str, list]:
         """ Coords for all items; {dim: [item0_dim, item1_dim, ...]} """
         return merge_with(list, *[item['coords'] for item in self.container])
 
 
     @property
-    def coords_avg(self) -> dict[list]:
-        """ Coords for all items; {dim: [item0_dim, item1_dim, ...]} """
+    def coords_avg(self) -> dict[str, float]:
+        """ Coords for all items; {dim: [item0_dim, item1_dim, ...].mean()} """
         coords = [item['coords'] for item in self.container]
         is_num = lambda v: np.issubdtype(v.dtype, np.number)
         with warnings.catch_warnings():
@@ -115,8 +124,13 @@ class Sample:#(BaseAbstract):
             return {dim: np.nanmean([c[dim].mean() for c in coords if dim in c and is_num(c[dim])]) for dim in self.dims}
 
 
+    def get_feature_coords(self, feature: str):
+        """ Return the coordinate arrays for a specific feature """
+        return dissoc(self.container[self.index(feature)]['coords'],'features')
+
+
     @property
-    def data(self) -> dict[list]:
+    def data(self) -> dict[str, list]:
         """ Data for all items; {feature: [item0_feature, ...]} """
         to_dict = lambda d: dict(zip(d['coords']['features'], d['data']))
         i_dicts = [to_dict(item) for item in self.container]

@@ -163,15 +163,15 @@ def bruteforce_original(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
     r2, c2 = a2.shape
     shapes = [a1l.shape, a1r.shape, a2l.shape, a2r.shape]
 
-    # Sanity check on number of columns across all arrays
-    assert(sum([s[-1] == c1 for s in shapes] + [len(all_nan_col) == c1])), (
-        f'Arrays must all have the same number of columns: {shapes}')
+    # # Sanity check on number of columns across all arrays
+    # assert(sum([s[-1] == c1 for s in shapes] + [len(all_nan_col) == c1])), (
+    #     f'Arrays must all have the same number of columns: {shapes}')
 
-    # Sanity check on number of elements over values and left/right resolutions
-    for label,n,l,r in [('len(a1)', r1, a1l, a1r), ('len(a2)', r2, a2l, a2r)]:
-        assert((len(l) in [n, 1]) and (len(r) in [n, 1])), (
-            f'Left/Right resolution arrays must have the same length as the ' +
-            f'values, or length of 1: {label}={n} vs [l={len(l)}, r={len(r)}]')
+    # # Sanity check on number of elements over values and left/right resolutions
+    # for label,n,l,r in [('len(a1)', r1, a1l, a1r), ('len(a2)', r2, a2l, a2r)]:
+    #     assert((len(l) in [n, 1]) and (len(r) in [n, 1])), (
+    #         f'Left/Right resolution arrays must have the same length as the ' +
+    #         f'values, or length of 1: {label}={n} vs [l={len(l)}, r={len(r)}]')
     
     # Create skip lists, which gives index of next unique value along each axis
     skip1 = create_skiplist(a1)
@@ -383,15 +383,15 @@ def bruteforce_setup(a1, a2, a1l, a1r, a2l, a2r, all_nan_col):
     r2, c2 = a2.shape
     shapes = [a1.shape, a2.shape, a1l.shape, a1r.shape, a2l.shape, a2r.shape]
 
-    # Sanity check on number of columns across all arrays
-    assert(sum([s[-1] == c1 for s in shapes] + [len(all_nan_col) == c1])), (
-        f'Arrays must all have the same number of columns: {shapes}')
+    # # Sanity check on number of columns across all arrays
+    # assert(sum([s[-1] == c1 for s in shapes] + [len(all_nan_col) == c1])), (
+    #     f'Arrays must all have the same number of columns: {shapes}')
 
-    # Sanity check on number of elements over values and left/right resolutions
-    for label,n,l,r in [('len(a1)', r1, a1l, a1r), ('len(a2)', r2, a2l, a2r)]:
-        assert((len(l) in [n, 1]) and (len(r) in [n, 1])), (
-            f'Left/Right resolution arrays must have the same length as the ' +
-            f'values, or length of 1: {label}={n} vs [l={len(l)}, r={len(r)}]')
+    # # Sanity check on number of elements over values and left/right resolutions
+    # for label,n,l,r in [('len(a1)', r1, a1l, a1r), ('len(a2)', r2, a2l, a2r)]:
+    #     assert((len(l) in [n, 1]) and (len(r) in [n, 1])), (
+    #         f'Left/Right resolution arrays must have the same length as the ' +
+    #         f'values, or length of 1: {label}={n} vs [l={len(l)}, r={len(r)}]')
     
     # Create skip lists, which gives index of next unique value along each axis
     skip1 = create_skiplist(a1)

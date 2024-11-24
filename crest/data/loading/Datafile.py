@@ -8,6 +8,7 @@ from numbers import Number, Integral as Int
 from pathlib import Path
 from logging import Logger
 from typing import Union 
+from tqdm import tqdm 
 
 import dask.array as da
 import xarray as xr
@@ -56,6 +57,18 @@ class Datafile(BaseAbstract):
         a single lookback step (to the left). {'time': 1} would be equivalent
         to {'time': (1,1)}. Dimensions that exist in the data but are not given
         in this dictionary use Datafile.DEFAULT_WINDOW_SIZE by default.
+    match_radius  : dict[str, str | Number]
+        Allows specification of the radius around each point that will match
+        coordinates from other Datafiles. This is a dictionary in the form of
+        {'dimension_name': radius}, where radius can be a string that indicates
+        a percentage of the dimension resolution that should be used (e.g. 
+        data with a datetime dimension that has daily resolution could use
+        {'datetime':'25%'} to indicate only points within +/- 6 hours should 
+        match); or radius can be a number that will be used as the exact radius
+        around each point (e.g. with the same data as before, {'datetime': 120}
+        would allow matches of +/- 2 hours around each point). Note that the
+        units of datetime dimensions will always be minutes, and so the radius
+        value should be specified in minutes if using an exact value. 
     valid_percent : dict[str | tuple[str], Number]
         Format of {Dimension: percent} or {(Dim1, Dim2, ...): percent}, where
         the key can be single string, or a tuple with one or more elements;
@@ -99,6 +112,14 @@ class Datafile(BaseAbstract):
         or if the original dimension order should be maintained in any samples 
         that are generated (which might lead to different orderings across
         Datafiles). 
+    allow_repeats : bool
+        If True, allow block overlap regions to be considered when generating 
+        valid window centers. With this as True, it means that all possible 
+        samples should be generated, but there is the potential for duplicate 
+        samples to be generated across different blocks at the boundaries. If 
+        instead this is False (the defalt), there will not be any duplicated
+        samples generated, but instead there *may* be samples missing at the
+        block boundaries. 
     **kwargs
         Any additional kwargs are passed into xr.open_zarr when loading the
         given `location` (assuming it is not already an xr.Dataset object).
@@ -120,7 +141,7 @@ class Datafile(BaseAbstract):
     DEFAULT_VALID_PERCENT = 1
 
     # Ensure we include int(32/64) representations of NaN
-    DEFAULT_INVALID_VALUES = [-2147483648, -9223372036854775808]
+    DEFAULT_INVALID_VALUES = [-2147483648, -9223372036854775808, np.inf, -np.inf]
 
 
 
@@ -129,10 +150,12 @@ class Datafile(BaseAbstract):
         features      : list[str]                        = [],
         extent        : dict[str, Collection]            = {},
         window_depth  : dict[str, Int | Collection[Int]] = {},
+        match_radius  : dict[str, str | Number]          = {},
         valid_percent : dict[str | tuple[str], Number]   = {},
         invalid_value : object                           = [],
         preprocessors : list[Callable]                   = [],
         sort_dims     : bool                             = True,
+        allow_repeats : bool                             = False,
         **kwargs
     ):
         self.location = location
@@ -142,8 +165,10 @@ class Datafile(BaseAbstract):
         self._window_depth  = window_depth.copy()
         self._valid_percent = valid_percent.copy()
         self._invalid_value = invalid_value
+        self.match_radius   = match_radius
         self.preprocessors  = preprocessors
         self.sort_dims      = sort_dims
+        self.allow_repeats  = allow_repeats
         self.dataset_index  = 0 
 
         # Store initialization parameter names for pickling
@@ -175,7 +200,34 @@ class Datafile(BaseAbstract):
 
 
     def __repr__(self) -> str:
+        """ Short-form representation """
         return f'Datafile[{self.label}]'
+
+
+    def to_string(self, show_stats: bool = False) -> str:
+        """Long-form representation.
+        
+        Parameters
+        ----------
+        stats : bool
+            Whether or not to compute various statistics about features.
+        
+        Returns
+        -------
+        str
+            String containing information about the underlying data.
+        
+        """
+        s = [
+            f'Datafile: {self.name} (Dataset[{self.dataset_index}])',
+            f'Location: {self.location}',
+            f'XArray: \n{self.data}'.replace('\n', '\n\t'), 
+        ]
+        if show_stats:
+            with pd.option_context('display.max_columns', None):
+                stats = self.summary.to_dataset('features').to_pandas().T
+                s += [f'Stats: \n{stats}'.replace('\n', '\n\t')]
+        return '\n'.join(s)
 
 
     @cached_property
@@ -234,11 +286,11 @@ class Datafile(BaseAbstract):
         data = data.to_array('features').chunk({})
 
         # Add Datafile configuration to the attributes
-        if 'Datafile.config' not in data.attrs:
-            data.attrs.update({
-                'Datafile.config'      : self.config,
-                'Datafile.config_hash' : self.config_hash,
-            })
+        # if 'Datafile.config' not in data.attrs:
+        data.attrs.update({
+            'Datafile.config'      : self.config,
+            'Datafile.config_hash' : self.config_hash,
+        })
 
         # Save the original coordinates/dtypes for later return values
         original_dims = [c for c in data.coords if c not in self._virtual_dims]
@@ -250,7 +302,8 @@ class Datafile(BaseAbstract):
         )
 
         # Sanity check - Sample.py assumes features are sorted
-        assert(sorted(self.original_dims[1]) == list(self.original_dims[1]))
+        assert(sorted(self.original_dims[1]) == list(self.original_dims[1])), \
+            self.original_dims[1]
 
         # Transpose dimensions so they are in the correct order, and return
         order = sorted(set(data.coords) - {'features'})
@@ -266,33 +319,68 @@ class Datafile(BaseAbstract):
             return self.__dict__['summary']
         data = self.data.to_dataset('features')
 
-        # Include in the summary stats any coordinates requested as features
-        for coord in data.coords:
-            if (coord in self.features) and (coord != 'datetime'):
-                coords = {c: data[c] for c in data.coords if c != coord}
-                data[f'{coord}_f'] = data[coord]
-                data[f'{coord}_f'] = data[[f'{coord}_f']] \
-                    .expand_dims(**coords)[f'{coord}_f'] \
-                    .transpose(*list(data.dims)) \
-                    .chunk(self.data.data.chunksize[:-1])
+        # Splitting large chunks seems to sometimes result in KeyError in dask
+        with dask.config.set(**{'array.slicing.split_large_chunks': False}):
+            
+            # Include in the summary stats any coordinates requested as features
+            for coord in data.coords:
+                if (coord in self.features) and (coord != 'datetime'):
+                    coords = {c: data[c] for c in data.coords if c != coord}
+                    data[f'{coord}_f'] = data[coord]
+                    data[f'{coord}_f'] = data[[f'{coord}_f']] \
+                        .expand_dims(**coords)[f'{coord}_f'] \
+                        .transpose(*list(data.dims)) \
+                        .chunk(self.data.data.chunksize[:-1])
 
-        extra = dd(int, {'null' : data.isnull().sum})
-        stats = ['mean', 'std', 'min', 'max'] + list(extra)
-        coord = xr.Variable('statistics', stats) 
-        value = lambda k: getattr(data, k, extra[k])().to_array('features')
-        stats = xr.concat(map(value, stats), coord).to_dataset('statistics')
+            extra = dd(int, {'null' : lambda: data.isnull().sum(dtype='int64')})
+            stats = ['mean', 'std', 'min', 'max'] + list(extra)
+            coord = xr.Variable('statistics', stats) 
+            value = lambda k: getattr(data, k, extra[k])().to_array('features')
+            stats = xr.concat(map(value, stats), coord).to_dataset('statistics')
 
-        # Compute percentiles as a group for efficiency
-        stats[['p25', 'median', 'p75']] = xr.apply_ufunc(
-            lambda x: da.percentile(x.ravel(), [25, 50, 75], internal_method='tdigest'),
-            data, **{
-                'dask'             : 'allowed',
-                'input_core_dims'  : [list(data.dims)],
-                'output_core_dims' : [['statistics']],
-            }).to_array('features').to_dataset('statistics')
-        stats = stats.to_array('statistics').to_dataset('features')
-        stats = stats.rename({f'{c}_f':c for c in data.coords if f'{c}_f' in stats})
-        return stats.to_array('features')
+            # Compute percentiles as a group for efficiency
+            stats[['p25', 'median', 'p75']] = xr.apply_ufunc(
+                lambda x: da.percentile(x.ravel(), [25, 50, 75], internal_method='tdigest'),
+                data, **{
+                    'dask'             : 'allowed',
+                    'input_core_dims'  : [list(data.dims)],
+                    'output_core_dims' : [['statistics']],
+                }).to_array('features').to_dataset('statistics')
+            stats = stats.to_array('statistics').to_dataset('features')
+            stats = stats.rename({
+                f'{c}_f':c for c in data.coords if f'{c}_f' in stats})
+            return stats.to_array('features')
+
+
+    # def summary(self, compute: bool = True) -> xr.DataArray:
+    #     """ Summary re-write which is simpler, but uses more memory / time
+    #          in large-data scenarios """
+    #     # Ensure cached summary data is used if available
+    #     self._raw_data
+    #     if 'summary' in self.__dict__:
+    #         return self.__dict__['summary']
+
+    #     data = self.data.to_dataset('features')
+    #     summ = []
+    #     for k in tqdm(self.features, desc=f'{self} stats', disable=not compute):
+    #         if k == 'datetime': continue
+
+    #         darray = da.asarray(data[k].data.ravel())
+    #         finite = da.isfinite(darray)
+    #         values = darray[finite].compute_chunk_sizes()
+    #         pctile = da.percentile(values, [25,50,75], internal_method='tdigest')
+
+    #         stat = [('null', darray.size - da.sum(finite))] 
+    #         stat+= [(s, getattr(da,f'nan{s}')(values)) for s in ['mean','std','min','max']]
+    #         stat+= [(s, pctile[j]) for j,s in enumerate(['p25', 'median', 'p75'])]
+            
+    #         # Compute features independently for efficiency
+    #         keys, vals = map(list, zip(*stat))
+    #         vals = list(da.compute(*vals)) if compute else da.stack(vals)
+    #         summ.append((k, xr.DataArray(vals, {'statistics':keys})))
+
+    #     self.__dict__['summary'] = xr.Dataset(dict(summ)).to_array('features')
+    #     return self.__dict__['summary']
 
 
     @property
@@ -337,7 +425,7 @@ class Datafile(BaseAbstract):
         """ Return a name for this Datafile using the location if possible """
         if isinstance(self.location, (Path, str)):
             loc = Path(self.location)
-            if 'Cache' in loc.parts and len(loc.stem) == len(self.config_hash):
+            if len(loc.stem) == len(self.config_hash):
                 return f'{loc.parent.stem}_{loc.stem[:4]}'
             return loc.stem
         return f'{type(self.location).__name__}_{self.config_hash[:4]}'
@@ -367,7 +455,8 @@ class Datafile(BaseAbstract):
     @property
     def config_hash(self) -> str:
         """ Hash of the config dictionary, to use as a condensed label """
-        return hashlib.sha256(str(self.config).encode('utf-8')).hexdigest()
+        c = {k:v for k,v in self.config.items() if k not in ['_window_depth', 'match_radius']}
+        return hashlib.sha256(str(c).encode('utf-8')).hexdigest()
 
 
     @cached_property
@@ -403,7 +492,7 @@ class Datafile(BaseAbstract):
         )
 
 
-    @cached_property
+    @property
     def valid_percent(self) -> dict[str, Number]:
         """ {Dimension key : valid percent} with default value for missing.
             Keys are also expanded into tuples, and missing dims are added. """
@@ -467,9 +556,24 @@ class Datafile(BaseAbstract):
         get_vec = lambda d: np.diff(d) if len(d) > 1 else np.zeros(1)
         vectors = [get_vec(self._typed_data[dim]).round(5) for dim in self.dims]
         uniform = lambda vec: (vec.max()-vec.min()) < 1e-3
-        setattr(self, 'is_uniform', all(map(uniform, vectors)))
+
+        # Adjust the resolution vector based on the requested match radius
+        for dim, radius in self.match_radius.items():
+            assert(dim in self.dims), f'Unknown dimension "{dim}"'
+            index = self.dims.index(dim)
+            
+            # Handle radius specified as a percentage
+            # The default radius used by the neighbor matching is 50%, so we
+            # also need to scale the new radius by that amount for it to align
+            if isinstance(radius, str):
+                assert(radius[-1] == '%'), f'Unknown radius specification "{radius}"'
+                vectors[index] *= (float(radius[:-1])/100.) / 0.5
+
+            # Handle radius specified as a raw value (datetime is minutes)
+            else: vectors[index][:] = radius * 2
 
         # Stack the left/right resolution for each vector 
+        setattr(self, 'is_uniform', all(map(uniform, vectors)))
         if not self.is_uniform:
             stack_lr = lambda vector: np.stack([
                 np.r_[vector[:1], vector],
@@ -484,7 +588,13 @@ class Datafile(BaseAbstract):
         """ Return the maximum resolution for each coordinate.
         If we have uniform grids, this will just be the resolution
         itself; otherwise it will be the maximum along each vector """
-        return [np.atleast_1d(r).max() for r in self.resolution]
+        # return [np.atleast_1d(r).max() for r in self.resolution]
+
+        # We don't want to apply any manual match_radius however, so we redo
+        # the resolution calculations without applying match_radius
+        get_vec = lambda d: np.diff(d) if len(d) > 1 else np.zeros(1)
+        vectors = [get_vec(self._typed_data[dim]).round(5) for dim in self.dims]
+        return [np.atleast_1d(r).max() for r in vectors]
 
 
     def ensure_dims(self, dims: set[str]) -> None:
@@ -503,6 +613,79 @@ class Datafile(BaseAbstract):
             # Force a cache refresh for these values
             for key in ['data', 'valid_percent']:
                 self.__dict__.pop(key, None)
+
+
+    @property
+    def max_valid_blocks(self) -> list[Number]:
+        """ Return the maximum number of blocks along each dimension.
+
+        The max blocks along each dimension which would create a valid
+        configuration depends on the requested window depths and the 
+        valid percent (the percent which must be valid for a window 
+        sample to be considered valid).  
+        
+        In general, the minimum chunk size allowed corresponds to the
+        requested window depth on each side. For example, window depths
+        of (10, 5) means a data chunk configuration of (10, 1, 5) would 
+        be technically be valid - and therefore data with 16 elements 
+        could maximally be split into 3 blocks. Dask requires chunks to
+        be the same size (except the last), however, and so the maximum
+        configuration is two blocks with chunksizes (10, 6).
+
+        This scenario also assumes a valid percent of 1 (100% of elements
+        must be valid for a window to be valid). If we take into account 
+        different valid percents, say, 0.5 (50%), the minimum total chunk
+        size (left + center + right) is then halved. 
+
+        In summary we have two primary constraints:
+            - chunks to the left and right of every chunk must be at least
+              as large as the requested left/right window depth
+            - total chunk size must be at least as large as the total window
+              size, multiplied by the valid percent
+
+        Returns
+        -------
+        list[Number]
+            List of numbers indicating the maximum number of blocks
+            that can be created along each dimension for the current
+            Datafile objects contained in this Dataset.
+
+        """
+        blocks = []
+        for i, dim in enumerate(self.dims):
+
+            # Virtual dimensions can have any number of blocks
+            if self.virtual[i]: 
+                blocks.append(np.inf)
+                continue
+
+            # Each dimension must be at least as large as the minimum
+            # number of elements required for a valid window
+            size  = self.shape[i]
+            total = self.window_total[dim]
+            depth = self.window_depth[dim]
+            v_pct = self.valid_percent[dim]
+            if size < (total * v_pct):
+                raise Exception(f'{self} (shaped {self.shape}) has {size} ' + 
+                    f'elements along dimension "{dim}", which is less than ' + 
+                    f'the required size of {total*v_pct} for a window size of'+
+                    f' {total} ({self.window_depth[dim]}) and a valid percent'+
+                    f' of {v_pct} ({int(v_pct*100)}%)')
+
+            min_chunksize  = int(max(1, max(self.window_depth[dim])))
+            max_numblocks  = int(size // min_chunksize)
+            last_chunksize = int(size % min_chunksize)
+
+            # # Dask allows the last chunk to be smaller, and so technically
+            # # we could have one additional block if we allow the remainder
+            # # to be smaller than the minimum chunk size (so long as it's 
+            # # greater than the right window depth). However, this requires
+            # # careful handling of the chunking process, and is more likely
+            # # to cause bugs than to provide any significant benefit
+            # if (last_chunksize > 0) and (last_chunksize >= depth[1]):
+            #     max_numblocks += 1
+            blocks.append(max_numblocks)
+        return blocks            
 
 
     def calculate_overlap(self,
@@ -549,7 +732,7 @@ class Datafile(BaseAbstract):
             if blocks > 1:
                 total = self.window_depth[dim].sum()
                 size  = self.window_depth[dim].max()
-                size += 0 if skip or (res==0) else ((max_res/2) / res)
+                size += 1 if skip or (res==0) else ((max_res/2) / res)
             else: size = 0
             return (self.dims.index(dim), math.ceil(np.nan_to_num(size)))
 
@@ -602,16 +785,18 @@ class Datafile(BaseAbstract):
         if any(block > shape for block, shape in block_shape):
             raise ValueError(f'Blocks={numblocks} > data.shape={self.shape}')
 
-        # Calculate and apply the new chunks
         newchunks = [math.ceil(shape / block) for block, shape in block_shape]
-
         if self.numblocks[:-1] != tuple(numblocks):
-            self.data = self.chunk(newchunks)
+            self.data = self.chunk(dict(zip(self.dims, newchunks)))
         else: newchunks = []
 
         # Ensure the new block numbers are equal to what was requested
         if any(block != db for block, db in zip(numblocks, self.numblocks)):
-            raise ValueError(f'blocks={numblocks}, created {self.numblocks}')
+            newchunks = [shape // block for block, shape in block_shape]
+            self.data = self.chunk(dict(zip(self.dims, newchunks)))
+
+            if any(block != db for block, db in zip(numblocks, self.numblocks)):
+                raise ValueError(f'blocks={numblocks}, created {self.numblocks}')
         return newchunks
 
 
@@ -665,7 +850,7 @@ class Datafile(BaseAbstract):
                 if block > shape:
                     raise ValueError(f'Blocks={chunksize} != data.shape={self.shape}')
 
-        self.data = self.chunk(chunksize)
+        self.data = self.chunk(dict(zip(self.dims, chunksize)))
         return chunksize
 
 
@@ -747,7 +932,7 @@ class Datafile(BaseAbstract):
 
         def set_id(array):
             """ Set all values in a block equal to its own block id """
-            f = lambda x, block_id: np.full_like(x, get_id(block_id), 'int32')
+            f = lambda x, block_id: np.full_like(x, get_id(block_id), dtype='int32')
             return array.map_blocks(f, dtype='int32')
 
         def mask_id(array):
@@ -756,15 +941,13 @@ class Datafile(BaseAbstract):
             return array.map_blocks(f, dtype=bool)
 
         # Ensure name=False to avoid hashing all values in the array
-        to_darray = partial(da.from_array, name=False)
-        
+        masks_kwargs = {'dtype': bool, 'name': False, 'chunks': chunks+((1,),)}
+
         # Create mask indicating out-of-bound elements in each block
-        inbound_mask = np.ones(shapes + (1,), dtype=bool)
-        inbound_mask = to_darray(inbound_mask, chunks + ((1,),))
+        inbound_mask = da.ones(shapes + (1,), **masks_kwargs)
 
         # Create mask indicating overlapped elements in each block
-        overlap_mask = np.zeros(shapes + (1,), dtype=bool)
-        overlap_mask = set_id( to_darray(overlap_mask, chunks + ((1,),)) )
+        overlap_mask = set_id( da.zeros(shapes + (1,), **masks_kwargs) )
 
         # Clip block extents to avoid duplication
         # extents = [max(c)+o*2 for c,o in zip(self.chunks, overlaps.values())]
@@ -781,19 +964,21 @@ class Datafile(BaseAbstract):
         })
 
         # Separate data/coords/masks into independent blocks
-        d_blocks = blocker( overlap(self.dask) )
-        c_blocks = blocker( overlap(self.dask_coords) )
-        i_blocks = blocker( overlap(inbound_mask, boundary=0) )
-        o_blocks = blocker( mask_id(overlap(overlap_mask, boundary=-1)) )
+        block_grids = list(map(blocker, [
+            overlap(self.dask),
+            overlap(self.dask_coords),
+            overlap(inbound_mask, boundary=0),
+            mask_id(overlap(overlap_mask, boundary=-1)),
+        ]))
 
         # Define args/kwargs for the Block objects that will be created
-        block_grids = [d_blocks, c_blocks, i_blocks, o_blocks]
         block_kwarg = {
             'dims'          : self.dims,
             'original_dims' : self.original_dims,
             'window_depth'  : self.window_depth,
             'valid_percent' : self.valid_percent,
             'invalid_value' : self.invalid_value,
+            'allow_repeats' : self.allow_repeats,
             'label'         : self.label,
         }
 
@@ -813,7 +998,8 @@ class Datafile(BaseAbstract):
 
             # Create a BlockView object for each coordinate vector
             r_chunks = [[chunk, (2,)] for chunk in chunks] # 2 = left/right
-            r_arrays = map(to_darray, self.resolution, r_chunks)
+            to_d_arr = partial(da.from_array, name=False)
+            r_arrays = map(to_d_arr, self.resolution, r_chunks)
             r_blocks = list(starmap(to_blocks, enumerate(r_arrays)))
             r_counts = [r.size for r in r_blocks]
             assert(is_equal(r_counts)), [r_counts, blocks]
@@ -848,6 +1034,7 @@ class Datafile(BaseAbstract):
 
     def _cache(self, 
         overwrite : bool = False, 
+        verbose   : bool = False,
         cache_dir : Path | str  = 'Cache',
     ):
         """Cache data in a new zarr database for faster access.
@@ -861,11 +1048,14 @@ class Datafile(BaseAbstract):
             verify that the data itself is the same, and so changing e.g. one
             of the preprocessor function definitions, might result in the wrong 
             data being used. 
+        verbose : bool
+            Whether to print more detailed info when caching this datafile.
         cache_dir : Path | str
             Location for the cached data to be stored. By default, data is 
             cached in `./Cache`. 
 
         """
+
         data = self.data.to_dataset('features')
         dest = Path(cache_dir, self.name, f'{self.config_hash}.zarr')
         dest.parent.mkdir(exist_ok=True, parents=True)
@@ -876,17 +1066,38 @@ class Datafile(BaseAbstract):
                 data = data.isel({dim: 0}, drop=True)
 
         # Include summary statistics
-        data['summary'] = self.summary
+        data['summary'] = self.summary#(compute=False)
+
+        # Allow tracking the reason a datafile is re-cached
+        reason = 'user passed overwrite=True to _cache'
 
         # Verify cached data is equivalent
         if (not overwrite) and dest.exists():
             try: 
                 with xr.open_zarr(dest) as cache:
-                    overwrite = not all(
-                        getattr(data, attr) == getattr(cache, attr)
-                        for attr in ['dims', 'attrs', 'nbytes', 'chunksizes']
-                    ) and bool(xr.align(data, cache, join='exact'))
-            except: overwrite = True
+                    attrs = ['dims', 'chunksizes']
+                    for a in attrs:
+                        curr = getattr(data,  a, None)
+                        prev = getattr(cache, a, None)
+                        if curr != prev:
+                            reason = f'differing {a}\n\t{curr=}\n!=\n\t{prev=}'
+                            overwrite = True
+                            break
+                    else:
+                        if not bool(xr.align(data, cache, join='exact', exclude='statistics')):
+                            reason = 'misaligned cache'
+                            overwrite = True
+            except Exception as e: 
+                reason = f'exception {e}'
+                overwrite = True
+
+        if (overwrite or (not dest.exists())):
+            print(f'\nCaching {self.name} to {dest}...')
+            # data['summary'] = self.summary(compute=True)
+            if dest.exists():
+                print(f'Re-caching reason: {reason}')
+            if verbose:
+                print(self.to_string())
 
         # Reinitialize this Datafile with the new cache
         # Anything handled by the cache (e.g. extent) can be dropped
@@ -899,11 +1110,16 @@ class Datafile(BaseAbstract):
 
         # Write the data to the destination
         if overwrite or (not dest.exists()):
-            if dest.exists(): shutil.rmtree(dest)
-            print(f'\nCaching {self.name}...')
+            if dest.exists(): 
+                shutil.rmtree(dest)
+            
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore')
-                with ProgressBar(): data.to_zarr(dest, encoding={})
+                try:
+                    with ProgressBar(): data.to_zarr(dest, encoding={})
+                except: 
+                    if dest.exists(): shutil.rmtree(dest)
+                    raise
         else: print(f'Cache exists for {self.name}')
 
 

@@ -1,4 +1,5 @@
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
+from functools import cached_property
 from typing import Union
 
 import xarray as xr
@@ -43,7 +44,7 @@ class SampleSet(BaseSet):
 
     Parameters
     ----------
-    windows   : Collection[Collection[xr.Dataset]]
+    windows   : Sequence[Collection[xr.Dataset]]
         The collection of data window collections, where 
         len(windows) == len(Dataset).
     singleton : bool 
@@ -57,14 +58,17 @@ class SampleSet(BaseSet):
     """
     
     def __init__(self, 
-        windows   : Collection[Collection],
+        windows   : Sequence[Collection],
+        n_samples : int, 
+        make_objs : bool = True,
         singleton : bool = False,
-        dtype = object,
+        ele_dtype = object,
     ):
         self.container = windows
+        self.n_samples = n_samples
+        self.make_objs = make_objs
         self.singleton = singleton
-        self.ele_dtype = dtype
-        self.n_samples = [np.prod(list(map(len, w))) for w in windows]
+        self.ele_dtype = ele_dtype
 
 
     @property
@@ -73,7 +77,7 @@ class SampleSet(BaseSet):
         object which returns an array via a .values attribute. We circumvent
         this restriction by just returning ourself via .values, and performing
         the lazy window lookup when actually fetching via __getitem__ """
-        return self[:] if self.singleton else self
+        return self[:] if self.singleton and self.make_objs else self
 
 
     @property
@@ -82,6 +86,12 @@ class SampleSet(BaseSet):
         return (len(self),)
     
 
+    @cached_property
+    def sizes(self):
+        """ Length of cartesian product for each match in the container """
+        return [np.prod(list(map(len, w))) for w in self.container]
+
+
     def __array__(self, *args, **kwargs): 
         """ Dask attempts to pass the SampleSet into a numpy array """
         return self[:]
@@ -89,7 +99,7 @@ class SampleSet(BaseSet):
 
     def __len__(self):
         """ Length of the cartesian product """
-        return np.sum(self.n_samples)
+        return self.n_samples
 
     
     def __getitem__(self, idx) -> Union[Sample, np.ndarray]:#[Sample]:
@@ -132,7 +142,7 @@ class SampleSet(BaseSet):
         start = start or 0
         stop  = stop  or len(self)
 
-        for size, match in zip(self.n_samples, self.container):
+        for size, match in zip(self.sizes, self.container):
             if start < size:
                 yield from partial_product(match, start, stop, step)
 

@@ -2,6 +2,7 @@ import pytest
 import dask.array as da 
 import xarray as xr 
 import numpy as np 
+import warnings 
 
 from crest.data.loading import Block
 
@@ -36,7 +37,7 @@ example_block = Block(**{
     'resolution'    : [1., 0.1],
     'window_depth'  : {'x': np.array([0,1]), 'y': np.array([1,0])},
     'valid_percent' : {('x','y'): 1.},
-    'invalid_value' : [12345, 54321., -2147483648, -9223372036854775808, 'a'],
+    'invalid_value' : [12345, 54321., -2147483648, -9223372036854775808, 'a', -np.inf, np.inf],
 })
 
 
@@ -119,7 +120,12 @@ def test_invalid():
       [1, -2., 54321., 54321],
       [0,   0, 12345, 12345.],
     ], dtype=int)
-    data = da.overlap.overlap(da.from_array(data), {1:1}, {1:np.nan}).compute()
+    
+    # Type mismatch is purposeful
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', RuntimeWarning)
+        data = da.overlap.overlap(da.from_array(data), {1:1}, {1:np.nan}).compute()
+        
     output = example_block.invalid(data)
     expect = np.array([
       [True, False, False, True, True, True],

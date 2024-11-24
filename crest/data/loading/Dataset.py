@@ -92,9 +92,9 @@ class Dataset(BaseSet):
         return logger
 
 
-    def align(self, a: str, *b):
+    def align(self, a: str, *b, n=20):
         """ Helper used to align log text """
-        return f'{a:>20}: '+' '.join(map(str, b))
+        return f'{a:>{n}}: '+' '.join(map(str, b))
 
 
     def generate_samples(self, 
@@ -190,6 +190,12 @@ class Dataset(BaseSet):
                 # i.e. create virtual dimensions where necessary
                 self.ensure_dims( set.union(*map(set, self.dims)) )
 
+                # Ensure the coordinate extents are aligned across Datafiles
+                # i.e. so that blocks will refer to the same coordinate areas
+                # Unfortunately, still not working properly / requires large
+                # amount of memory for certain datasets
+                # if len(self) > 1: self.ensure_extents()
+
                 # Create the delayed sample blocks
                 samples = self.create_blocks(blocksize, numblocks, verbose, optimize, shuffle)
         except: 
@@ -210,6 +216,151 @@ class Dataset(BaseSet):
             if save_path is not None:
                 Dataset.save(samples, save_path)
         return samples 
+
+
+    def ensure_extents(self):
+        """ TODO: Make this function idempotent (i.e. before/after cache should calculate same extents) 
+
+        a: [0, 1, 2, 3, 4, 5]
+        b: [0,    2,    4   ]
+        c: [   1,    3,    5]
+
+        Global extent could be either [0, 5] or [1, 4]
+        Either way, the final individual extents should be:
+            a: [0, 5]
+            b: [0, 4 or 5]
+            c: [0 or 1, 5]
+
+        Maybe the process should be:
+            1. find minimum intersecting global extent
+            2. apply found global extent, using +1 (<) outside rather than bfill/ffill (<=) 
+            3. find maximum global extent 
+            4. set individual extents to this maximum
+            5. apply individual extents
+
+        So we would get:
+            1. global extent = [1, 4]
+            2. a=[0,5] b=[0,4] c=[1,5]
+            3. global extent = [0, 5]
+            4. a=[0,5] b=[0,5] c=[0,5] 
+            5. a=[0-5] b=[0-4] c=[1-5] 
+
+        """
+
+        # def get_subset(extent, data, offset=False):
+        #     """ Extract the data subset requested by the given extent """
+        #     select = lambda dim, ext, m: data[dim].sel({dim: ext}, method=m)
+        #     for dim, ext in extent.items():
+        #         if dim in data and not data[dim].isnull().any():
+
+        #             # Select by 'outside' nearest values according to requested extents
+        #             try:             lo = select(dim, ext[0], 'nearest' if offset else 'ffill')
+        #             except KeyError: lo = select(dim, ext[0], 'nearest')
+        #             try:             hi = select(dim, ext[1], 'nearest' if offset else 'bfill')
+        #             except KeyError: hi = select(dim, ext[1], 'nearest')
+
+        #             # Offset by one additional index outside
+        #             if offset:
+        #                 lo = data[dim].sel({dim: slice(None, lo)}).isel({dim: slice(-2, None)}).isel({dim:0})
+        #                 hi = data[dim].sel({dim: slice(hi, None)}).isel({dim: slice(None, 2)}).isel({dim:-1})
+        #             data = data.sel({dim: slice(lo, hi)})
+        #     return data
+
+        # def get_subset2(extent, data):
+        #     """ Extract the data subset requested by the given extent """
+        #     select = lambda dim, ext, m: data[dim].sel({dim: ext}, method=m)
+        #     for dim, ext in extent.items():
+        #         if dim in data and not data[dim].isnull().any():
+
+        #             # Select by 'outside' nearest values according to requested extents
+        #             # This doesn't work for all datatypes, e.g. datetime will fail to multiply with float
+        #             try:                 lo = select(dim, ext[0]*0.999, 'ffill')
+        #             except:
+        #                 try:             lo = select(dim, ext[0], 'ffill')
+        #                 except KeyError: lo = select(dim, ext[0], 'nearest')
+        #             try:                 hi = select(dim, ext[1]*1.001, 'bfill')
+        #             except:
+        #                 try:             hi = select(dim, ext[1], 'bfill')
+        #                 except KeyError: hi = select(dim, ext[1], 'nearest')
+        #             data = data.sel({dim: slice(lo, hi)})
+        #     return data
+
+        def get_extents(data):
+            # Handles datetime: https://github.com/pydata/xarray/issues/3256
+            return {dim: (
+                data[dim].min().to_numpy().min(),
+                data[dim].max().to_numpy().max(),
+            ) for dim in data.coords if not data[dim].isnull().any()}
+
+
+        def print_extent(extent, prefix='\t\t'): 
+            """ Printing helper """
+            for dim in list(extent): 
+                print(f'{prefix}{dim}: ({extent[dim][0]}, {extent[dim][1]})')
+
+        # Iterate over all Datafiles to find the global extent
+        extent = {}
+        for df in self:
+            raw = df._raw_data
+            ext = get_extents(raw)
+
+            for dim, raw_ext in ext.items():
+                gbl_ext = extent.get(dim, raw_ext)
+                d_range = raw[dim].sel({dim: slice(*df.extent.get(dim, raw_ext))})
+                sub_ext = get_extents(d_range)[dim]
+
+                extent[dim] = (
+                    max(raw_ext[0], sub_ext[0], gbl_ext[0]),
+                    min(raw_ext[1], sub_ext[1], gbl_ext[1]),
+                )
+
+
+            # sub = get_subset(df.extent, raw, offset=False)
+
+            # raw_ext = get_extents(raw)
+            # sub_ext = get_extents(sub)
+            # gbl_ext = {dim: extent.get(dim,ext) for dim,ext in sub_ext.items()}
+
+            # print(f'\n\tExtent for {df}:')
+            # print(f'\t\tAvailable:')
+            # print_extent(raw_ext, '\t\t\t')
+            # print(f'\t\tRequested:')
+            # print_extent(sub_ext, '\t\t\t')
+            
+            # # Update current global extent 
+            # extent.update( {dim: (
+            #     max(raw_ext[dim][0], sub_ext[dim][0], gbl_ext[dim][0]),
+            #     min(raw_ext[dim][1], sub_ext[dim][1], gbl_ext[dim][1]),
+            # ) for dim in raw_ext} )
+
+        print(f'\n\tSetting new global extent:')
+        print_extent(extent)
+
+        # Update each Datafile
+        for df in self: 
+
+            raw = df._raw_data
+            ext = {}
+            for dim in df.dims:
+                if raw[dim].isnull().any(): continue
+
+                minim, maxim = extent[dim]
+                in_bound = lambda coord: max(0, min(coord, len(raw[dim])-1))
+                location = lambda val, side: np.searchsorted(raw[dim], val, side)
+                ext[dim] = (
+                    raw[dim][in_bound( location(minim, 'right')-2 )].to_numpy().min(),
+                    raw[dim][in_bound( location(maxim, 'left' )+2 )].to_numpy().max(),
+                )
+            # Apply twice to ensure idempotency (get +/- 1 step outside)
+            # sub = get_subset2(extent, df._raw_data)
+            # ext = dict(df.extent)
+            # ext.update( get_extents(sub) )
+
+            print(f'\n\tSetting new extent for {df}:')
+            print_extent(ext)
+
+            df.extent = ext
+            df.__dict__.pop('data', None)
 
 
 
@@ -253,10 +404,11 @@ class Dataset(BaseSet):
         # Attempt to automatically block the data based on total block count
         if isinstance(numblocks, int):
             self.autochunk(blocksize, numblocks, verbose)
+            blocks = self.numblocks[0][:-1]
 
         # Either block the data to an exact number per dimension (e.g. [1,5,9])
         # or try to automatically find a reasonable common blocking scheme 
-        # based on the scheme currently used across all Datafiles
+        # based on the scheme currently used across all Datafiles (if None)
         else:
             blocks = numblocks or np.gcd.reduce(self.numblocks, axis=0)[:-1]
 
@@ -292,6 +444,62 @@ class Dataset(BaseSet):
                 if any(chunks): print(f'\trechunked with: {chunks}')
                 print(f'\t result blocks: {self.numblocks[0][:-1]}')
 
+        # Validate all chunks are at least as large as requested window size
+        max_blocks = np.min(list(self.max_valid_blocks), axis=0).astype(int)
+        if any(blk > maxim for blk, maxim in zip(blocks, max_blocks)):
+            raise Exception(f'Specified blocks {blocks} are greater than the '+
+                    f'maximum valid number of blocks {max_blocks}')
+
+        # This can only be run when not caching, since zarr doesn't allow us to 
+        # write non-uniform chunks. Matching up anisotropic grids between Datafiles
+        # requires us to have non-uniformly sized chunks however, and so this must
+        # be run by any object which is generating matchups, e.g. Batcher
+        if optimize: self.autochunk(numblocks=blocks)
+
+        if verbose: 
+            chunks = lambda df: [f'{d:>10} = {c}' for d,c in zip(df.dims, df.chunks)]
+            to_str = lambda df: f'{df}'+'\n\t\t  '.join(['']+chunks(df))
+            print(self.align('Chunks', '\n\t\t'+'\n\t\t'.join(map(to_str, self))))
+
+        # Verify the data chunks are valid for the requested window sizes
+        for df in self:
+            chunks = df.chunks[:-1]
+            window = [df.window_depth[dim] for dim in df.dims]
+            assert(len(chunks) == len(window)), [chunks, window, df.dims]
+
+            # Technically, we only need the chunk on either side to be as large 
+            #   as the requested length on that side - i.e. (100, 5) means we 
+            #   need chunks on the left side of all chunks to be size >= 100,
+            #   and chunks on the right side of all chunks to be size >= 5
+            # One additional constraint is that the total chunk needs to have
+            #   (left + center + right) * valid_percent >= window total
+            # This additional constraint handes the case where there exist only
+            #   one or two chunks in total
+            for dim_chunks, dim_window, dim in zip(chunks, window, df.dims):
+                minim_left, minim_right = dim_window
+
+                # Check left/right side constraint
+                for i in range(1, len(dim_chunks)-1):
+                    left  = dim_chunks[i-1]
+                    right = dim_chunks[i+1]
+
+                    if (left < minim_left) or (right < minim_right):
+                        raise Exception(f'Using block size {blocks}, {df} ' +
+                            f'(shaped {df.shape[:-1]}) is given chunks along axis '+
+                            f'"{dim}" = {dim_chunks} - which is invalid for '+
+                            f'the requested window size of {list(dim_window)}')
+
+                # Check total size constraint
+                for i, center in enumerate(dim_chunks):
+                    left  = dim_chunks[i-1] if i>0 else 0
+                    right = dim_chunks[i+1] if i<(len(dim_chunks)-1) else 0
+
+                    if ((left+center+right) * df.valid_percent[dim]) < sum(dim_window):
+                        raise Exception(f'Using block size {blocks}, {df} ' +
+                            f'(shaped {df.shape[:-1]}) is given chunks along axis '+
+                            f'"{dim}" = {dim_chunks} - which is invalid for '+
+                            f'the requested window size of {list(dim_window)}')
+
         # Get the current number of blocks
         chunks  = self.chunks.ix[:-1]
         current = self.numblocks.ix[:-1]
@@ -305,9 +513,10 @@ class Dataset(BaseSet):
         overlap = self.calculate_overlap(max_res, dimension_blks=blocks, _map=[skipdim])
 
         if verbose: 
-            lbl = lambda dims, ov: str({dims[k]: v for k,v in ov.items()})
+            buf = max(map(len, map(str, self))) + 1
+            lbl = lambda df, dim, ov: f'{str(df):>{buf}} = '+'   '.join(f'{dim[k]}: {v}' for k,v in ov.items())
             ind = '\n                '
-            txt = ind + ind.join(map(lbl, self.dims, overlap))
+            txt = ind + ind.join(map(lbl, self, self.dims, overlap))
             print(self.align('Overlaps', txt))
 
             nbytes = (self.total_bytes / np.prod(blocks)) / 1e6
@@ -330,7 +539,7 @@ class Dataset(BaseSet):
 
     def autochunk(self, 
         blocksize : Number = 1e8, 
-        numblocks : int    = 0,
+        numblocks : int | Collection[int] = 0,
         verbose   : bool   = False,
     ) -> None:
         """Attempt to automatically chunk/block the data.
@@ -367,35 +576,56 @@ class Dataset(BaseSet):
             Whether logs should be shown when preparing and generating samples.
 
         """
-        # Close (over-)estimate for the targeted number of blocks per dimension
-        # (inp bytes + (estimated) out bytes) / blocksize = number of blocks
-        if numblocks>0: tgt_blks = numblocks 
-        else:           tgt_blks = int(np.ceil(self.total_bytes / blocksize))
-        if verbose: print(self.align('Target block total', f'{tgt_blks:,}'))
+        if isinstance(numblocks, int):
+            # Close (over-)estimate for the targeted number of blocks per dimension
+            # (inp bytes + (estimated) out bytes) / blocksize = number of blocks
+            if numblocks>0: tgt_blks = numblocks 
+            else:           tgt_blks = int(np.ceil(self.total_bytes / blocksize))
+            if verbose: print(self.align('Target block total', f'{tgt_blks:,}'))
 
-        # Maximum number of blocks the data could theoretically be split into, 
-        # while still maintaining the required number of elements along each 
-        # dimension to fulfill the requested window size
-        required = lambda d_v, data, size: [np.inf if v else len(data[d])//size[d] for d,v in d_v]
-        data_obj = self._typed_data, self.window_total
-        req_blks = map(required, map(zip, self.dims, self.virtual), *data_obj)
-        max_blks = np.min(list(req_blks), axis=0).astype(int)
-        cur_blks = self.numblocks.ix[:-1]
-        assert(np.isfinite(max_blks).all()), f'Invalid max block size: {max_blks}'
-        assert(min(max_blks) > 0), f'Requested window larger than data: {self.shape}'
+            # Maximum number of blocks the data could theoretically be split into, 
+            # while still maintaining the required number of elements along each 
+            # dimension to fulfill the requested window size
+            # required = lambda d_v, data, size: [np.inf if v else len(data[d])//size[d] for d,v in d_v]
+            # data_obj = self._typed_data, self.window_total
+            # req_blks = map(required, map(zip, self.dims, self.virtual), *data_obj)
+            # max_blks = np.min(list(req_blks), axis=0).astype(int)
+            max_blks = np.min(list(self.max_valid_blocks), axis=0).astype(int)
+            cur_blks = self.numblocks.ix[:-1]
+            assert(np.isfinite(max_blks).all()), f'Invalid max block size: {max_blks}'
+            assert(min(max_blks) > 0), f'Requested window larger than data: {self.shape}'
 
-        if verbose: 
-            print(self.align('Max valid blocks', max_blks))
-            print(self.align('Current block sizes', list(cur_blks)))
+            if verbose: 
+                print(self.align('Max valid blocks', max_blks))
+                print(self.align('Current block sizes', list(cur_blks)))
 
-        # Bin the data into histograms with the specified number of blocks
-        # in order to get the final chunk sizes
-        blocks = optimize_blocks(cur_blks, tgt_blks, max_blks)
+            # Bin the data into histograms with the specified number of blocks
+            # in order to get the final chunk sizes
+            blocks = optimize_blocks(cur_blks, tgt_blks, max_blks)
+        else: blocks = numblocks
+        if verbose: print(self.align('Pre-merged blocks', blocks))
+        
+        # First get the average bin edge locations for all dimensions
         virtual= lambda x: (x.values.size == 1) and np.isnan(x.values[0])
         rm_nan = lambda blk, dat: list(range(blk)) if virtual(dat) else dat
-        binner = lambda blk, dat: np.histogram(rm_nan(blk, dat), int(blk))[0]
-        mapper = lambda dim, dat: map(binner, blocks, [dat[d] for d in dim])
-        chunks = list(map(list, map(mapper, self.dims, self._typed_data)))
+        binner = lambda blk, dat: np.histogram(rm_nan(blk, dat), int(blk))
+        mapper = lambda dim, dat: zip(*map(binner, blocks, [dat[d] for d in dim]))
+        _,edges = zip(*map(list, map(mapper, self.dims, self._typed_data)))
+
+        # Extend first and last edges to be the min/max values
+        average = []
+        for i, edge in enumerate(zip(*edges)):
+            edge = [e for e, dims, dat in zip(edge, self.dims, self._typed_data, strict=True) 
+                    if not virtual(dat[dims[i]])]
+            minim, avg, maxim = np.min(edge,0), np.mean(edge,0), np.max(edge,0) 
+            avg[0] = np.min(minim)
+            avg[-1] = np.max(maxim)
+            average.append(avg)
+
+        # Then apply the averaged edges to get chunk sizes for each datafile
+        binner2 = lambda blk, dat, edges: (np.ones(blk),edges) if virtual(dat) else np.histogram(dat, edges)
+        mapper2 = lambda dim, dat: zip(*map(binner2, blocks, [dat[d] for d in dim], average))
+        chunks,_ = zip(*map(list, map(mapper2, self.dims, self._typed_data)))
         assert(len(set(map(len, chunks))) == 1), chunks
 
         def merge(chunks, w_size):
@@ -479,6 +709,8 @@ class Dataset(BaseSet):
         numblocks : Collection[int], 
         overwrite : bool = False, 
         cache_dir : Path | str  = 'Cache',
+        verbose   : bool = False,
+        fastcheck : bool = False,
     ) -> 'Dataset':
         """Cache all Datafiles in new zarr databases for faster access.
 
@@ -497,6 +729,13 @@ class Dataset(BaseSet):
         cache_dir : Path | str
             Location for the cached data to be stored. By default, data is 
             cached in `./Cache`. 
+        verbose   : bool
+            Additional information printed.
+        fastcheck : bool
+            Allow skipping intensive computation if all datafile hashes are
+            available in the cache location. Note that this could result in
+            unexpected characteristics for the data being loaded (e.g. with
+            a different number of blocks than requested). 
 
         Returns
         -------
@@ -504,16 +743,27 @@ class Dataset(BaseSet):
             Returns self. 
 
         """
-        with Stopwatch(f'Cached {len(self)} Datafiles at {cache_dir}'):
-            # Rechunk the data first
-            self.generate_samples(**{
-                'numblocks' : numblocks, 
-                'compute'   : False, 
-                'verbose'   : False,
-                'optimize'  : False,
-            })
-            self._cache(overwrite, cache_dir, _delay=False)
-        print()
+
+        # Skip if cache folders for all datafile hashes exist
+        cpath = lambda df: Path(cache_dir, df.name, f'{df.config_hash}.zarr')
+        paths = list(map(cpath, self))
+        if not (fastcheck and all(p.exists() for p in paths)):
+            with Stopwatch(f'Cached {len(self)} Datafiles at {cache_dir}'):
+                # Rechunk the data first
+                self.generate_samples(**{
+                    'numblocks' : numblocks, 
+                    'compute'   : False, 
+                    'verbose'   : verbose,
+                    'optimize'  : False,
+                })
+                self._cache(overwrite, verbose, cache_dir, _delay=False)
+            print()
+
+        # Reinitialize Datafiles with their cached data
+        # Anything handled by the cache (e.g. extent) can be dropped
+        else: 
+            if verbose: print(f'All caches already exist ({fastcheck=})')
+            self.reset(extent={},preprocessors=[],_kwmap={'location': paths})
         return self
 
 

@@ -13,14 +13,14 @@ from crest.utils import synthetic_data
 from .Dataset_config import configs
 
 
-def check_outputs(config, expected, update_data=lambda x: x, norm=True):
+def check_outputs(config, expected, update_data=lambda x: x, norm=True, **kwargs):
 
     """ Run the given config, and check if outputs match expectations """
     config = config.copy()
     depths = config.pop('depth', [])
 
     data = update_data(synthetic_data(**config) if config else None)
-    dfs  = [Datafile(d, window_depth=wd, sort_dims=False) for d,wd in zip_longest(data, depths, fillvalue={})]
+    dfs  = [Datafile(d, window_depth=wd, sort_dims=False, **kwargs) for d,wd in zip_longest(data, depths, fillvalue={})]
 
     with dask.config.set(scheduler='synchronous'): # Added for patch with forking error
         dataset = Dataset(dfs)
@@ -165,6 +165,35 @@ def test_non_uniform():
     check_outputs(config, expected, update_data, norm=False)
 
 
+def test_match_radius():
+    """ Test specifying a match radius """
+    def update_data(_):
+        gen_xr = lambda v, c: xr.DataArray(v, coords=c).to_dataset('features')
+        return [gen_xr(np.array([v]).T, {'x':v, 'features':[f'var{i}']})
+                for i, v in enumerate([
+                    [1,          9,     13, 15, 16],
+                    [1, 3, 5, 7, 9, 11, 13, 15],
+                ])]
+
+    # Test with raw value radius
+    config   = {}
+    expected = [
+        [[1],[1]],   [[1],[3]],
+        [[9],[7]],   [[9],[9]], [[9],[11]],
+        [[13],[11]], [[13],[13]], [[13],[15]],
+        [[15],[13]], [[15],[15]], [[16],[15]],
+    ]
+    check_outputs(config, expected, update_data, norm=False, match_radius={'x': 2})
+
+    # Test with percentage radius
+    expected = [
+        [[1],[1]],   [[1],[3]],
+        [[9],[7]],   [[9],[9]], 
+        [[13],[13]],
+        [[15],[15]],
+    ]
+    check_outputs(config, expected, update_data, norm=False, match_radius={'x': '25%'})
+
 
 class TestDataset:
 
@@ -176,7 +205,7 @@ class TestDataset:
             [( 20,  50,  5), (10,  25, 1)],
             [(     800,  5), (     40, 1)],
             [(     200,  3), (    200, 1)],
-            [( 14,  40,  1), ( 8,  25, 1)],
+            [( 16,  42,  1), ( 8,  25, 1)],
         ]
         ext  = [ # extent (min/max)
             [(1, 25), (0, 60)],
