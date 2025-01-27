@@ -458,7 +458,7 @@ class Archiver(BaseAbstract):
                     vars_to_add = ast.literal_eval(
                         e.split('variables ')[1].split(', which')[0])
                     for c in vars_to_add:
-                        self.out_datafile[c] = (self.coords,
+                        self.out_datafile[c] = (list(self.out_datafile.coords),
                                                 da.full(shape=tuple(self.out_datafile.sizes.values()),
                                                         fill_value=np.nan)
                                                 )
