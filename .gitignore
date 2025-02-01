@@ -1,7 +1,9 @@
 *.pyc
 *.LOG
 *.log
+*.log.*
 *.log.backup
+*.log.*.backup
 *.json
 !crest/utils/crest_logging_configs/*.json
 *.h5
