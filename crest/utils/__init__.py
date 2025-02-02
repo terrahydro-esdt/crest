@@ -7,6 +7,7 @@ from .optimize_blocks  import optimize_blocks
 from .partial_product  import partial_product
 from .plot_to_array    import plot_to_array
 from .print_table      import print_table
+from .S3Path           import S3Path
 from .silence_warnings import silence_warnings
 from .Stopwatch        import Stopwatch
 from .synthetic_data   import synthetic_data

@@ -23,6 +23,7 @@ import math
 import dask 
 
 from crest.base import BaseAbstract
+from crest.utils import S3Path
 from .Block import Block
 from .Blockset import Blockset
 
@@ -35,7 +36,7 @@ class Datafile(BaseAbstract):
 
     Parameters
     ----------
-    location      : Path | str | FSMap | xr.Dataset,
+    location      : Path | str | FSMap | S3Path | xr.Dataset,
         Location for which to load the data from. Note that this can take
         a variety of formats, including disk filepath, or S3 bucket via
         an FSMap object. As well, an already loaded xr.Dataset object can
@@ -146,7 +147,7 @@ class Datafile(BaseAbstract):
 
 
     def __init__(self,
-        location      : Union[Path, str, FSMap, xr.Dataset],
+        location      : Union[Path, str, FSMap, S3Path, xr.Dataset],
         features      : list[str]                        = [],
         extent        : dict[str, Collection]            = {},
         window_depth  : dict[str, Int | Collection[Int]] = {},
@@ -158,6 +159,9 @@ class Datafile(BaseAbstract):
         allow_repeats : bool                             = False,
         **kwargs
     ):
+        if isinstance(location, FSMap):
+            location = S3Path(location)
+
         self.location = location
         self.features = sorted(features)
         self.extent   = extent.copy()
@@ -237,7 +241,7 @@ class Datafile(BaseAbstract):
             raw = self.location
         else:
             # If the given location isn't already an xr.Dataset, open it
-            if not isinstance(self.location, FSMap):
+            if not isinstance(self.location, (S3Path, FSMap)):
                 location = zarr.DirectoryStore(self.location)
             else: location = self.location
             raw = xr.open_zarr(location, **self._kwargs)
@@ -423,6 +427,10 @@ class Datafile(BaseAbstract):
     @property
     def name(self) -> str:
         """ Return a name for this Datafile using the location if possible """
+        if isinstance(self.location, S3Path):
+            return self.location.stem
+        if isinstance(self.location, FSMap):
+            return Path(self.location.root).stem
         if isinstance(self.location, (Path, str)):
             loc = Path(self.location)
             if len(loc.stem) == len(self.config_hash):
@@ -1035,7 +1043,7 @@ class Datafile(BaseAbstract):
     def _cache(self, 
         overwrite : bool = False, 
         verbose   : bool = False,
-        cache_dir : Path | str  = 'Cache',
+        cache_dir : Path | str | FSMap | S3Path = 'Cache',
     ):
         """Cache data in a new zarr database for faster access.
 
@@ -1056,9 +1064,15 @@ class Datafile(BaseAbstract):
 
         """
 
+        if isinstance(cache_dir, str):
+            cache_dir = Path(cache_dir)
+        elif isinstance(cache_dir, FSMap):
+            cache_dir = S3Path(cache_dir)
+
         data = self.data.to_dataset('features')
-        dest = Path(cache_dir, self.name, f'{self.config_hash}.zarr')
-        dest.parent.mkdir(exist_ok=True, parents=True)
+        dest = cache_dir.joinpath(self.name, f'{self.config_hash}.zarr')
+        if isinstance(dest, Path):
+            dest.parent.mkdir(exist_ok=True, parents=True)
 
         # Erase virtual dimensions
         for dim in data.coords:
@@ -1110,7 +1124,7 @@ class Datafile(BaseAbstract):
 
         # Write the data to the destination
         if overwrite or (not dest.exists()):
-            if dest.exists(): 
+            if dest.exists() and isinstance(dest, Path):
                 shutil.rmtree(dest)
             
             with warnings.catch_warnings():
@@ -1118,7 +1132,8 @@ class Datafile(BaseAbstract):
                 try:
                     with ProgressBar(): data.to_zarr(dest, encoding={})
                 except: 
-                    if dest.exists(): shutil.rmtree(dest)
+                    if dest.exists() and isinstance(dest, Path):
+                        shutil.rmtree(dest)
                     raise
         else: print(f'Cache exists for {self.name}')
 
@@ -1136,7 +1151,7 @@ class Datafile(BaseAbstract):
             - If a given valid percent is not in the range [0,1]
 
         """
-        if not isinstance(self.location, (xr.Dataset, FSMap)):
+        if not isinstance(self.location, (xr.Dataset, S3Path, FSMap)):
             if not Path(self.location).exists():
                 raise FileNotFoundError(f'File not found: {self.location}')
 

@@ -23,7 +23,7 @@ import shutil
 import zarr
 import io 
 
-from crest.utils import Stopwatch, optimize_blocks
+from crest.utils import Stopwatch, optimize_blocks, S3Path
 from crest.base import BaseSet, BaseNode
 from .Datafile import Datafile
 from .Blockset import Blockset
@@ -59,7 +59,7 @@ class Dataset(BaseSet):
         already passed in as a Datafile object.
     
     """
-    def __init__(self, locations: Iterable[Union[Datafile, Path, str, FSMap]], **kwargs):
+    def __init__(self, locations: Iterable[Union[Datafile, Path, str, FSMap, S3Path]], **kwargs):
         self.container = list(map(partial(Datafile.load, **kwargs), locations))
         assert(len(self)), 'Must pass at least one object to init Dataset'
         for i, datafile in enumerate(self): datafile.dataset_index = i
@@ -644,7 +644,7 @@ class Dataset(BaseSet):
     def cache(self, 
         numblocks : Collection[int], 
         overwrite : bool = False, 
-        cache_dir : Path | str  = 'Cache',
+        cache_dir : Path | str | FSMap | S3Path = 'Cache',
         verbose   : bool = False,
         fastcheck : bool = False,
     ) -> 'Dataset':
@@ -662,7 +662,7 @@ class Dataset(BaseSet):
             verify that the data itself is the same, and so changing e.g. one
             of the preprocessor function definitions, might result in the wrong 
             data being used. 
-        cache_dir : Path | str
+        cache_dir : Path | str | FSMap | S3Path
             Location for the cached data to be stored. By default, data is 
             cached in `./Cache`. 
         verbose   : bool
@@ -681,7 +681,12 @@ class Dataset(BaseSet):
         """
 
         # Skip if cache folders for all datafile hashes exist
-        cpath = lambda df: Path(cache_dir, df.name, f'{df.config_hash}.zarr')
+        if isinstance(cache_dir, str):
+            cache_dir = Path(cache_dir)
+        elif isinstance(cache_dir, FSMap):
+            cache_dir = S3Path(cache_dir)
+
+        cpath = lambda df: cache_dir.joinpath(df.name, f'{df.config_hash}.zarr')
         paths = list(map(cpath, self))
         if not (fastcheck and all(p.exists() for p in paths)):
             with Stopwatch(f'Cached {len(self)} Datafiles at {cache_dir}'):
@@ -707,7 +712,7 @@ class Dataset(BaseSet):
     @classmethod
     def from_models(cls, 
         models          : Collection[BaseNode],
-        database_folder : Path | str | None = None,
+        database_folder : Path | str | FSMap | S3Path | None = None,
         variable_depths : dict[str, Int | Collection[Int]] = {},
         datafile_kwargs : dict[str | Path, dict] = {},
         verbose         : bool = False,
@@ -723,7 +728,7 @@ class Dataset(BaseSet):
         models          : Collection[BaseNode]
             Collection of classes which inherit from crest.base.BaseNode (or 
             their respective instantiated objects).
-        database_folder : Path | str
+        database_folder : Path | str | FSMap | S3Path
             Path to the folder in which the zarr databases are stored. If a
             location defined by the model is not itself a resolvable path to
             the zarr database, the location is searched for in this folder.
@@ -774,12 +779,17 @@ class Dataset(BaseSet):
         universal_kwargs = datafile_kwargs.pop('*', {})
         unused_df_kwargs = unused = set(list(datafile_kwargs))
 
+        if isinstance(database_folder, str):
+            database_folder = Path(database_folder)
+        elif isinstance(database_folder, FSMap):
+            database_folder = S3Path(database_folder)
+
         def get_kwargs(source) -> dict:
             """ Get any kwargs from datafile_kwargs which matches source """
             path = Path(source) if isinstance(source, str) else source
             
             # Multiple formats are accepted when specifying the Datafile name
-            if isinstance(path, Path): 
+            if isinstance(path, (Path, S3Path)):
                 options = [path, path.stem, path.name, path.as_posix()]
             else: options = [path]
 
@@ -800,7 +810,7 @@ class Dataset(BaseSet):
 
             # If the location doesn't exist, search in database_folder
             if not path.exists() and (database_folder is not None):
-                path = Path(database_folder).joinpath(path)
+                path = database_folder.joinpath(path)
 
             # Can pass in location via datafile_kwargs
             if not path.exists():
@@ -810,7 +820,7 @@ class Dataset(BaseSet):
                 if not hasattr(path, 'exists'): return path
 
             # Also check for *folders* if extension was excluded
-            if not path.exists(): 
+            if not path.exists() and isinstance(path, Path):
                 glob = lambda p: p.parent.glob(f'{p.name}.*')
                 dirs = lambda p: list(filter(Path.is_dir, glob(p)))
                 path = ((dirs(path) or dirs(Path(source))) + [path])[0]
