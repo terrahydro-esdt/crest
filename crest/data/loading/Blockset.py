@@ -1,5 +1,7 @@
-from collections.abc import Collection, Callable, Sequence
+from collections.abc import Collection, Sequence
 from functools import cached_property, partial
+from typing import Union
+from typing import Callable
 
 import dask.dataframe as dd
 import dask.array as da 
@@ -31,9 +33,9 @@ class Blockset(BaseSet):
         crest.crest.base.BaseSet for more details.
 
     """
-    def __init__(self, 
-        blocks  : Collection[Block] | Collection[Callable], 
-        logger  : logging.Logger | None = None,
+    def __init__(self,
+        blocks  : Union[Collection[Block] | Collection[Callable]],
+        logger  : Union[logging.Logger, None] = None,
         timing  : bool = True,
         shuffle : bool = False,
     ):
@@ -181,7 +183,7 @@ class Blockset(BaseSet):
 
 
     def _parse(self, 
-        matches   : Sequence | np.ndarray, 
+        matches   : Union[Sequence, np.ndarray],
         n_samples,# : int,
         features,#  : list[list[str]],
         make_objs : bool,

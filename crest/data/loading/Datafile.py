@@ -142,21 +142,20 @@ class Datafile(BaseAbstract):
     DEFAULT_VALID_PERCENT = 1
 
     # Ensure we include int(32/64) representations of NaN
-    DEFAULT_INVALID_VALUES = [-2147483648, -9223372036854775808, np.inf, -np.inf]
-
-
+    DEFAULT_INVALID_VALUES = [-2147483648, -9223372036854775808, float('inf'),
+                              -float('inf')]
 
     def __init__(self,
         location      : Union[Path, str, FSMap, S3Path, xr.Dataset],
-        features      : list[str]                        = [],
-        extent        : dict[str, Collection]            = {},
-        window_depth  : dict[str, Int | Collection[Int]] = {},
-        match_radius  : dict[str, str | Number]          = {},
-        valid_percent : dict[str | tuple[str], Number]   = {},
-        invalid_value : object                           = [],
-        preprocessors : list[Callable]                   = [],
-        sort_dims     : bool                             = True,
-        allow_repeats : bool                             = False,
+        features      : list[str] = [],
+        extent        : dict[str, Collection] = {},
+        window_depth  : dict[str, Union[int, Collection[int]]] = {},
+        match_radius  : dict[str, Union[str, Number]] = {},
+        valid_percent : dict[Union[str, tuple[str]], Number] = {},
+        invalid_value : object = [],
+        preprocessors : list[Callable] = [],
+        sort_dims     : bool = True,
+        allow_repeats: bool = False,
         **kwargs
     ):
         if isinstance(location, FSMap):
@@ -173,14 +172,13 @@ class Datafile(BaseAbstract):
         self.preprocessors  = preprocessors
         self.sort_dims      = sort_dims
         self.allow_repeats  = allow_repeats
-        self.dataset_index  = 0 
+        self.dataset_index  = 0
 
         # Store initialization parameter names for pickling
         self._init_keys = list(self.__dict__) + ['_init_keys']
 
         # Verify all given parameters are valid
         self._validate_parameters()
-
 
     def __getattr__(self, attr: str):
         """ Allow calls to be passed to the underlying xarray/dask object """
@@ -1043,7 +1041,7 @@ class Datafile(BaseAbstract):
     def _cache(self, 
         overwrite : bool = False, 
         verbose   : bool = False,
-        cache_dir : Path | str | FSMap | S3Path = 'Cache',
+        cache_dir : Union[Path, str, FSMap, S3Path] = 'Cache',
     ):
         """Cache data in a new zarr database for faster access.
 
@@ -1105,7 +1103,7 @@ class Datafile(BaseAbstract):
                 reason = f'exception {e}'
                 overwrite = True
 
-        if (overwrite or (not dest.exists())):
+        if overwrite or (not dest.exists()):
             print(f'\nCaching {self.name} to {dest}...')
             # data['summary'] = self.summary(compute=True)
             if dest.exists():

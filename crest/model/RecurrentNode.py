@@ -1,14 +1,23 @@
+from typing import Union
+
 import crest
 from collections.abc import Callable
 import copy
 
-class RecurrentNode():
-    def __init__(self, recurrence: int, node: None | Callable = None, name: None | str = None, inputs: dict = {}, outputs: dict = {}):
-        """
-        Initializes the RecurrentNode with the given recurrence, name, inputs, and outputs.
-        """
 
-        if (recurrence <= 0):
+class RecurrentNode:
+    """
+    Initializes the RecurrentNode with the given recurrence, name, inputs, and outputs.
+    """
+
+    def __init__(self,
+                 recurrence: int,
+                 node: Union[None | Callable] = None,
+                 name: Union[None | str] = None,
+                 inputs: dict = {},
+                 outputs: dict = {}):
+
+        if recurrence <= 0:
             raise Exception('Recurrence must be a greater than 0')
         
         self.parent = crest.model.HierarchalTensorGraph(name=name)

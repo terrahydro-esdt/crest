@@ -1,3 +1,5 @@
+from typing import Union
+
 from dask.delayed import Delayed
 from functools import cached_property
 
@@ -50,7 +52,7 @@ class StructuredDataset:
     """
 
     def __init__(self, 
-        *data  : np.ndarray | dict, 
+        *data  : Union[np.ndarray, dict],
         labels : list[str] = [],
         chunks : int = -1,
         blocks : int = 1,

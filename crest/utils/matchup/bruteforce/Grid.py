@@ -1,19 +1,20 @@
-from collections.abc import Collection, Callable 
+from collections.abc import Collection
 from functools import cached_property
 import numpy as np
+from typing import Callable, Union
 
 from .utils import full_resolutions
 
 
 class Grid:
     def __init__(self, 
-        coordinates : np.ndarray | Callable,
-        resolutions : np.ndarray | Callable,
-        table : None | np.ndarray | Callable = None, 
-        index : None | int | list[int] = None,
-        ngrid : None | int = None,
-        name  : None | str = None,
-        dims  : None | list[str] = None,
+        coordinates : Union[np.ndarray, Callable],
+        resolutions : Union[np.ndarray, Callable],
+        table : Union[None, np.ndarray, Callable] = None,
+        index : Union[None, int, list[int]] = None,
+        ngrid : Union[None, int] = None,
+        name  : Union[None, str] = None,
+        dims  : Union[None, list[str]] = None,
     ):
         self.index = list(np.atleast_1d(index))
         self._C = coordinates

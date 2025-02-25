@@ -99,14 +99,14 @@ class Dataset(BaseSet):
 
     def generate_samples(self, 
         blocksize : Number = 1e9,
-        numblocks : int | Collection[int] = 0,
+        numblocks : Union[int, Collection[int]] = 0,
         compute   : bool   = True,
         verbose   : bool   = True,
         optimize  : bool   = True,
         shuffle   : bool   = False,
-        logger    : Logger | None = None,
-        loglevel  : int | None = None,
-        save_path : str | Path | None = None,
+        logger    : Union[Logger, None] = None,
+        loglevel  : Union[int, None] = None,
+        save_path : Union[str, Path, None] = None,
     ):# -> da.Array | Iterator[Delayed]:
         """Generate the dask array containing all valid samples.
 
@@ -302,7 +302,7 @@ class Dataset(BaseSet):
 
     def create_blocks(self, 
         blocksize : Number = 1e8,
-        numblocks : int | Collection[int] | None = 0,
+        numblocks : Union[int, Collection[int], None] = 0,
         verbose   : bool = False,
         optimize  : bool = True,
         shuffle   : bool = False,
@@ -475,7 +475,7 @@ class Dataset(BaseSet):
 
     def autochunk(self, 
         blocksize : Number = 1e8, 
-        numblocks : int | Collection[int] = 0,
+        numblocks : Union[int, Collection[int]] = 0,
         verbose   : bool   = False,
     ) -> None:
         """Attempt to automatically chunk/block the data.
@@ -597,7 +597,7 @@ class Dataset(BaseSet):
 
 
     @classmethod
-    def save(cls, samples: da.Array, filename: str | Path):
+    def save(cls, samples: da.Array, filename: Union[str, Path]):
         """Save the given samples array as a pickle file at the requested path.
         
         Note
@@ -621,7 +621,7 @@ class Dataset(BaseSet):
 
 
     @classmethod
-    def load(cls, filename: str | Path) -> da.Array:
+    def load(cls, filename: Union[str, Path]) -> da.Array:
         """Load a dask array from a previously saved pickle file.
 
         Parameters
@@ -644,7 +644,7 @@ class Dataset(BaseSet):
     def cache(self, 
         numblocks : Collection[int], 
         overwrite : bool = False, 
-        cache_dir : Path | str | FSMap | S3Path = 'Cache',
+        cache_dir : Union[Path, str, FSMap, S3Path] = 'Cache',
         verbose   : bool = False,
         fastcheck : bool = False,
     ) -> 'Dataset':
@@ -712,9 +712,9 @@ class Dataset(BaseSet):
     @classmethod
     def from_models(cls, 
         models          : Collection[BaseNode],
-        database_folder : Path | str | FSMap | S3Path | None = None,
-        variable_depths : dict[str, Int | Collection[Int]] = {},
-        datafile_kwargs : dict[str | Path, dict] = {},
+        database_folder : Union[Path, str, FSMap, S3Path, None] = None,
+        variable_depths : dict[str, Union[Int, Collection[Int]]] = {},
+        datafile_kwargs : dict[Union[str, Path], dict] = {},
         verbose         : bool = False,
     ) -> 'Dataset':
         """ Create a Dataset by inferring required parameters from BaseNodes.

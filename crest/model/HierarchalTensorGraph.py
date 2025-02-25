@@ -15,9 +15,9 @@ from .TensorSpec import TensorSpec
 
 from .TensorGraph import TensorGraph, ImproperTensorGraphError
 from .graphs.NetworkXGraph import NetworkXGraph
-from .RecurrentNode import RecurrentNode
 
 logger = logging.getLogger(__name__)
+
 
 class HierarchalTensorGraph(TensorGraph):
     """
@@ -1513,7 +1513,10 @@ class HierarchalTensorGraph(TensorGraph):
                 node_color='white', font_color='darkblue', font_family='Impact')
 
 
-class Recurrence():
+class Recurrence:
+    """
+    Define recurrence for a given node in an HTG
+    """
 
     @property
     def logger(self) -> logging.Logger:
@@ -1545,27 +1548,27 @@ class Recurrence():
     def __getitem__(self, index):
 
         self.logger.info(f'Getting item {index} in HTG {self.name}')
-        if (not self.node[self.name].is_recurrent):
+        if not self.node[self.name].is_recurrent:
             values = self.traverse(self.name)[
                 1] if self.name != 'input' else self.X
 
-            if (any(isinstance(v, list) for v in values.values())):
+            if any(isinstance(v, list) for v in values.values()):
                 max_iter = min([len(v) for v in values.values()])
             else:
                 max_iter = min([v.shape[self.rollout_axis]
                                for v in values.values()])
 
-            if (index < max_iter):
-                if (not any(isinstance(v, list) for v in values.values())):
+            if index < max_iter:
+                if not any(isinstance(v, list) for v in values.values()):
                     index = (slice(None), ) * self.rollout_axis + (index, )
                 return {k: v[index] for k, v in self.flatten(values).items()}
 
             raise StopIteration('No more values')
 
-        if (index == 0):
+        if index == 0:
             self.cache[index] = {k: None for k in self.node[self.name].outputs}
 
-        elif (index not in self.cache):
+        elif index not in self.cache:
             input_values = {}
 
             # index is not yet computed
@@ -1592,7 +1595,7 @@ class Recurrence():
                 if k in d and isinstance(d[k], dict)]
 
         # If found, flatten
-        if (keys):
+        if keys:
             return [d.update(d.pop(k, {})) for k in ['input', 'output']] and d
 
         # otherwise, return original

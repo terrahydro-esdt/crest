@@ -201,7 +201,7 @@ class Archiver(BaseAbstract):
                         # resolution to the smallest range among the datafiles        
                         finest_coordinate = {k: val[val <= finest_max[k]] for k, val in finest_coordinate.items()}
                         finest_coordinate = {k: val[val >= finest_min[k]] for k, val in finest_coordinate.items()}
-                        self.logger.info(finest_coordinate)
+                        # self.logger.info(finest_coordinate)
                         out_datafile = xr.Dataset(coords=finest_coordinate)
 
                     # if the specific datafile must be data schema, 

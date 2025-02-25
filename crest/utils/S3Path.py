@@ -6,7 +6,7 @@ import s3fs
 class S3Path(FSMap):
     """ Wrap FSMap to mirror the pathlib.Path API """
 
-    def __init__(self, path: Path | str | FSMap):
+    def __init__(self, path: "Path | str | FSMap"):
         if not isinstance(path, FSMap):
             path = s3fs.S3FileSystem().get_mapper(path)
         self.mapper = path
@@ -49,7 +49,7 @@ class S3Path(FSMap):
         """ Check whether the remote S3 location exists """
         return self.mapper.fs.exists(self.mapper.root)
 
-    def joinpath(self, *paths: Path | str) -> 'S3Path':
+    def joinpath(self, *paths: "Path | str") -> 'S3Path':
         """ Append to the current S3 path """
         joined = self.path.joinpath(*paths)
         mapper = self.mapper.fs.get_mapper(joined)
