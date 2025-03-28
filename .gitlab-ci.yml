@@ -26,5 +26,6 @@ pages:
     paths:
     - public
   only:
+    - read-the-docs
     - develop
     - master
