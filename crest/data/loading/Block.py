@@ -68,20 +68,22 @@ class Block(BaseAbstract):
 
     """
     def __init__(self, 
-        data          : da.Array,
+        data          : da.Array | Collection,
         coords        : da.Array,
         inbound_mask  : da.Array,
         overlap_mask  : da.Array,
-        resolution    : Union[Collection, da.Array],
-        dims          : Collection[str],
-        original_dims : Sequence,
-        window_depth  : dict[str, np.ndarray]    = {},#dict[str, np.ndarray[Int]] = {},
-        valid_percent : dict[tuple[str], Number] = {},
-        invalid_value : Collection[object]       = [],
-        allow_repeats : bool                     = False,
-        block_count   : int                      = 1,
-        block_index   : int                      = 0,
-        label         : str                      = '',
+        valid_mask    : Union[None, da.Array]       = None,
+        resolution    : Union[Collection, da.Array] = [],
+        dims          : Collection[str]             = [],
+        original_dims : Sequence                    = [],
+        window_depth  : dict[str, np.ndarray]       = {},#dict[str, np.ndarray[Int]] = {},
+        valid_percent : dict[tuple[str], Number]    = {},
+        invalid_value : Collection[object]          = [],
+        allow_repeats : bool  = False,
+        block_count   : int   = 1,
+        block_index   : int   = 0,
+        label         : str   = '',
+        sparsity      : float = 0.,
     ):
         self._data    = data
         self._coords  = coords
@@ -89,8 +91,10 @@ class Block(BaseAbstract):
         self._overlap = overlap_mask
         self.dims     = dims
         self.label    = label
+        self.sparsity = sparsity
         self.original_dims = original_dims
         self._resolution   = resolution
+        self._valid_mask   = valid_mask
         self.window_depth  = window_depth
         self.valid_percent = valid_percent
         self.invalid_value = invalid_value
@@ -99,7 +103,7 @@ class Block(BaseAbstract):
         self.block_index   = block_index
 
         # Shape sanity checks
-        arrays = [data, coords, inbound_mask, overlap_mask]
+        arrays = [coords, inbound_mask, overlap_mask]
         shapes = [v.shape[:-1] for v in arrays]
         assert(len(set(shapes)) == 1), shapes
         assert(set(map(len, shapes)) == {len(dims)}), [shapes, dims]
@@ -120,11 +124,13 @@ class Block(BaseAbstract):
         } | kwargs))
 
 
-    @cached_property
+    @property
     def data(self) -> np.ndarray:
         """ Only compute dask data array upon first use """
-        with self.benchmark(f'data {self._data.shape}'):
-            return self._data.compute()
+        with self.benchmark(f'data'):
+            if isinstance(self._data, da.Array):
+                return self._data.compute()
+            return np.concatenate(da.compute(*[d for d in self._data]), axis=-1)
 
 
     @cached_property
@@ -134,30 +140,45 @@ class Block(BaseAbstract):
             return self._coords.compute()
 
 
-    @cached_property
+    @property
     def inbound_mask(self) -> np.ndarray:
         """ Only compute dask mask array upon first use """
         return self._inbound.compute()
 
 
-    @cached_property
+    @property
     def overlap_mask(self) -> np.ndarray:
         """ Only compute dask mask array upon first use """
         return self._overlap.compute()
 
 
-    @cached_property
+    @property
     def resolution(self) -> list:
         """ Resolutions only need computed when non-uniform """
         return [getattr(r, 'compute', lambda: r)() for r in self._resolution]
 
 
     @cached_property
+    def valid_mask(self) -> np.ndarray:
+        if self._valid_mask is not None:
+            with self.benchmark(f'valid {self._valid_mask.shape} {self._valid_mask.nbytes:,} bytes'):
+                return self._valid_mask.compute()
+        return ~self.invalid()
+
+
+    @cached_property
     def dtype(self) -> np.dtype:
         """ Create a composite datatype based on shapes of the data windows """
-        sizes = {'features': self._data.shape[-1]} | self.window_total
+        if isinstance(self._data, da.Array):
+            n_features = self._data.shape[-1]
+            data_dtype = self._data.dtype
+        else:
+            n_features = len(self._data)
+            data_dtype = self._data[0].dtype
+
+        sizes = {'features': n_features} | self.window_total
         return np.dtype(
-            [('values', self._data.dtype, tuple(sizes.values()))] + 
+            [('values', data_dtype, tuple(sizes.values()))] + 
             [('coords', np.dtype([
                 (dim, self._coords.dtype, (size,))
                 for dim, size in sizes.items() ])
@@ -275,7 +296,7 @@ class Block(BaseAbstract):
         # If some elements need to be valid, we need to check for valid windows
         if total_percent > 0:
             # We need to mask features independently before collapsing the axis
-            invalid = self.invalid()
+            invalid = ~self.valid_mask#self.invalid()
 
             # Unless 100% need to be valid, in which case we can collapse now
             if total_percent == 1: invalid = invalid.any(-1, keepdims=True)
@@ -284,7 +305,7 @@ class Block(BaseAbstract):
             invalid = reduce(moving_sum, self.valid_percent.items(), invalid)
 
         # Otherwise, checking is unnecessary since 0% are required to be valid
-        else: invalid = np.zeros_like(self.inbound_mask)
+        else: invalid = np.zeros(self._inbound.shape, dtype='bool')
 
         # Mask overlapped elements, as they cannot be window centers
         if not self.allow_repeats:
@@ -307,10 +328,11 @@ class Block(BaseAbstract):
                 invalid[offset + (slice(hi, None),)] = True
 
         # Collapse feature dimension, since all features must be valid
-        return np.array(np.where((~invalid).all(-1)), dtype='int32')
+        dtype = 'uint16' if max(invalid.shape) < 65634 else 'int32'
+        return np.array(np.where((~invalid).all(-1)), dtype=dtype, order='F')
 
 
-    @cached_property
+    @property
     def valid_coords(self) -> np.ndarray:
         """ Coordinate values for the valid locations """
         # if self.sparse:
@@ -318,7 +340,7 @@ class Block(BaseAbstract):
         return self.coords[tuple(self.valid_windows)]
 
 
-    @cached_property
+    @property
     def valid_data(self) -> np.ndarray:
         """ Center data values for the valid locations """
         # if self.sparse:
@@ -326,7 +348,7 @@ class Block(BaseAbstract):
         return self.data[tuple(self.valid_windows)]
 
 
-    @cached_property
+    @property
     def valid_resolution(self) -> np.ndarray:
         """ Resolution for valid locations, parsing left/right if necessary """
         if self.is_uniform: 
@@ -341,14 +363,16 @@ class Block(BaseAbstract):
         """ Quick verification: returns True if no valid data exists """
         # If a dimension can have 0% exist and still be valid, don't check
         if min(self.valid_percent.values()) > 0:
-            return self.invalid( self._data[..., 0].compute() ).all()
+            return not self.valid_mask.any()
+            # return self.invalid( self._data[..., 0].compute() ).all()
         return False
 
 
     @property
     def sparse(self) -> bool:
         """ Return True if data is a sparse object """
-        return hasattr(type(self._data._meta), 'todense')
+        data = self._data if isinstance(self._data,da.Array) else self._data[0]
+        return hasattr(type(data._meta), 'todense')
 
 
     @property
@@ -357,7 +381,7 @@ class Block(BaseAbstract):
         return not isinstance(self._resolution[0], da.Array)
 
 
-    def set_valid_percent(self, valid_percent: dict):
+    def set_valid_percents(self, valid_percent: dict):
         """ Set a new valid_percent after formatting correctly """
         assert(getattr(self, '_original_valid_percent', None) is None)
         self._original_valid_percent = self.valid_percent
@@ -374,7 +398,7 @@ class Block(BaseAbstract):
         self.valid_percent = formatted
 
 
-    def reset_valid_percent(self):
+    def reset_valid_percents(self):
         if getattr(self, '_original_valid_percent', None) is not None:
             self.valid_percent = self._original_valid_percent
             self._original_valid_percent = None
@@ -538,8 +562,8 @@ class Block(BaseAbstract):
 
         # Calculate the lower and upper bounds for each window dimension
         center = np.array(self.valid_windows)[:, indices, None]
-        center-= lower[:, None, None]
-        bounds = [left + np.arange(size) for left, size in zip(center, total)]
+        center-= lower[:, None, None].astype(center.dtype)
+        bounds = [left + np.arange(size, dtype=center.dtype) for left, size in zip(center, total)]
 
         # Expand the bounds so they can be broadcast over the full data/coords
         windows = tuple(starmap(expand, enumerate(bounds, 1)))
@@ -548,9 +572,18 @@ class Block(BaseAbstract):
         # Extract windows and drop virtual dimensions 
         # Note: SegFault/Access violation here is likely an issue with data
         #       that is cached on disk; try removing the cache to resolve.
-        data   =   self.data[windows].reshape((samples,) + shape + (len(features),))
-        coords = self.coords[windows].reshape((samples,) + shape + (len(self.dims),))
+        # data   =   self.data[windows].reshape((samples,) + shape + (len(features),))
+        is_arr = isinstance(self._data, da.Array)
+        n_feat = self._data.shape[-1] if is_arr else len(self._data)
+        get_ix = lambda i: self._data[..., i] if is_arr else self._data[i]
+
+        data   = [get_ix(i).compute()[windows] for i in range(n_feat)]
+        data   =   np.stack(data, -1).reshape((samples,)+shape+(len(features),))
+        coords = self.coords[windows].reshape((samples,)+shape+(len(self.dims),))
         
+        for k in ['coords', 'valid_windows', 'valid_mask']:
+            self.__dict__.pop(k, None)
+            
         # Remove virtual dimension from coordinate features
         coords = coords[..., sorted(map(self.dims.index, orig_dims[1:]))]
 

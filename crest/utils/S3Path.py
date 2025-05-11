@@ -8,7 +8,9 @@ class S3Path(FSMap):
 
     def __init__(self, path: "Path | str | FSMap"):
         if not isinstance(path, FSMap):
-            path = s3fs.S3FileSystem().get_mapper(path)
+            if str(path)[:5] != 's3://':
+                path = f's3://{Path(path).as_posix()}'
+            path = s3fs.S3FileSystem().get_mapper(str(path))
         self.mapper = path
 
     def __repr__(self) -> str:
@@ -40,17 +42,34 @@ class S3Path(FSMap):
     def name(self) -> str:
         """ Same as pathlib.Path.name """
         return self.path.name
+
+    @property
+    def parent(self) -> 'S3Path':
+        """ Same as pathlib.Path.parent """
+        parent = self.path.parent.as_posix()
+        mapper = self.fs.get_mapper(f's3://{parent}')
+        return S3Path(mapper)
         
     def as_posix(self) -> str:
         """ Same as pathlib.Path.as_posix() """
-        return self.path.as_posix()
+        return f's3://{self.path.as_posix()}'
 
     def exists(self) -> bool:
         """ Check whether the remote S3 location exists """
-        return self.mapper.fs.exists(self.mapper.root)
+        return self.fs.exists(self.mapper.root)
 
     def joinpath(self, *paths: "Path | str") -> 'S3Path':
         """ Append to the current S3 path """
-        joined = self.path.joinpath(*paths)
-        mapper = self.mapper.fs.get_mapper(joined)
+        joined = self.path.joinpath(*paths).as_posix()
+        mapper = self.fs.get_mapper(f's3://{joined}')
         return S3Path(mapper)
+
+    def delete(self, recursive=True):
+        """ Delete the file/directory from S3 """
+        self.fs.rm(self.as_posix(), recursive=recursive)
+
+    def download(self, path: Path | str, recursive=False, **kwargs):
+        """ Download from S3 to a local path. Mirrors S3Filesystem.download """ 
+        src = self.as_posix()
+        dst = Path(path).as_posix()
+        return self.fs.download(src, dst, recursive=recursive, **kwargs)

@@ -83,7 +83,7 @@ class TestDatafile:
         cases = [
             ({0: 1, 1: 1}, [1, 0.1], [False, False]), # Same resolution, not this datafile
             ({0: 1, 1: 1}, [1, 0.1], [True,   True]), # Same resolution, this datafile
-            ({0: 5, 1: 5}, [10,  1], [False, False]), # 10*resolution
+            ({0: 3, 1: 2}, [10,0.3], [False, False]), # 10*resolution, 3*resolution
         ]
         for target, max_resolution, skip in cases:
             overlap = datafile[uniform].calculate_overlap(max_resolution, skip)

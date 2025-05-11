@@ -1,4 +1,5 @@
-from .Batcher import Batcher
+from .batching import Batcher
+from .transform import Transform
 
 # Issue between asyncio and multiprocessing causes warnings on unclosed transport
 import warnings

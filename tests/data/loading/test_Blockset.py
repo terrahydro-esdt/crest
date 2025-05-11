@@ -43,6 +43,7 @@ example_coords2 = np.array([
 example_block3 = Block(**{
     'data'          : da.from_array(np.rollaxis(example_data, 0, 3)),
     'coords'        : da.from_array(np.rollaxis(example_coords, 0, 3)),
+    'valid_mask'    : da.from_array(np.rollaxis(np.isfinite(example_data), 0, 3)),
     'inbound_mask'  : da.from_array(np.rollaxis(np.ones_like(example_data, dtype=bool), 0, 3)),
     'overlap_mask'  : da.from_array(np.rollaxis(np.zeros_like(example_data, dtype=bool), 0, 3)),
     'dims'          : ['x', 'y'],
@@ -54,6 +55,7 @@ example_block3 = Block(**{
 example_block4 = Block(**{
     'data'          : da.from_array(np.rollaxis(example_data2, 0, 3)),
     'coords'        : da.from_array(np.rollaxis(example_coords2, 0, 3)),
+    'valid_mask'    : da.from_array(np.rollaxis(np.isfinite(example_data2), 0, 3)),
     'inbound_mask'  : da.from_array(np.rollaxis(np.ones_like(example_data2, dtype=bool), 0, 3)),
     'overlap_mask'  : da.from_array(np.rollaxis(np.zeros_like(example_data2, dtype=bool), 0, 3)),
     'dims'          : ['x', 'y'],

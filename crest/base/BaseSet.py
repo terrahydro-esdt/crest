@@ -1,7 +1,7 @@
 from collections.abc import Collection, Callable, Iterator
 from itertools import zip_longest, starmap, compress
 from operator import itemgetter
-from typing import TypeVar, Any
+from typing import TypeVar, Any, Union
 
 import numpy as np
 import dask 
@@ -53,7 +53,9 @@ class BaseSet(BaseAbstract):
     StringSet[['A', 'B', 'C'], ['D.E.F']]
 
     """ 
-    def __init__(self, objs: Collection[T]):
+    def __init__(self, objs: Collection[T] | map):
+        if isinstance(objs, map):
+            objs = list(objs)
         self.container = objs
 
 
@@ -66,7 +68,7 @@ class BaseSet(BaseAbstract):
         return f"{super().__repr__()}{getattr(self, 'container', '')}"
 
 
-    def __eq__(self, other: Any) -> bool:
+    def __eq__(self, other: Any) -> Union[bool, 'BaseSet']:
         """ Check for equality with another container """
         if isinstance(other, BaseSet) and len(self) == len(other):
             return all(a == b for a,b in zip(self, other))
@@ -88,7 +90,7 @@ class BaseSet(BaseAbstract):
         return obj in self.container
 
 
-    def __getitem__(self, idx: Any) -> T:
+    def __getitem__(self, idx: Any) -> Union[T, 'BaseSet']:
         """ Get an element in the container """
         # Wrap the sliced container in a new BaseSet 
         if isinstance(idx, slice):
@@ -97,7 +99,7 @@ class BaseSet(BaseAbstract):
         # Allow selecting via a collection of ints or bools
         if hasattr(idx, '__len__'):
             if all(isinstance(i,int) and not isinstance(i,bool) for i in idx):
-                return self.__class__([self[i] for i in idx])
+                return self.__class__([self.container[i] for i in idx])
             return self.__class__(list(compress(self, idx)))
         return self.container[idx]
     
@@ -122,9 +124,22 @@ class BaseSet(BaseAbstract):
         """ Wrap the return objects in either the original 
             *Set class if the obj type hasn't changed, or
             in a BaseSet class otherwise """ 
-        if isinstance(objs[0], self.container[0].__class__):
+        if isinstance(objs[0], self[0].__class__):
             return self.__class__(objs)
         return BaseSet(objs)
+
+
+    def __setattr__(self, attr: str, vals: Any):
+        """ Pass through new attr values to the objects composing this set"""
+        try:
+            if hasattr(self, 'container'):
+                if hasattr(vals, '__len__') and (len(vals) == len(self)):
+                    if hasattr(vals, '__iter__'):
+                        for obj, val in zip(self, vals):
+                            setattr(obj, attr, val)
+                        return
+        except: pass
+        super().__setattr__(attr, vals)
 
 
     def __getattr__(self, attr: str) -> 'BaseSet':
@@ -302,5 +317,5 @@ class BaseSet(BaseAbstract):
         for op in dir(operator):
             if op.startswith('__') and op.endswith('__') and (op not in skip):
                 try:              setattr(cls, op, factory(op))
-                except TypeError: print(f'Failed to set {op}: {e}')
+                except TypeError: print(f'Failed to set {op}')
         return super().__new__(cls, *args, **kwargs)

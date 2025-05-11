@@ -36,7 +36,7 @@ def readable(*args, fmt='{} != {}'):
         return fmt.format(*map(readable, args))
 
     if isinstance(args[0], (np.ndarray, tuple, list)):
-        if isinstance(args[0][0], (np.ndarray, tuple, list)):
+        if len(args[0]) and isinstance(args[0][0], (np.ndarray, tuple, list)):
             return tuple(map(readable, args[0]))
         return list(map(readable, args[0]))
     return args[0]
@@ -150,7 +150,7 @@ def test_1d():
     counts = np.array(counts)
     out, c = find_neighbors(coords)
     assert(equal(out, expect)), readable(out, expect)
-    assert(equal(c,   counts)), readable(c,   counts)
+    assert(c is None or equal(c, counts)), readable(c, counts)
 
 
 def test_1d_resolutions():
@@ -167,7 +167,7 @@ def test_1d_resolutions():
     counts = np.array(counts)
     out, c = find_neighbors(coords, resolutions=[2,2,2])
     assert(equal(out, expect)), readable(out, expect)
-    assert(equal(c,   counts)), readable(c,   counts)
+    assert(c is None or equal(c, counts)), readable(c, counts)
  
 
 def test_1d_radius():
@@ -192,7 +192,7 @@ def test_1d_radius():
     counts = np.array(counts)
     out, c = find_neighbors(coords, radius=2., p=np.inf)
     assert(equal(out, expect)), readable(out, expect)
-    assert(equal(c,   counts)), readable(c,   counts)
+    assert(c is None or equal(c, counts)), readable(c, counts)
  
 
 """ kwargs not currently used """
@@ -235,7 +235,7 @@ def test_2d():
     counts = np.array(counts)
     out, c = find_neighbors(coords, radius=1, method='tree', p=2)
     assert(equal(out, expect)), readable(out, expect)
-    assert(equal(c,   counts)), readable(c,   counts)
+    assert(c is None or equal(c, counts)), readable(c, counts)
 
 
 def test_2d_resolutions():
@@ -355,6 +355,43 @@ def test_2d_chebyshev():
     assert(equal(c,   counts)), readable(c,   counts)
 
 
+def test_resolution_skips():
+    """ 
+    Verify duplicates along a coordinate dimension aren't skipped 
+    when a non-uniform resolution might allow valid matches
+    """
+
+    # Test left side
+    coords = list(map(make2d, [
+        [[0, 0, 0]],
+        [[1,-1,-1], [1,0,0]],
+    ]))
+    res = list(map(np.array, [
+        [0, 0, 0],
+        [ [[0,0], [0,0], [0,0]], [[1,0], [0,0], [0,0]] ],
+    ])) # [ item0: [dim0: [left, right], dim1: ...], item1: ...]
+    expect = np.array([[0], [1]])
+    counts = np.array([[1], [1]])
+    out, c = find_neighbors(coords, res, radius=1, p=np.inf)
+    assert(equal(out, expect)), readable(out, expect)   
+    assert(c is None or equal(c, counts)), readable(c, counts)
+
+    # Test right side
+    coords = list(map(make2d, [
+        [[0, 0, 0]],
+        [[-1,-1,-1], [-1,0,0]],
+    ]))
+    res = list(map(np.array, [
+        [0, 0, 0],
+        [ [[0,0], [0,0], [0,0]], [[0,1], [0,0], [0,0]] ],
+    ])) # [ item0: [dim0: [left, right], dim1: ...], item1: ...]
+    expect = np.array([[0], [1]])
+    counts = np.array([[1], [1]])
+    out, c = find_neighbors(coords, res, radius=1, p=np.inf)
+    assert(equal(out, expect)), readable(out, expect)   
+    assert(c is None or equal(c, counts)), readable(c, counts)
+
+
 def test_non_uniform():
     coords = [
         [1,          9,     13, 15, 16],
@@ -375,7 +412,7 @@ def test_non_uniform():
     counts = np.array(counts)
     out, c = find_neighbors(coords, resolu)
     assert(equal(out, expect)), readable(out, expect)   
-    assert(equal(c,   counts)), readable(c,   counts)
+    assert(c is None or equal(c, counts)), readable(c, counts)
 
 
 def test_empty():

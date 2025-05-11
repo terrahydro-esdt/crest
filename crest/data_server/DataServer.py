@@ -180,11 +180,11 @@ class DataServer:
                     return None
             
                 # convert files to the zarr format
-                data = xr.open_dataset(file)
-                if n in ['SMAP.nc', 'ERA5.nc']:
-                    data.to_zarr(os.path.join(path, n.split('.')[0]+'.zarr'))
-                else:
-                    data.to_zarr(os.path.join(path, 'StaticAttributes.zarr/'+n.split('.')[0]))
+                with xr.open_dataset(file) as data:
+                    if n in ['SMAP.nc', 'ERA5.nc']:
+                        data.to_zarr(os.path.join(path, n.split('.')[0]+'.zarr'))
+                    else:
+                        data.to_zarr(os.path.join(path, 'StaticAttributes.zarr/'+n.split('.')[0]))
                 
                 # remove the netcdf files
                 os.remove(file)
@@ -243,8 +243,8 @@ class DataServer:
                     return None
             
                 # convert files to the zarr format
-                data = xr.open_dataset(file)
-                data.to_zarr(os.path.join(path, n.split('.')[0]+'.zarr'))
+                with xr.open_dataset(file) as data:
+                    data.to_zarr(os.path.join(path, n.split('.')[0]+'.zarr'))
                 
                 # remove the netcdf files
                 os.remove(file)

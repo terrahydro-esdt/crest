@@ -47,8 +47,11 @@ class Model(BaseModel):
             if (not v is None):
                 if (isinstance(v, TensorSpec)):
                     v = v.tf
-
-                self.inputs[k] = tf.keras.Input(type_spec=v, name=k)
+                # Compatibility with future TF versions
+                try:
+                    self.inputs[k] = tf.keras.Input(type_spec=v, name=k)
+                except: 
+                    self.inputs[k] = tf.keras.Input(shape=v.shape[1:], dtype=v.dtype, name=k)
             else:
                 self.inputs[k] = None
 
@@ -108,9 +111,9 @@ class Model(BaseModel):
 
         """
         # Check kwargs for metrics locally defined
-        if 'metrics' in kwargs:
-            metrics = self.metric.get_callbacks(kwargs['metrics'])
-            kwargs['metrics'] = metrics
+        # if 'metrics' in kwargs:
+        #     metrics = self.metric.get_callbacks(kwargs['metrics'])
+        #     kwargs['metrics'] = metrics
 
         self.build(_internal=True)
         self.model.compile(**kwargs)

@@ -228,7 +228,7 @@ class BaseAbstract(ABC):
 
 
     @classmethod
-    def interactive(cls, environment: dict = {}, n_prior_frames: int = 0):
+    def interactive(cls, environment: dict={}, n_prior_frames: int=0, **kwarg):
         """ Start an interactive console wherever this function is called.
 
         Parameters
@@ -242,6 +242,9 @@ class BaseAbstract(ABC):
             function is e.g. called by a helper function and so the desired
             context is where the helper was used at, the helper should use
             `interactive(n_prior_frames=1)`; etc.
+        **kwarg
+            Additional keyword arguments passed to `interactive` (see the
+            docstring in crest/utils/interactive.py for details).
 
         """
 
@@ -252,7 +255,7 @@ class BaseAbstract(ABC):
         n_prior_frames += Path(filename).stem == 'BaseAbstract'
 
         from crest.utils import interactive
-        interactive(environment, n_prior_frames + 1)
+        interactive(environment, n_prior_frames + 1, **kwarg)
 
 
     @classmethod
