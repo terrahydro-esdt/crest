@@ -4,6 +4,7 @@ from scipy.stats import linregress
 from functools import cached_property, partial, reduce
 from operator import and_
 from abc import abstractmethod
+from typing import Union
 
 import matplotlib.pyplot as plt 
 import tensorflow as tf 
@@ -49,10 +50,12 @@ class BaseNode(BaseAbstract):
 
     Parameters
     ----------
-    *normalize : tuple[Callable]
+    *normalize : Transform | tuple[Callable, Callable]
         A pair of functions defining (forward transform, inverse transform)
         for the input and output features, respectively. By default, no 
-        pre- or post-processing is applied. 
+        pre- or post-processing is applied. A Transform object can also be 
+        given directly, in which case transformations are applied by feature,
+        as defined in the given Transform.
     loss       : str | Callable | dict[str, str | Callable | dict]
         Loss function that should be used for this Model. This can be passed
         as a standard keras loss string (e.g. 'mse'); as an arbitrary callable
@@ -86,13 +89,13 @@ class BaseNode(BaseAbstract):
     outputs : IO_TYPE 
 
     def __init__(self, 
-        *normalize     : tuple[Callable, Callable], 
+        normalize      = (), #: Union[tuple[Callable, Callable], 'Transform'] = (), 
         loss           : str | Callable | dict[str, str | Callable | dict] = 'mse',
         transform_loss : bool | tuple[Callable, Callable] = True,
         debug          : bool = False,
         plot_scatter   : bool = False,
     ):
-        self.normalize      = normalize
+        self.normalize      = getattr(normalize, 'by_feature', normalize)
         self.loss           = loss
         self.debug          = debug
         self.transform_loss = transform_loss
@@ -105,7 +108,7 @@ class BaseNode(BaseAbstract):
 
 
     @abstractmethod
-    def call(self, X: dict[str, tf.Tensor]) -> dict[str, tf.Tensor]:      
+    def call(self, X: dict[str, tf.Tensor], training: bool) -> dict[str, tf.Tensor]:      
         """ Inheriting classes must define a `call` method, which takes
             as input a dictionary of {feature name: Input Tensor}, and
             returns a dictionary of {output feature: Output Tensor}. """
@@ -244,7 +247,7 @@ class BaseNode(BaseAbstract):
                 })
 
         # Wrap output(s) with output_spec dictionary if not already
-        out = self.call(X)
+        out = self.call(X, training)
         if not isinstance(out, (dict, list, tuple)):
             out = [out]
         if isinstance(out, (list, tuple)):
@@ -317,8 +320,9 @@ class BaseNode(BaseAbstract):
                 self.loss_transformer, 'can_transform', lambda f: True)(f)]
             
             if unable:
+                lt = self.loss_transformer
                 error = f'{self} requested loss transformation, but '
-                error+= f'{self.loss_transformer.__name__} cannot transform'
+                error+= f'{getattr(lt, "__name__", lt)} cannot transform'
                 solve = f'Ensure {unable} are in the stats DataArray used to '
                 solve+= f'initialize Transformer; or, set transform_loss=False'
 
@@ -376,7 +380,7 @@ class BaseNode(BaseAbstract):
         # we don't find a tensor with four dimensions, just return the original
         # dict. Better handling for other tensor shapes (e.g. static) should be
         # implemented in the future.
-        if len(coord_shape) != 4: return X
+        if coord_shape.shape[0] != 4: return X
 
         ndt,nlt,nln = coord_shape[1], coord_shape[2], coord_shape[3]
         for name in coord_names:
@@ -392,26 +396,27 @@ class BaseNode(BaseAbstract):
 
                 if name == 'datetime':
                     # Convert datetime to value between [0, seconds in 24 hours]
-                    sec_in_day = 60 * 60 * 24
-                    coordinate = 60 * tf.cast(coordinate, tf.float64) # datetime[m] -> seconds
-                    coordinate = tf.math.floormod(coordinate, sec_in_day)
-
-                    with tf.name_scope(''):
-                        tf.summary.histogram(f'{self}/datetime_laststep', coordinate[:, -1])
-                        tf.summary.histogram(f'{self}/datetime_lastsample', coordinate[-1])
-
-                    # Convert to radians
-                    coordinate = tf.cast(coordinate * 2 * np.pi / sec_in_day, tf.float32)
-        
-                    # Convert datetime to a set of two periodic sin/cos features
-                    for name in ['sin', 'cos']:
-                        sin_cos_dt = getattr(tf.math, name)(coordinate)
-
+                    for mult in [1, 365]:
+                        sec_in_day = 60 * 60 * 24 * mult
+                        coord_secs = 60 * tf.cast(coordinate, tf.float64) # datetime[m] -> seconds
+                        coord_secs = tf.math.floormod(coord_secs, sec_in_day)
+    
                         with tf.name_scope(''):
-                            tf.summary.histogram(f'{self}/datetime_laststep_{name}', sin_cos_dt[:, -1])
-                            tf.summary.histogram(f'{self}/datetime_lastsample_{name}', sin_cos_dt[-1])
-                        X[name] = tf.tile(sin_cos_dt[idx], tiles)
-                else:   X[name] = tf.tile(coordinate[idx], tiles)
+                            tf.summary.histogram(f'{self}-call/datetime_{mult}_laststep', coord_secs[:, -1])
+                            tf.summary.histogram(f'{self}-call/datetime_{mult}_lastsample', coord_secs[-1])
+    
+                        # Convert to radians
+                        coord_rads = tf.cast(coord_secs * 2 * np.pi / sec_in_day, tf.float32)
+            
+                        # Convert datetime to a set of two periodic sin/cos features
+                        for name in ['sin', 'cos']:
+                            sin_cos_dt = getattr(tf.math, name)(coord_rads)
+    
+                            with tf.name_scope(''):
+                                tf.summary.histogram(f'{self}-call/datetime_{mult}_laststep_{name}', sin_cos_dt[:, -1])
+                                tf.summary.histogram(f'{self}-call/datetime_{mult}_lastsample_{name}', sin_cos_dt[-1])
+                            X[f'{name}_{mult}'] = tf.tile(sin_cos_dt[idx], tiles)
+                else: X[name] = tf.tile(coordinate[idx], tiles)
         return X
 
 
@@ -441,7 +446,7 @@ class _NodeWrap(tf.keras.layers.Layer):
         super().__init__(name=name or getattr(obj, 'name', str(obj)))
 
         # Add all tensorflow/keras objects to allow weight tracking
-        keywords = ['tensorflow', 'keras']
+        keywords = ['tensorflow', 'keras', 'terrahydro']
         for k, v in obj.__dict__.items():
             if any(name in str(type(v)) for name in keywords):
                 setattr(self, k, v)
@@ -553,15 +558,13 @@ def loss_wrapper(
         # Sanity check that y_true and y_pred have the same sizes
         tf.debugging.assert_equal(tf.size(y_true), tf.size(y_pred))
         
-        # Empty scope resets the name scope
-
+        # Select the requested feature and valid samples
         arrs = [a[feature] if isinstance(a, dict) else a for a in [y_true, y_pred]]               
         mask = reduce(and_, map(tf.math.is_finite, arrs))
         flag = tf.math.reduce_any(mask)
 
-
         # Label the targets/predictions with their transformation
-        y_label = lambda y, f: y if f is None else f'{f.__name__}({y})'
+        y_label = lambda y,f: y if f is None else f'{getattr(f,"__name__",f)}({y})'
 
         # Mask NaNs in both targets and predictions, and log results
         masked = mask_nans(y_true, y_pred)
@@ -584,13 +587,13 @@ def loss_wrapper(
         # Calculate and log the final loss, then return if any exist
         loss = loss_func(*masked)
         zero = tf.size(loss) == 0
-        tf.summary.histogram(f'{scope}/{feature}/loss/', loss)
+        logging(f'{scope}/{feature}/loss/', {'loss': loss}, False)
         # return tf.cond(zero, lambda: 0., lambda: tf.reduce_mean(loss))
         return tf.cond(flag, lambda: tf.reduce_mean(loss), lambda: 0.)
 
 
     # Defines various logging functionality in a separate helper method
-    def logging(scope: str, arrs: dict) -> None:
+    def logging(scope: str, arrs: dict, do_scatter=plot_scatter) -> None:
         """ Output debug logs, scatter plots, histograms """
         
         def scatter(y1: np.ndarray, y2: np.ndarray, **kwargs) -> np.ndarray:
@@ -643,7 +646,7 @@ def loss_wrapper(
 
         with tf.name_scope(f'scatter/{scope.replace("@",".")}'):
             # Create scatter plot and log to tensorboard (very slow)
-            if plot_scatter: 
+            if do_scatter: 
                 (k1, k2, *_), (y1, y2, *_) = zip(*arrs.items())
                 image = lambda label, *y, **kw: tf.summary.image(label,
                     tf.numpy_function(partial(scatter, **kw), y, tf.uint8))

@@ -155,7 +155,8 @@ class Datafile(BaseAbstract):
         invalid_value : object = [],
         preprocessors : list[Callable] = [],
         sort_dims     : bool = True,
-        allow_repeats: bool = False,
+        allow_repeats : bool = False,
+        no_overlaps   : bool = False,
         **kwargs
     ):
         if isinstance(location, FSMap):
@@ -172,7 +173,8 @@ class Datafile(BaseAbstract):
         self.preprocessors  = preprocessors
         self.sort_dims      = sort_dims
         self.allow_repeats  = allow_repeats
-        self.dataset_index  = 0
+        self.no_overlaps    = no_overlaps
+        self.dataset_index  = 0 
 
         # Store initialization parameter names for pickling
         self._init_keys = list(self.__dict__) + ['_init_keys']
@@ -244,6 +246,11 @@ class Datafile(BaseAbstract):
             else: location = self.location
             raw = xr.open_zarr(location, **self._kwargs)
 
+        # Keep the valid_mask only if it is still accurate for this Datafile
+        if 'valid_mask' in raw:
+            if len(self.preprocessors) or len(self.extent):
+                raw = raw.drop_vars(['valid_mask'], errors='ignore')
+
         # Handle the summary statistics 
         if 'summary' in raw:
 
@@ -256,7 +263,7 @@ class Datafile(BaseAbstract):
             # Set datetime dtype back to np.datetime64 if it was previously converted
             if hasattr(raw, 'datetime') and np.issubdtype(raw.datetime.dtype, np.float32):
                 raw = raw.assign_coords(datetime=raw.datetime.astype('datetime64[m]'))
-        return raw 
+        return raw.chunk({})
 
 
     @cached_property
@@ -269,7 +276,9 @@ class Datafile(BaseAbstract):
             data = func(self, data)
 
         # Select only requested features
-        data = data[self.features or sorted(data.keys())]
+        keys = sorted(self.features or data.keys())
+        keys = keys + (['valid_mask'] if 'valid_mask' in data.keys() else [])
+        data = data[keys]
 
         # Remove summary statistics
         data = data.drop_vars(['summary', 'features', 'statistics'], errors='ignore')
@@ -281,8 +290,14 @@ class Datafile(BaseAbstract):
         # Store original data dtypes - all coords are converted to float in 
         # Datafile._typed_data. In order to allow datetime64 to fit float32,
         # we convert datetime values to datetime64[m] (i.e. minute resolution)
-        dtypes = {k: T if not np.issubdtype(T := data[k].dtype, np.datetime64)
+        dtypes = {str(k): T if not np.issubdtype(T := data[k].dtype, np.datetime64)
                     else 'datetime64[m]' for k in list(data)+list(data.coords)}
+
+        # Create a mask for valid data elements, to pre-compute when caching
+        if 'valid_mask' not in data:
+            data['valid_mask'] = (~data.to_array('features').isnull()).all('features')
+        if 'valid_mask' in self.features:
+            self.features.remove('valid_mask')
 
         # Convert to a DataArray and ensure data is backed by dask
         data = data.to_array('features').chunk({})
@@ -298,9 +313,9 @@ class Datafile(BaseAbstract):
         original_dims = [c for c in data.coords if c not in self._virtual_dims]
         self.original_dims = (
             sorted(original_dims) if self.sort_dims else original_dims, 
-            data.features.to_numpy(),
+            [f for f in data.features.to_numpy() if f not in ['valid_mask']],
             dtypes,
-            self.features,
+            [f for f in self.features if f not in ['valid_mask']],
         )
 
         # Sanity check - Sample.py assumes features are sorted
@@ -319,7 +334,7 @@ class Datafile(BaseAbstract):
         self._raw_data
         if 'summary' in self.__dict__:
             return self.__dict__['summary']
-        data = self.data.to_dataset('features')
+        data = self.data.drop_sel(features='valid_mask').to_dataset('features')
 
         # Splitting large chunks seems to sometimes result in KeyError in dask
         with dask.config.set(**{'array.slicing.split_large_chunks': False}):
@@ -341,8 +356,10 @@ class Datafile(BaseAbstract):
             stats = xr.concat(map(value, stats), coord).to_dataset('statistics')
 
             # Compute percentiles as a group for efficiency
-            stats[['p25', 'median', 'p75']] = xr.apply_ufunc(
-                lambda x: da.percentile(x.ravel(), [25, 50, 75], internal_method='tdigest'),
+            quantiles = list(range(1, 100))#[2, 10, 25, 50, 75, 90, 98]
+            key_names = [f'p{q}'.replace('p50', 'median') for q in quantiles]
+            stats[key_names] = xr.apply_ufunc(
+                lambda x: da.percentile(x.ravel(), quantiles, internal_method='tdigest'),
                 data, **{
                     'dask'             : 'allowed',
                     'input_core_dims'  : [list(data.dims)],
@@ -388,7 +405,7 @@ class Datafile(BaseAbstract):
     @property
     def _typed_data(self) -> xr.DataArray:
         """ Data/coords converted to float types """
-        data = self.data
+        data = self.data.drop_sel(features='valid_mask')
 
         # Cast int/uint/etc. to float in order to allow NaNs
         # for key in data.features:
@@ -449,9 +466,8 @@ class Datafile(BaseAbstract):
         def f_repr(f):
             """ Get the name of the function, and a hash of its bytecode """
             name = getattr(f, '__name__', str(f))
-            try: code = hashlib.sha256(f.__code__.co_code).hexdigest()
-            except Exception as code: pass
-            return f'{name}: {code}'
+            try: return f'{name}: {hashlib.sha256(f.__code__.co_code).hexdigest()}'
+            except Exception as code: return f'{name}: {code}'
 
         config = dict(self.__getstate__())
         config['preprocessors'] = list(map(f_repr, config['preprocessors']))
@@ -461,7 +477,7 @@ class Datafile(BaseAbstract):
     @property
     def config_hash(self) -> str:
         """ Hash of the config dictionary, to use as a condensed label """
-        c = {k:v for k,v in self.config.items() if k not in ['_window_depth', 'match_radius']}
+        c = {k:v for k,v in self.config.items() if k not in ['_window_depth', 'match_radius', '_cache_path']}
         return hashlib.sha256(str(c).encode('utf-8')).hexdigest()
 
 
@@ -498,6 +514,23 @@ class Datafile(BaseAbstract):
         )
 
 
+    def sparsity(self, compute=False):# -> da.Array | float:
+        """ Create dask object that computes percentage of invalid data """
+        null = self.summary.sel(statistics='null')
+        data = self.data
+        if 'valid_mask' in data.features:
+            data = data.drop_sel(features='valid_mask')
+        if 'valid_mask' in null.features: 
+            null = null.drop_sel(features='valid_mask')
+        sparsity = null.data.sum() / data.size
+        return sparsity.compute() if compute else sparsity
+
+
+    def is_sparse(self, compute=True, threshold=0.99):
+        """ Datafile is deemed sparse if sparsity > 99% """
+        return self.sparsity(compute) > threshold
+
+
     @property
     def valid_percent(self) -> dict[str, Number]:
         """ {Dimension key : valid percent} with default value for missing.
@@ -510,7 +543,7 @@ class Datafile(BaseAbstract):
         return dd(lambda: default, mapping)
 
 
-    @cached_property
+    @property
     def window_depth(self) -> dict[str, Int]:
         """ {Dimension key : window depth} with default value for missing.
             Values are also expanded into (left side, right side) formats. """
@@ -520,13 +553,13 @@ class Datafile(BaseAbstract):
         return dd(lambda: expand(Datafile.DEFAULT_WINDOW_SIZE), mapping)
 
 
-    @cached_property
+    @property
     def window_total(self) -> dict[str, Int]:
         """ Window total size per dimension """
         return {dim: 1+self.window_depth[dim].sum() for dim in self.dims}
 
 
-    @cached_property
+    @property
     def invalid_value(self) -> list[Number]:
         """ Invalid values, including any defined in the defaults """
         user_defined = np.atleast_1d(self._invalid_value).tolist()
@@ -595,6 +628,9 @@ class Datafile(BaseAbstract):
         If we have uniform grids, this will just be the resolution
         itself; otherwise it will be the maximum along each vector """
         # return [np.atleast_1d(r).max() for r in self.resolution]
+        
+        # Sparse Datafiles should be excluded from max_resolution calculations
+        if self.is_sparse(): return [0] * len(self.dims)
 
         # We don't want to apply any manual match_radius however, so we redo
         # the resolution calculations without applying match_radius
@@ -729,7 +765,7 @@ class Datafile(BaseAbstract):
             aren't all the same length.
 
         """
-        def calculate(dim, res, max_res, skip, blocks):
+        def calculate(dim, res, max_res, skip, blocks, max_chunksize):
             if not self.is_uniform:
                 # Using mean/median here would be better for performance,
                 # but could miss some matches due to too little overlap
@@ -738,18 +774,25 @@ class Datafile(BaseAbstract):
             if blocks > 1:
                 total = self.window_depth[dim].sum()
                 size  = self.window_depth[dim].max()
-                size += 1 if skip or (res==0) else ((max_res/2) / res)
+                size += bool(res) if skip or (res==0) else ((max_res/2) / res)
             else: size = 0
-            return (self.dims.index(dim), math.ceil(np.nan_to_num(size)))
 
-        blks = dimension_blks if dimension_blks is not None else [2] * len(self.dims)
-        args = [self.dims, self.resolution, max_resolution, skip_dimension, blks]
+            # Clip overlap to max chunksize, since it can only span one block
+            overlap = min(max_chunksize, math.ceil(np.nan_to_num(size)))
+            return (self.dims.index(dim), overlap)
+
+        ndim = len(self.dims)
+        res = np.zeros((ndim, 1)) if self.is_sparse() else self.resolution
+        blks = dimension_blks if dimension_blks is not None else [2] * ndim
+        args = [self.dims, res, max_resolution, skip_dimension, blks]
+        args+= [list(map(max, self.dask.chunks[:-1]))]
+
         if len(set(map(len, args))) > 1:
             raise ValueError(f'Args not all the same length: {args}')
         return dict(map(calculate, *args))
 
 
-    def update_blocks(self, numblocks: Collection) -> list:
+    def update_blocks(self, numblocks: Collection, verify: bool=True) -> list:
         """Rechunk data to have the requested number of blocks per dimension.
 
         Parameters
@@ -761,6 +804,12 @@ class Datafile(BaseAbstract):
             If the length of the passed block size collection is less than
             the total number of axes, the requested sizes are only applied
             to the first N axes (where N is the number of sizes given).
+        verify : bool
+            Whether to require the new block structure is exactly equal to the
+            requested number of blocks. This isn't always the case, as zarr
+            requires all chunks (besides the last) to have the same size - and
+            so e.g. a dimension with length 7 cannot be split into 5 blocks as
+            it would result in the chunks [2,2,1,1,1].
 
         Returns
         -------
@@ -797,12 +846,13 @@ class Datafile(BaseAbstract):
         else: newchunks = []
 
         # Ensure the new block numbers are equal to what was requested
-        if any(block != db for block, db in zip(numblocks, self.numblocks)):
-            newchunks = [shape // block for block, shape in block_shape]
-            self.data = self.chunk(dict(zip(self.dims, newchunks)))
-
+        if verify:
             if any(block != db for block, db in zip(numblocks, self.numblocks)):
-                raise ValueError(f'blocks={numblocks}, created {self.numblocks}')
+                newchunks = [shape // block for block, shape in block_shape]
+                self.data = self.chunk(dict(zip(self.dims, newchunks)))
+
+                if any(block != db for block, db in zip(numblocks, self.numblocks)):
+                    raise ValueError(f'blocks={numblocks}, created {self.numblocks}')
         return newchunks
 
 
@@ -864,6 +914,7 @@ class Datafile(BaseAbstract):
         overlaps : dict[Int, Int] | Int,
         boundary : dict[Int, Number] | Number | str = np.nan,
         optimize : bool = True,
+        cache_path : Path | S3Path | None = None,
     ):# -> Iterator[Block]:
         """Create a Blockset containing Blocks with the overlap applied.
 
@@ -922,6 +973,7 @@ class Datafile(BaseAbstract):
 
         def dask_overlap(x, depth, boundary, *, allow_rechunk=False):
             """ Rewrite dask.overlap.overlap to remove forced rechunking """
+            if all(v == 0 for v in depth.values()): return x
             from dask.array.overlap import coerce_depth, coerce_boundary
             from dask.array.overlap import boundaries, overlap_internal
             depth = coerce_depth(x.ndim, depth)
@@ -955,8 +1007,18 @@ class Datafile(BaseAbstract):
         # Create mask indicating overlapped elements in each block
         overlap_mask = set_id( da.zeros(shapes + (1,), **masks_kwargs) )
 
+        if self.no_overlaps or (optimize and self.is_sparse()):
+            overlaps = 0
+
         # Clip block extents to avoid duplication
         # extents = [max(c)+o*2 for c,o in zip(self.chunks, overlaps.values())]
+
+        # Convert overlaps to a dictionary for each dimension if only int given
+        if isinstance(overlaps, int):
+            overlaps: dict = {d: overlaps for d in range(len(shapes))}
+
+        # Clip overlaps to max chunk size, since they can only span one block
+        overlaps = {d: min(max(chunks[d]), o) for d, o in overlaps.items()} 
 
         # Create overlapping blocks, tiling virtual dimensions where necessary
         virtual = [self._virtual_dims.get(d, 1) for d in self.dims] + [1]
@@ -969,13 +1031,43 @@ class Datafile(BaseAbstract):
             'allow_rechunk' : False,
         })
 
+        def rechunk(v):
+            if v.chunks != chunks:
+                v = v.rechunk(chunks)
+            return v[..., None]
+
+        # valid_mask = da.isfinite(self.dask).all(axis=-1, keepdims=True)
+        # valid_mask = self.data.sel(features=['valid_mask']).data.astype(bool)
+        raw = self._raw_data.transpose(*sorted(self._raw_data.coords))
+        raw = raw.sel({k: slice(*ext) for k, ext in self.extent.items() 
+                        if k in raw and k not in self._virtual_dims})
+        
+        if 'valid_mask' in raw:
+            valid_mask = rechunk(raw['valid_mask'].data)
+        else: valid_mask = da.isfinite(self.dask).all(axis=-1, keepdims=True)
+
+        # TODO: Gracefully switch to fallback method if this is not cached
+        assert(len(self.preprocessors) == 0), 'Need to cache dataset first'
+
+        # Use data from original database to allow direct reading from files
+        # (xarray combines features in self.data so that they are inseperable)
+        # Note that this ONLY works for cached data, where preprocessors have
+        #  already been applied
+        feat_names = list(self._typed_data.features.values)
+        feat_array = [rechunk(raw[k].data) for k in feat_names]
+
         # Separate data/coords/masks into independent blocks
-        block_grids = list(map(blocker, [
-            overlap(self.dask),
+        block_grids = list(map(blocker, list(map(overlap, feat_array)) + [
+            # overlap(self.dask),
             overlap(self.dask_coords),
             overlap(inbound_mask, boundary=0),
             mask_id(overlap(overlap_mask, boundary=-1)),
+            overlap(valid_mask, boundary=0),
         ]))
+
+        # No overlaps means the overlap mask is just zero
+        if all(v == 0 for v in overlaps.values()):
+            block_grids[-2] = blocker(da.zeros(shapes+(1,), **masks_kwargs))
 
         # Define args/kwargs for the Block objects that will be created
         block_kwarg = {
@@ -986,12 +1078,62 @@ class Datafile(BaseAbstract):
             'invalid_value' : self.invalid_value,
             'allow_repeats' : self.allow_repeats,
             'label'         : self.label,
+            'sparsity'      : self.sparsity(optimize),
         }
 
         # Ensure we're generating the same number of blocks for all grids
         is_equal = lambda a: np.prod(a) == np.prod(blocks)
         b_shapes = [block.shape[:-1] for block in block_grids]
         assert(all(map(is_equal, b_shapes))), [blocks, b_shapes]     
+
+        # Cache final data blocks to zarr
+        # if cache_path is None:
+        #     cache_path = getattr(self, '_cache_path', None)
+        # if optimize and cache_path is not None:
+        #     self._cache_path = cache_path
+        #     if '_cache_path' not in self._init_keys:
+        #         self._init_keys += ['_cache_path']
+        #     names = ['data','coords','inbound','overlap']
+        #     cache = cache_path.joinpath(self.name, f'{self.config_hash}.zarr')
+        #     if isinstance(cache, Path): cache.parent.mkdir(exist_ok=True, parents=True)
+
+        #     if not cache.exists():
+        #         print('caching', cache)
+        #         # All block grids should have the same exact chunks
+        #         padding = list(map(set, zip(*[map(max, b._array.chunks) for b in block_grids])))[:-1]
+        #         assert(all(len(p) == 1 for p in padding)), padding
+        #         padding = tuple([list(p)[0] for p in padding])
+
+        #         def pad(block):
+        #             pads = [(0, need-size) for size, need in zip(block.shape, padding)]
+        #             if block.size:
+        #                 return np.pad(block, tuple(pads+[(0,0)]))
+        #             return np.zeros(padding, dtype=block.dtype)
+
+        #         # Ensure chunks are all the same size by padding them
+        #         get_size = lambda block: np.array(block.shape[:-1]).reshape((1,)*len(padding)+(len(padding),)) 
+        #         sizes = block_grids[1]._array.map_blocks(get_size, chunks=(1,)*len(padding)+(len(padding),)) 
+        #         array = [(self.dims+[i], b._array.map_blocks(pad, chunks=padding+b._array.chunksize[-1:])) for i,b in enumerate(block_grids)]
+
+        #         # Write the data and the padding sizes to a new zarr
+        #         array += [([f'_s_{i}' for i in range(len(sizes.shape))], sizes.rechunk(-1))]
+        #         xdata = xr.Dataset(dict(zip(names+['sizes'], array)))
+        #         with ProgressBar(): xdata.to_zarr(cache, mode='w')
+
+        #     def unpad(block, size):
+        #         return block[tuple([slice(None, int(s)) for s in np.array(size).flatten()])]
+
+        #     # Load the zarr cache and removed the padding elements
+        #     xdata = xr.open_zarr(cache)
+        #     sizes = xdata['sizes'].values
+        #     block_sizes = da.array(sizes).rechunk((1,)*(len(sizes.shape)-1)+(sizes.shape[-1],))
+        #     new_chunks = []
+        #     for i in range(len(sizes.shape)-1):
+        #         slices = [0] * len(sizes.shape)
+        #         slices[i] = slice(None)
+        #         slices[-1] = i
+        #         new_chunks.append(tuple(sizes[tuple(slices)]))
+        #     block_grids = [da.map_blocks(unpad, xdata[n].data, block_sizes, chunks=tuple(new_chunks)+xdata[n].chunks[-1:]).blocks for n in names]
 
         # Non-uniform coordinate grids use different resolutions in each block
         if not self.is_uniform:
@@ -1018,8 +1160,16 @@ class Datafile(BaseAbstract):
         # Uniform resolution coordinates use the same resolution across blocks
         else: block_kwarg['resolution'] = self.resolution 
 
+        # Separate features into their own list
+        num_feats = len(feat_array)
+        sep_feats = lambda i: (
+            [[g[i] for g in block_grids[:num_feats]]] + 
+             [g[i] for g in block_grids[num_feats:]]
+        )
+
         # Returns list of functions to allow lazy creation of the Block objects
-        gen_block = lambda i: (lambda: Block(*[g[i] for g in block_grids], **block_kwarg))
+        # gen_block = lambda i: (lambda: Block(*[g[i] for g in block_grids], **block_kwarg))
+        gen_block = lambda i: (lambda: Block(*sep_feats(i), **block_kwarg))
         lazy_func = gen_block#lambda i: cache(lambda: gen_block(i))
         return map(lazy_func, product(*map(range, blocks)))
 
@@ -1079,6 +1229,7 @@ class Datafile(BaseAbstract):
 
         # Include summary statistics
         data['summary'] = self.summary#(compute=False)
+        data['valid_mask'] = data['valid_mask'].astype(bool)
 
         # Allow tracking the reason a datafile is re-cached
         reason = 'user passed overwrite=True to _cache'
@@ -1091,14 +1242,18 @@ class Datafile(BaseAbstract):
                     for a in attrs:
                         curr = getattr(data,  a, None)
                         prev = getattr(cache, a, None)
+
                         if curr != prev:
-                            reason = f'differing {a}\n\t{curr=}\n!=\n\t{prev=}'
+                            curr = f'{curr=}'[:80]
+                            prev = f'{prev=}'[:80]
+                            reason = f'differing {a}\n\t{curr}\n!=\n\t{prev}'
                             overwrite = True
                             break
                     else:
                         if not bool(xr.align(data, cache, join='exact', exclude='statistics')):
                             reason = 'misaligned cache'
                             overwrite = True
+            except KeyboardInterrupt: raise
             except Exception as e: 
                 reason = f'exception {e}'
                 overwrite = True
@@ -1122,16 +1277,24 @@ class Datafile(BaseAbstract):
 
         # Write the data to the destination
         if overwrite or (not dest.exists()):
-            if dest.exists() and isinstance(dest, Path):
-                shutil.rmtree(dest)
-            
+            if dest.exists():
+                if isinstance(dest, Path):
+                    shutil.rmtree(dest)
+                elif isinstance(dest, S3Path):
+                    dest.delete()
+
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore')
                 try:
-                    with ProgressBar(): data.to_zarr(dest, encoding={})
+                    # Put coordinates into single chunk
+                    encoding = {c: {'chunks': (-1,)} for c in data.coords}
+                    with ProgressBar(): data.to_zarr(dest, encoding=encoding, mode='w')
                 except: 
-                    if dest.exists() and isinstance(dest, Path):
-                        shutil.rmtree(dest)
+                    if dest.exists():
+                        if isinstance(dest, Path):
+                            shutil.rmtree(dest)
+                        elif isinstance(dest, S3Path):
+                            dest.delete()
                     raise
         else: print(f'Cache exists for {self.name}')
 

@@ -55,7 +55,7 @@ def test_features(batch_size, n_features, shape):
     def create_dataset(*size, n_features=2, **kwargs):
         data   = np.arange(int(np.prod(size))).reshape(size)
         coords = dict(zip(string.ascii_lowercase, map(np.arange, size)))
-        x_data = {i: xr.DataArray(data, coords) for i in range(n_features)}
+        x_data = {str(i): xr.DataArray(data, coords) for i in range(n_features)}
         return Dataset([Datafile(xr.Dataset(x_data), **kwargs)])
 
     # First test extracting Sample objects
@@ -85,7 +85,7 @@ def test_features(batch_size, n_features, shape):
     assert(all(s == target for s in shapes)), f'{shapes} vs {target}'
 
     # Last, test extracting nested feature dicts
-    features = [[0], [[1, 2], [3]], [4]]
+    features = [['0'], [['1', '2'], ['3']], ['4']]
     with Batcher(dataset, batch_size=batch_size, workers=0, features=features) as batches:
         batch = next(batches)
 

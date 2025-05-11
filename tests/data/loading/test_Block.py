@@ -30,6 +30,7 @@ example_coords = np.array([
 example_block = Block(**{
     'data'          : da.from_array(np.rollaxis(example_data, 0, 3)),
     'coords'        : da.from_array(np.rollaxis(example_coords, 0, 3)),
+    'valid_mask'    : da.from_array(np.rollaxis(np.isfinite(example_data), 0, 3)),
     'inbound_mask'  : da.from_array(np.rollaxis(np.ones_like(example_data, dtype=bool), 0, 3)),
     'overlap_mask'  : da.from_array(np.rollaxis(np.zeros_like(example_data, dtype=bool), 0, 3)),
     'dims'          : ['x', 'y'],
@@ -198,6 +199,7 @@ be resolved whenever the next version is released.
 example_block_sparse = Block(**{
     'data'          : da.from_array(example_data_sparse),
     'coords'        : da.from_array(example_coords_sparse),
+    'valid_mask'    : da.from_array(np.rollaxis(np.isfinite(example_data), 0, 3)),
     'inbound_mask'  : da.from_array(np.rollaxis(np.ones_like(example_data, dtype=bool), 0, 3)),
     'overlap_mask'  : da.from_array(np.rollaxis(np.zeros_like(example_data, dtype=bool), 0, 3)),
     'dims'          : ['x', 'y'],
