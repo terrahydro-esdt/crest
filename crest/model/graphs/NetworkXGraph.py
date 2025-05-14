@@ -52,10 +52,10 @@ class NetworkXGraph(BaseGraph):
         return self.graph.has_edge(source,target)
     
     def in_edges(self, nbunch=None, data=False, default=None):
-        return self.graph.in_edges(nbunch,data,default)
+        return self.graph.in_edges(nbunch,data,default=default)
     
     def out_edges(self, nbunch=None, data=False, default=None):
-        return self.graph.out_edges(nbunch,data,default)
+        return self.graph.out_edges(nbunch,data,default=default)
     
     def set_edge_attributes(self, attr: dict):
         nx.set_edge_attributes(self.graph, attr)

@@ -202,7 +202,7 @@ class Blockset(BaseSet):
 
         # Create a dask dataframe first, then transform into a dask
         # array (in order to satisfy dask's built in assumptions)
-        return dd.from_map(self._parse, matches, lengths, **{
+        kwargs = {
             'meta'             : (0, int), 
             'token'            : f'product{id(matches)}',
             'divisions'        : [0] + divs.tolist(), 
@@ -210,7 +210,16 @@ class Blockset(BaseSet):
             'features'         : self.feature_subset(features),
             'make_objs'        : features is None,
             'singleton'        : len(lengths) == 1,
-        }).to_dask_array(lengths=list(lengths), meta=meta)
+        }
+        try:
+            return dd.from_map(self._parse, matches, lengths, **kwargs
+                ).to_dask_array(lengths=list(lengths), meta=meta)
+
+        # Newer dask version does not have token keyword
+        except:
+            kwargs.pop('token')
+            return dd.from_map(self._parse, matches, lengths, **kwargs
+                ).to_dask_array(lengths=list(lengths), meta=meta)
 
 
     def _parse(self, 
