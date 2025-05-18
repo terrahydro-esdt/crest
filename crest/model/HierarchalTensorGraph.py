@@ -49,11 +49,13 @@ class HierarchalTensorGraph(TensorGraph):
        A callable function to initalize a HTG. If set, a
        single node (basenode) HTG is created.
 
-    inputs : dict, optional
+    inputs : dict | list | tuple | str, optional
         A dictionary with the name (keys) and tensor specifications (values) for the
-        input expected input tensors and produced output produced tensors. Note:
-        these parameters are optional, however if not specified, in certain cases
-        building the Model will fail. It's best practice to specify them!
+        input expected input tensors and produced output produced tensors.
+        If list, tuple, or str, a dictionary is created with tensor specification
+        set to None. If inputs are specified, HierarchalTensorGraph will
+        select from the inputs the corresponding keys. To compile a model, input
+        keys and tensor specification must be specified.
 
     """
 
@@ -64,8 +66,8 @@ class HierarchalTensorGraph(TensorGraph):
     def __init__(self,
                  node: None | Callable = None,
                  name: None | str = None,
-                 inputs: dict = {},
-                 outputs: dict = {},
+                 inputs: dict | str | list | tuple | None = None,
+                 outputs: dict | str | list | tuple | None = None,
                  edges: list = []
                  ):
 
@@ -73,11 +75,28 @@ class HierarchalTensorGraph(TensorGraph):
         self.node = node or self
         self.graph = NetworkXGraph()
         self.output = []
-        self.inputs = inputs
-        self.outputs = outputs
         self._inputs_map = {}  # dictionary specifying input feature renaming
         self._outputs_map = {}  # dictionary specifying input feature renaming
         self.is_recurrent = False
+
+        # Set the inputs/outputs
+        self.inputs = {}
+        if(inputs):
+            if(isinstance(inputs,str)): 
+                self.inputs = {inputs : None}
+            if(isinstance(inputs,list) or isinstance(inputs,tuple)):
+               self.inputs = {k : None for k in inputs}
+            if(isinstance(inputs,dict)):
+                self.inputs = inputs
+
+        self.outputs = {}
+        if(outputs):
+            if(isinstance(outputs,str)): 
+                self.outputs = {outputs : None}
+            if(isinstance(outputs,list) or isinstance(outputs,tuple)):
+               self.outputs = {k : None for k in outputs}
+            if(isinstance(outputs,dict)):
+                self.outputs = outputs
 
         # check that the HTG has a name
         if self.name == 'None':
@@ -725,6 +744,9 @@ class HierarchalTensorGraph(TensorGraph):
         target : str, Callable, HierarchalTensorGraph
              The sink from which to end the edge
 
+        rename : dict[str,str]
+            Dictionary to rename incoming keys with items = name : new_name
+
         Raises
         ------
         ImproperTensorGraphError
@@ -871,11 +893,44 @@ class HierarchalTensorGraph(TensorGraph):
         raise ImproperTensorGraphError(
             'must pass either a str, tuple, or HierarchalTensorGraph')
 
-    def feature_map(self, X: dict, io: str) -> dict:
+     # find keys and replace them
+    def find_and_replace(self,namelist: dict, X: dict) -> dict:
+        """Tries to find keys specified in namelist and replace them with the values in namelist"""
+        for k, v in namelist.items():
+
+            # ignore identical replacements
+            if k == v:
+                continue
+
+            # if the name to be replaced already exists you cannot make the replacement
+            if v in X.keys():
+                message = f'Cannot rename {k} as {v} because the name {v} already exists in {X}'
+                raise ImproperTensorGraphError(message)
+
+            # exact match
+            if k in X.keys():
+                X[v] = X.pop(k)
+                continue
+
+            # look for partial matches in long names
+            partials = [i for i in X.keys() if k in (i[-1],)]
+
+            if not partials:
+                message = f'Could not find key = {k} to rename'
+                raise ImproperTensorGraphError(message)
+
+            if len(partials) > 1:
+                message = f'Found multiple keys = {partials} for {k}. '
+                message += f'You need to use one of these tuples to specifiy it uniquely and rename it.'
+                raise ImproperTensorGraphError(message)
+
+            X[v] = X.pop(partials[0])
+        return X
+
+    def find_and_select(self, X: dict, io: str | None = None) -> dict:
         """
-        Applies a map on the incoming and outgoing dictionaries.
-        according to the specified HTG paramerters inputs/outputs
-        and inputs/outputs_map.
+        Flattens input/output and finds and selects the inputs/outputs
+        specified in self.inputs/outputs.
 
         Parameters
         ----------
@@ -907,41 +962,7 @@ class HierarchalTensorGraph(TensorGraph):
                 else:
                     yield [key + k, v]
 
-        # find keys and replace them
-        def find_and_replace(namelist: dict, X: dict) -> dict:
-            """Tries to find keys specified in namelist and replace them with the values in namelist"""
-            for k, v in namelist.items():
-
-                # ignore identical replacements
-                if k == v:
-                    continue
-
-                # if the name to be replaced already exists you cannot make the replacement
-                if v in X.keys():
-                    message = f'Cannot rename {k} as {v} because the name {v} already exists in {X}'
-                    raise ImproperTensorGraphError(message)
-
-                # exact match
-                if k in X.keys():
-                    X[v] = X.pop(k)
-                    continue
-
-                # look for partial matches in long names
-                partials = [i for i in X.keys() if k in (i[-1],)]
-
-                if not partials:
-                    message = f'Could not find key = {k} to rename'
-                    raise ImproperTensorGraphError(message)
-
-                if len(partials) > 1:
-                    message = f'Found multiple keys = {partials} for {k}. '
-                    message += f'You need to use one of these tuples to specifiy it uniquely and rename it.'
-                    raise ImproperTensorGraphError(message)
-
-                X[v] = X.pop(partials[0])
-            return X
-
-        def find_and_select(namelist: list, X: dict) -> dict:
+        def _find_and_select(namelist: list, X: dict) -> dict:
             """tries to find and select the subset of X with keys = namelist """
 
             x = {}
@@ -982,14 +1003,12 @@ class HierarchalTensorGraph(TensorGraph):
         if io == 'input':
             if not (self._inputs_map or self.inputs):
                 return X
+                
             # flatten/convert to tuples
             x = dict([i for i in flatten_dict(X, ())])
-            # rename
-            if self._inputs_map:
-                x = find_and_replace(self._inputs_map, x)
-            # select
+          
             if self.inputs:
-                x = find_and_select(self.inputs, x)
+                x = _find_and_select(self.inputs, x)
 
         # Renaming and selecting outputs
         if io == 'output':
@@ -1000,20 +1019,38 @@ class HierarchalTensorGraph(TensorGraph):
 
             # flatten/convert to tuples
             x = dict([i for i in flatten_dict(X, ())])
+            
             # select
             if self.outputs:
-                x = find_and_select(self.outputs, x)
+                x = _find_and_select(self.outputs, x)
                 self.output = x.copy()
 
             # If no selection occured set output before renaming.
             if not self.outputs:
                 self.output = X.copy()
-
-            # rename
-            if self._outputs_map:
-                x = find_and_replace(self._outputs_map, x)
-
+                
         return x
+        
+    def _edge_mapping(self,X,edge):
+        """
+          Applies a mapping to the output of node across
+          a particular outgoing edge.
+
+          X : dict
+            Output dict coming from the node
+
+          edge :
+              Graph edge
+        """
+
+        # Apply renaming
+        _X = X
+        print('edge',edge)
+        if('rename' in list(edge.keys()) ):
+           _X = self.find_and_replace(edge['rename'],X)
+            
+        return _X
+        
 
     def __call__(self, X: dict) -> dict:
         """Propagate the given input through the graph.
@@ -1061,7 +1098,7 @@ class HierarchalTensorGraph(TensorGraph):
                 message += f'Found sinks {[self[i] for i in sinks]}'
                 raise ImproperTensorGraphError(message)
 
-        _X = self.feature_map(X, 'input')
+        _X = self.find_and_select(X, 'input')
 
         # Removes 'input' or 'output' nesting of keys
         def flatten(d):
@@ -1078,7 +1115,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         # Basenode call
         if self.is_basenode:
-            return self.feature_map(self.node(flatten(_X)), 'output')
+            return self.find_and_select(self.node(flatten(_X)), 'output')
 
         # Recursive case: traverse graph in reverse, from output to input
         def nodes(name):
@@ -1100,14 +1137,19 @@ class HierarchalTensorGraph(TensorGraph):
                     tmp_depth = depth + (input_node == name)
                     input_name, output_value = traverse(
                         input_node, tmp_depth)
-                    output_dict[input_name] = output_value
+                    output_dict[input_name] = self._edge_mapping(output_value,self.graph.edges[input_node, name])
 
             if (len(rollout_dict)):
 
                 outputs = []
                 names, rollouts = zip(*rollout_dict.items())
+                #print('names', names, list(zip(*rollouts)))
                 for values in zip(*rollouts):
                     rollout_values = dict(zip(names, values))
+                    # Apply edge mapping 
+                    rollout_values = {k : self._edge_mapping(v,self.graph.edges[k,name]) for k,v in rollout_values.items()}
+                    #print('rv',rv)
+                    print('roll',rollout_values)
                     rollout_values = {k: v for k, v in rollout_values.items()}
 
                     outputs.append(output_dict | rollout_values)
@@ -1134,7 +1176,7 @@ class HierarchalTensorGraph(TensorGraph):
                         self[input_node].roll_out = Recurrence(
                             self, input_node, traverse, _X, rollout_axis)
 
-        return self.feature_map(flatten(dict(map(traverse, self.sinks))), 'output')
+        return self.find_and_select(flatten(dict(map(traverse, self.sinks))), 'output')
 
     def expand_graph_node(self, nodename: str, g=None):
         """ expands the graph of nodename and returns a new graph with the expansion
@@ -1576,11 +1618,14 @@ class Recurrence:
                 # if the input node is recurrent
                 if self.node.graph.edges[input_node, self.name]['rollout_axis'] is not None:
                     recurrence = self.node[input_node].roll_out
-                    input_values[input_node] = recurrence[index - 1]
+                    input_values[input_node] = self.node._edge_mapping(recurrence[index - 1],self.node.graph.edges[input_node,self.name])
+                    #input_values[input_node] = self.node._edge_mapping(recurrence[index - 1],self.node.graph.edges[input_node,self.name])
+                    print('ovf',input_node,self.name,recurrence[index-1])
                 else:
                     
                     # get the value of the input node
                     _, output_value = self.traverse(input_node)
+                    print('ov',output_value)
                     input_values[input_node] = output_value
 
             self.cache[index] = self.node[self.name](input_values)
