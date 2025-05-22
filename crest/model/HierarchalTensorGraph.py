@@ -1116,8 +1116,7 @@ class HierarchalTensorGraph(TensorGraph):
 
                 var_map = {k: [{x: y for x, y in o[k].items() if hasattr(
                     y, '__len__') or y is not None} if isinstance(o[k], dict) else o[k] for o in var if o[k] is not None] for k in var[0]}
-                var_map = {k: [x for x in v if len(
-                    x) > 0] for k, v in var_map.items()}
+                var_map = {k: [x for x in v if not isinstance(x, dict) or len(x) > 0] for k, v in var_map.items()}
 
                 return var_map
             else:

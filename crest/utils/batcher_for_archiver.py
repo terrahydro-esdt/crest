@@ -2,8 +2,8 @@ import tlz
 import numpy as np
 import tensorflow as tf
 
-from crest.data.Batcher import Batcher
-from crest.data.loading.Dataset import Dataset
+from crest.data import Batcher
+from crest.data.loading import Dataset
 
 # a function to get a coordinate value by indexing
 # the coords of the samples in a batch
@@ -25,7 +25,7 @@ def _get_index_from_name(df_name: str, dataset):
         raise ValueError(message)
     
     try:
-        return next(i for i, df in enumerate(dataset) if df.location.parent.name.lower() == df_name)
+        return next(i for i, df in enumerate(dataset) if df_name in df.name.lower())
     except StopIteration:
         raise ValueError(f'{df_name} not found')
  

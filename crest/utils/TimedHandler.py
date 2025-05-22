@@ -1,5 +1,5 @@
 from logging.handlers import MemoryHandler
-from threading import Timer 
+import threading
 
 
 class TimedHandler(MemoryHandler):
@@ -47,13 +47,21 @@ class TimedHandler(MemoryHandler):
 
     def shouldFlush(self, *args, **kwargs):
         """ Flushes if at capacity, and otherwise starts timers when needed """
+
+        # Ensure we aren't starting new threads during program exit
+        if threading._SHUTTING_DOWN:
+            return True
+
+        # Any active timer should be canceled before flushing
         if super().shouldFlush(*args, **kwargs): 
             if self.timer is not None:
                 self.timer.cancel()
             return True
 
+        # Make the timer daemonic so we don't need to wait at program exit
         elif self.timer is None:
-            self.timer = Timer(self.delay, self.flush)
+            self.timer = threading.Timer(self.delay, self.flush)
+            self.timer.daemon = True
             self.timer.start()
         return False
 

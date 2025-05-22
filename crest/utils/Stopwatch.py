@@ -77,10 +77,18 @@ class Stopwatch:
     delay   : float | int
         Amount of time (in seconds) to wait between function calls when taking
         multiple samples. If `samples` <= 1, this parameter has no effect.  
-    silent  : bool
-        If true, calculate the change in metric values but do not log outputs.
-        Note that these difference values are stored in `Stopwatch.deltas`, 
-        which can be accessed after the Stopwatch context manager has exited.
+    silent  : bool | dict
+        If True, calculate the change in metric values but do not log outputs;
+        otherwise, log outputs via the given `logger` parameter. If a dict is
+        passed, it is used as a filter in the following manner: for all of the 
+        (key, val) items within, the key should correspond to a metric name, 
+        and that metric's change will be checked against `val`. If all of the 
+        selected metrics are below their respective `val` threshold, then the
+        outputs will not be logged (i.e. it is equivalent to silent=True). For
+        example, `silent={'time':0.1}` will silence all logs that take less 
+        than 0.1 seconds to complete. Note that all metric difference values 
+        are stored in `stopwatch.deltas`, which can be accessed after the 
+        context manager has exited via the Stopwatch instance object.
     stop_gc : bool
         Stops garbage collection while inside the Stopwatch context manager,
         which can sometimes be useful for getting a more accurate estimate
@@ -114,7 +122,7 @@ class Stopwatch:
         formats  : dict[str, dict]     = {}, 
         samples  : int = 1,
         delay    : float | int = 0,
-        silent   : bool = False,
+        silent   : bool | dict = False,
         stop_gc  : bool = False,
     ):
         self.message  = message
@@ -150,11 +158,17 @@ class Stopwatch:
         # Format the metric delta into the final output string
         fmt = lambda k,v: f'{k}:{self.readable(v, **self.formats.get(k, {}))}'
 
-        if not self.silent: 
-            metrics = '|'.join(starmap(fmt, self.deltas.items()))
-            message = f'[{metrics}] {self.message}'
-            try:    self.logger(message, stacklevel=2)
-            except: self.logger(message)
+        if self.silent:
+            # Skip logging if all deltas are below the thresholds in silent
+            if isinstance(self.silent, dict):
+                if all(self.deltas[k] < v for k,v in self.silent.items()):
+                    return
+            else: return
+
+        metrics = '|'.join(starmap(fmt, self.deltas.items()))
+        message = f'[{metrics}] {self.message}'
+        try:    self.logger(message, stacklevel=2)
+        except: self.logger(message)
 
     def __getitem__(self, key):
         """ Return the delta value for the requested metric """

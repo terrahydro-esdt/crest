@@ -5,19 +5,24 @@ anywhere in a python execution path. Users can simply call `interactive()`
 where they want the console to start, and all local and global variables
 from that context will be available within the console session. 
 
-In addition, the `interactive_exceptions` decorator can be used to decorate 
+In addition, the `interactive_exceptions` decorator can be used to decorate
 any function, in order to enable starting an interactive console session if
 and when an exception is raised by the decorated function. The console will
 start where the exception was raised, thus allowing users to easily debug.
 
 Contents summary:
     - interactive_exceptions (function: Callable)
-        Decorator that starts a console session where any exceptions occur 
-        within the decorated function, to enable interactive debugging.
+        Decorator that catches any exception that occurs in the decorated
+        function, and starts a console session at the location where the
+        exception was raised (to enable direct interactive debugging).
 
     - interactive (environment: dict={}, n_prior_frames: int=0, frame=None)
         Function that can be called anywhere, which will start a console
         that has access to all local and global variables where called.
+    
+    - get_highlighter (style_name: str = 'monokai')
+        Function that returns a function which applies syntax highlighting
+        to any string given as input (if pygments is installed).
 
     - get_call_frame (n_prior_frames: int = 0):
         Function that returns a frame object relative to where it's called.
@@ -35,15 +40,18 @@ Contents summary:
 See docstrings for more details.
 
 """
-
+    
 from collections.abc import Callable
 from functools import partial, wraps
+from itertools import takewhile
 from linecache import getline 
 
+import contextlib
 import traceback
 import inspect
 import code
 import sys
+import io
 import os
 import re
 
@@ -67,11 +75,12 @@ def interactive_exceptions(function: Callable) -> Callable:
     """
     @wraps(function)
     def wrapper(*args, **kwargs):
-        # Pass-through to the function, unless an exception occurs
-        try: return function(*args, **kwargs)
+        try: 
+            return function(*args, **kwargs)
         
         # Skip starting the console if the exception is manually triggered
-        except KeyboardInterrupt: raise
+        except KeyboardInterrupt: 
+            raise
 
         # All other exceptions start the interactive console where the 
         # exception occurred, and re-raises the exception after completion
@@ -96,7 +105,12 @@ def interactive_exceptions(function: Callable) -> Callable:
 
 
 
-def interactive(environment: dict={}, n_prior_frames: int=0, frame=None):
+def interactive(
+    environment    : dict = {}, 
+    n_prior_frames : int  = 0, 
+    n_shown_frames : int  = 1,
+    frame = None,
+):
     """ Start an interactive console wherever this function is called.
 
     Parameters
@@ -110,6 +124,13 @@ def interactive(environment: dict={}, n_prior_frames: int=0, frame=None):
         function is e.g. called by a helper function and so the desired
         context is where the helper was used at, the helper should use
         `interactive(n_prior_frames=1)`; etc.
+    n_shown_frames : int
+        Determines the number of frames for which their respective source
+        code will be printed. By default, only the code for the frame that
+        the console starts in will be printed (i.e. n_shown_frames=1). If a 
+        higher value is set, the source code for that many calling frames 
+        will be shown (e.g. set to 2, it will print the source code for the
+        current call context as well as for the parent call context.
     frame : PyFrameObject
         Rather than fetching the frame context within the current stack, 
         a frame object can be explicitly given as the console context.
@@ -137,13 +158,26 @@ def interactive(environment: dict={}, n_prior_frames: int=0, frame=None):
     # Include variables from the frame this function was called
     # in, and show the code context as the console banner
     cframe = frame or get_call_frame(n_prior_frames + 1)
-    banner = get_source_code(cframe)
+    banner = get_source_code(cframe, n_shown_frames - 1)
     f_vars = get_frame_vars(cframe, **environment)
+
+    # Notify user of useful libraries to install
+    installs = []
+    for library, reason in {
+        'pyreadline3' : 'tab-completion',
+        'pygments'    : 'colors',
+        'rich'        : 'variable inspection',
+    }.items():
+        try: __import__(library)
+        except ImportError:
+            installs.append(f'{library} for {reason}')
+    if len(installs):
+        banner += '\nInstall the following for additional features:'
+        banner += '\n\t- '.join([''] + installs) + '\n'
 
     # Set the console prompt colors and add banner information
     sys.ps1 = '\x1b[38;5;197m>>>\x1b[0m '
     sys.ps2 = '\x1b[38;5;141m...\x1b[0m '
-    banner += '\nCtrl-z resumes execution, quit() halts execution\n'
 
     # Add helper functions and the call frame itself to the frame variables
     f_vars.update({
@@ -153,8 +187,46 @@ def interactive(environment: dict={}, n_prior_frames: int=0, frame=None):
         'console_frame'   : cframe,
     })
 
+    # If stdout is redirected, switch to stderr for visibility
+    redirect = 'nullcontext' if sys.stdout.isatty() else 'redirect_stdout'
+
     # Initialize the console and begin the interactive session
-    InteractiveConsole(f_vars).interact(banner=banner)
+    with getattr(contextlib, redirect)(sys.stderr):
+        InteractiveConsole(f_vars).interact(banner=banner)
+
+
+
+def get_highlighter(style_name: str = 'monokai') -> Callable:
+    """ Get a function that highlights syntax in a given string. 
+    
+    Returns
+    -------
+    Callable
+        Function which takes a single input string, and returns a string
+        with syntax highlighting if pygments is installed. If this library
+        is missing, the function will do nothing but return its input.
+
+    """
+
+    try:
+        from pygments import highlight
+        from pygments.lexers import Python3Lexer
+        from pygments.styles import get_style_by_name
+        from pygments.formatters import Terminal256Formatter
+        style = get_style_by_name(style_name)
+        t_fmt = Terminal256Formatter(style=style)
+        lexer = Python3Lexer()
+        color = partial(highlight, lexer=lexer, formatter=t_fmt)
+
+        def highlighter(text: str) -> str:
+            # Strip any whitespace, apply color, then re-add the whitespace
+            prefix = ''.join( takewhile(str.isspace, text) )
+            suffix = ''.join( takewhile(str.isspace, reversed(text)) )
+            return f'{prefix}{color(text.strip()).strip()}{suffix}'
+        return highlighter
+    except ImportError: pass
+    except:             print(f'{traceback.format_exc()}')
+    return lambda x: x 
 
 
 
@@ -212,7 +284,12 @@ def get_frame_vars(frame, **variables) -> dict:
 
 
 
-def get_source_code(frame, n_lines: int = 20) -> str:
+def get_source_code(
+    frame, 
+    n_prior : int = 0, 
+    n_lines : int = 20, 
+    _total  : int = 0,
+) -> str:
     """ Get the source code context at the given frame. 
     
     Notes
@@ -225,6 +302,8 @@ def get_source_code(frame, n_lines: int = 20) -> str:
     frame : PyFrameObject
         Frame object (e.g. from `inspect.currentframe()`) to use as the 
         context from which to retrieve the source code.
+    n_prior : int
+        Number of additional parent frames to retrieve source code for.
     n_lines : int
         Number of source code lines from the frame context to return.
     
@@ -234,48 +313,58 @@ def get_source_code(frame, n_lines: int = 20) -> str:
         String which shows the source code context from the given frame.
         
     """
-
-    try:        
+    if n_prior < 0: return ''
+    
+    try:
         # Get the filename and line number for the frame
         filename = frame.f_code.co_filename 
         line_num = frame.f_lineno 
-        num_size = len(str(line_num))
-
-        # Helper to fetch the file line text, and include a line number
-        get_line = lambda i: f'| {i:>{num_size}} | {getline(filename, i)}'
+        ln_n_fmt = f'{{:>{len(str(line_num))}}}'
+        ln_n_bar = f'| {ln_n_fmt} |'
 
         # Get all lines from the source file to avoid e.g. starting the 
         # code syntax highlighting in the middle of a multi-line comment
-        source = list(map(get_line, range(1, line_num+1)))
+        source = list(map(partial(getline, filename), range(1,line_num+1)))
 
         # Create the necessary context strings
-        divide = '=' * min(120, max(map(len, source[-n_lines:])))
-        header = f'{filename:^{len(divide)}}'
+        minlen = len(filename) + 2
+        maxlen = max(map(len, source[-n_lines:]))
+        maxlen+= len(ln_n_bar.format(line_num+1))
+        divide = '=' * min(120, minlen + 2)#max(minlen, maxlen))
         source = ''.join(source).strip()
-
+        header = f'{filename:^{len(divide)}}'
+        styler = get_highlighter()
+        
         # Add syntax highlighting if pygments is available
-        try:
-            from pygments import highlight
-            from pygments.lexers import Python3Lexer
-            from pygments.styles import get_style_by_name
-            from pygments.formatters import Terminal256Formatter
-            style = get_style_by_name('monokai')
-            t_fmt = Terminal256Formatter(style=style)
-            lexer = Python3Lexer()
-            color = partial(highlight, lexer=lexer, formatter=t_fmt)
-
-            divide = color(divide).strip()
-            header = color(header).strip()
-            source = color(source).strip()
-        except ImportError: 
-            header = f'Install pygments for syntax highlighting!\n{header}'
+        try:                import pygments
+        except ImportError: header=f'Install pygments for color!\n{header}'
+        ex_num = ln_n_bar.format(1234)
+        number = styler(ex_num).strip().replace('1234', ln_n_fmt)
+        divide = styler(divide).strip()
+        source = styler(source).strip()
+        header = styler(header)
     except Exception as e: 
         return f'\n{traceback.format_exc()}\nError in get_source_code: {e}'
 
     # Include only the requested number of lines
+    addnum = lambda i, line: f'{number.format(i)} {line}'
+    source = '\n'.join(map(addnum, *zip(*enumerate(source.split('\n'),1))))
     source = source.split('\n', max(0, line_num - n_lines))[-1]
     pieces = [divide, header, divide.replace('=', '_'), source, divide]
-    return '\n'.join([''] + pieces + [''])
+    finish = '\n'.join([''] + pieces + [''])
+
+    # Label frame depth when showing source code for multiple frames
+    if _total > 0:
+        finish = f'\nCalling Context -{_total - n_prior}{finish}'
+    elif n_prior > 0:
+        finish = f'\nCurrent Context{finish}'
+
+    # Retrieve the source code for additional parent frames if requested
+    if (n_prior > 0) and (frame.f_back is not None):
+        _total = _total or n_prior
+        source = get_source_code(frame.f_back, n_prior-1, n_lines, _total)
+        finish = f'{source}\n{finish}'
+    return finish
 
 
 
@@ -305,31 +394,47 @@ class InteractiveConsole(code.InteractiveConsole):
         self._forcestop = False
         self._error_msg = ''
 
-        # If available, use readline and rlcompleter to add functionality
         try:
-            import readline
-            self._readline = readline
+            # If available, use readline & rlcompleter to add functionality
+            try:
+                import readline
+                self._readline = readline
 
-            # Load any previous console command history
-            try:                      readline.read_history_file()
-            except FileNotFoundError: print('No history file found')
+                # Load any previous console command history
+                try:                      readline.read_history_file()
+                except FileNotFoundError: print('No history file found')
 
-            # Follow history when executing prior commands (Windows only)
-            self._enable_history_restoration()
+                # Follow history when using prior commands (Windows only)
+                self._enable_history_restoration()
 
-            # Allow tab-completion of variables
-            readline.parse_and_bind('tab: complete')
-            readline.set_completer(self._patched_completer(variables))
-        except ImportError:    pass
+                # Allow tab-completion of variables
+                readline.parse_and_bind('tab: complete')
+                readline.set_completer(self._patched_completer(variables))
+            except ImportError: pass
+
+            # If available, use rich to add functionality
+            try:
+                import rich
+
+                # Add highlighting to output (now using pygments instead)
+                # rich.pretty.install()
+
+                # Include rich.inspect for easy object examination
+                variables['inspect'] = rich.inspect
+                self._error_msg += ('\nNote: `inspect(variable)` may' +
+                                    ' be used to examine a variable\n')
+            except ImportError: pass
 
         # Any other errors should be logged once the console starts
         except: self._error_msg = f'\n{traceback.format_exc()}'
 
 
-    def interact(self, banner: str | None = None, **kwargs):
+    def interact(self, banner: str = '', **kwargs):
         """ Start the console, ensuring command history written on exit """
         try: 
-            super().interact(banner=f'{banner}{self._error_msg}', **kwargs)
+            banner += self._error_msg + '\n'
+            banner += 'Ctrl-z resumes execution, quit() halts execution\n'
+            super().interact(banner=banner, **kwargs)
         finally:
             if hasattr(self, '_readline'):
                 try:                   self._readline.write_history_file()
@@ -349,7 +454,7 @@ class InteractiveConsole(code.InteractiveConsole):
 
         In addition, pyreadline breaks RGB ANSI colors for input(). Both of
         these issues are fixed by printing the input prompt separately from
-        the actual input call. Note that this fixes the console prompt, but 
+        the actual input call. Note that this fixes the console prompt, but
         not ANSI coloring when actually using input().
         
         """
@@ -367,6 +472,21 @@ class InteractiveConsole(code.InteractiveConsole):
         return super().raw_input(f'\x1b[{len_no_ansi}C')
 
 
+    # def runcode(self, code):
+    #     """ Apply syntax highlighting (if available) before printing """
+    #     def live_highlighting(handle):
+    #         highlighter = get_highlighter()
+    #         writer = type('obj', (object,), {})
+    #         writer.write = lambda s: handle.write(highlighter(s))
+    #         return writer
+
+    #     with io.StringIO() as buffer:
+    #         buffer = live_highlighting(sys.stdout)
+    #         with contextlib.redirect_stdout(buffer):
+    #             super().runcode(code)
+            # print(get_highlighter()(buffer.getvalue()), end='')
+
+
     def _enable_history_restoration(self) -> bool:
         """ Restore location in history when executing previous commands.
         
@@ -380,15 +500,15 @@ class InteractiveConsole(code.InteractiveConsole):
 
         To address that inconvenience, this function enables restoring 
         history to the place it was at prior to executing the command - 
-        thus allowing a user to immediately select successive commands from 
+        thus allowing a user to immediately select successive commands from
         history, without needing to re-navigate back through history after 
         each command. 
     
         Note that due to the dependency on pyreadline3, this functionality 
         is only available on Windows. While the core components that this 
         functionality depends on does exist in the underlying readline C 
-        module, python's default readline library does not provide bindings 
-        to them. With some effort, however, it should be possible to modify 
+        module, python's default readline library does not provide bindings
+        to them. With some effort, however, it should be possible to modify
         this funtion so that it directly calls the readline.so module (and 
         binds to the proper interfaces, as pyreadline3 does in Windows).
 

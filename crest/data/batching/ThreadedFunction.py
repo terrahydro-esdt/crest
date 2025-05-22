@@ -5,7 +5,7 @@ from numbers import Number
 from logging import Logger, getLogger
 import traceback, time
 
-from ..utils.Stopwatch import Stopwatch
+from crest.utils import Stopwatch
 
 
 class ThreadedFunction(set):
@@ -121,7 +121,7 @@ class ThreadedFunction(set):
             while (not self.exitflag()) and self.is_full():
                 if continuous: return 
 
-                time.sleep(0.5) 
+                time.sleep(1) 
                 if loops % 10 == 0:
                     self.logger.debug(f'Waiting to add more {self.name} tasks')
                 loops += 1 

@@ -91,8 +91,9 @@ def interleave(a, b):
     return c 
 
 
-@nb.njit([i32[:, :](fx[:, :]) for fx in INPUT_TYPES], cache=True, nogil=True)
-def create_skiplist(array):
+@nb.njit([i32[:, :](fx[:, :], fx[:, :], fx[:, :]) for fx in INPUT_TYPES], 
+    cache=True, nogil=True)
+def create_skiplist(array, res_l, res_r):
     """ Create a skip list for the given array.
 
     The skip list indicates the index for the next unique
@@ -114,19 +115,34 @@ def create_skiplist(array):
     skip list is used to jump forward during bruteforce.
 
     """
-    skip = np.zeros_like(array, dtype=np.int32)
+
+    # Include extra last column for skipping on column=-1
     x, y = array.shape
+    skip = np.zeros((x, y+1), dtype=np.int32)
+    skip[:, y] = x
+
+    dynl = len(res_l) == x
+    dynr = len(res_r) == x
 
     # First construct the raw skip list values
     for col in nb.prange(y): 
         value = array[-1, col]
-        index = x
+        index = skip[x-1, col] = x
 
-        for row in range(x-1, -1, -1):
-            if ( not (np.isnan(value) and np.isnan(array[row, col]))
-                 and (array[row, col] != value) ):
-                value = array[row, col]
-                index = row + 1
+        for row in range(x-2, -1, -1):
+            value2 = array[row, col]
+
+            if not (np.isnan(value) and np.isnan(value2)):
+                if (value2 != value):
+                    value = value2
+                    index = row + 1
+
+                # If resolution varies, ensure right resolution is handled:
+                #  duplicate array values could otherwise allow skipping rows
+                #  that might match via larger right resolutions 
+                elif dynr and (res_r[row, col] < res_r[row+1, col]):
+                    index = row + 1
+
             skip[row, col] = index
 
     # Then take the minimum to the left for each element
@@ -136,6 +152,17 @@ def create_skiplist(array):
 
         for col in range(y):
             skip[row, col] = minim = min(minim, skip[row, col])
+
+    # If resolution varies, ensure left resolution is handled:
+    #  duplicate array values could otherwise allow skipping rows
+    #  that might match via larger left resolutions 
+    if dynl:
+        for col in nb.prange(y):
+            index = skip[-1, col-1]
+            for row in range(x-2, -1, -1):
+                if res_l[row, col] < res_l[row+1, col]:
+                    index = row + 1
+                skip[row, col-1] = min(index, skip[row, col-1])
     return skip
 
 
@@ -174,8 +201,8 @@ def bruteforce_original(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
     #         f'values, or length of 1: {label}={n} vs [l={len(l)}, r={len(r)}]')
     
     # Create skip lists, which gives index of next unique value along each axis
-    skip1 = create_skiplist(a1)
-    skip2 = create_skiplist(a2)
+    skip1 = create_skiplist(a1, a1l, a1r)
+    skip2 = create_skiplist(a2, a2l, a2r)
 
     # Allow numba to infer the type of the matches array
     match = [(np.int32(x), np.int32(x)) for x in range(0)]
@@ -266,7 +293,8 @@ def bruteforce_original(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
                     # If we can no longer skip forward, move on to the next
                     # a1 value and skip back to the first candidate found
                     # during this round of a2 iteration
-                    if invalid_dim < 0: 
+                    # Note: now handled via extra skip column at index -1
+                    # if invalid_dim < 0: 
                         # print(f'\n({ix1}, {ix2}):  {b1}  vs  {b2}')
                         # ix2 = start
                         # b2   = a2[ix2]
@@ -283,7 +311,7 @@ def bruteforce_original(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
                         # print(f'breaking; continuing at ix1={ix1+1}  ix2={start}')
                         # print(f'current matches: {len(match)}')
                         # if debug: print(f'\t\tbreaking; continuing at {l1}={ix1+1}  {l2}={start}')
-                        break
+                        # break
 
                 # Skip forward based on whichever dimension caused the failure
                 # (or the dimension prior to it, if we're above all candidates)
@@ -355,7 +383,8 @@ def loop(matches, ix1, start, a1lr, a2lr, skip, steps, swapped):
                 # If we can no longer skip forward, move on to the next
                 # a1 value and skip back to the first candidate found
                 # during this round of a2 iteration
-                if invalid_dim < 0: break
+                # Note: now handled via extra skip column at index -1
+                # if invalid_dim < 0: break
 
             # Skip forward based on whichever dimension caused the failure
             # (or the dimension prior to it, if we're above all candidates)
@@ -394,8 +423,8 @@ def bruteforce_setup(a1, a2, a1l, a1r, a2l, a2r, all_nan_col):
     #         f'values, or length of 1: {label}={n} vs [l={len(l)}, r={len(r)}]')
     
     # Create skip lists, which gives index of next unique value along each axis
-    skip1 = create_skiplist(a1)
-    skip2 = create_skiplist(a2)
+    skip1 = create_skiplist(a1, a1l, a1r)
+    skip2 = create_skiplist(a2, a2l, a2r)
 
     # Create step sizes to skip over columns containing all NaNs
     steps = np.append(np.cumsum(all_nan_col)[~all_nan_col], 0).astype(np.int32)
