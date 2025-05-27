@@ -8,13 +8,25 @@ import dask
 from crest.base.BaseAbstract import BaseAbstract
 from crest.data.loading import Dataset
 from crest.data.loading import Datafile
-from crest.utils.batcher_for_archiver import _get_index_from_name
 
 # to supress a warning about the large chunk indexing
 dask.config.set(**{'array.slicing.split_large_chunks': True})
 
 logger = logging.getLogger(__name__)  # create logger here or...
 
+
+# a function to get an index of a datafile in a dataset
+# using the name of its zarr file source
+def _get_index_from_name(df_name: str, dataset):
+    if dataset is None:
+        message = 'To capture the coordinate by the names'
+        message += ' of the datafiles, specify the crest dataset'
+        raise ValueError(message)
+    
+    try:
+        return next(i for i, df in enumerate(dataset) if df_name in df.name.lower())
+    except StopIteration:
+        raise ValueError(f'{df_name} not found')
 
 class Archiver(BaseAbstract):
     """Class which handles inserting the model predictions into the
@@ -143,8 +155,9 @@ class Archiver(BaseAbstract):
         # create the data schema
         self.out_datafile = self._create_schema()
 
-    def __exit__(self, *args, **kwargs):
-        self.close(origin='__exit__')
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is None:
+            self.close(origin='__exit__')
 
     def __enter__(self):
         return self
@@ -352,13 +365,27 @@ class Archiver(BaseAbstract):
             message += "and netcdf extensions."
             raise NotImplementedError(message)
     
+    # a function to add axis to pred dict if the number
+    # of axis in pred is not equal to the number of coords
+    def _match_shape(self,
+                     coord_dict: dict[str, np.ndarray],
+                     pred_dict : dict[str, np.ndarray],):
+        
+        for k, v in pred_dict.items():
+            missing = len(coord_dict) - (v.ndim-1)
+            if missing > 0:
+                pred_dict[k] = np.reshape(v, v.shape + (1,) * missing)
+        
+        return pred_dict
+    
     # a function to flattens all the samples in a batch
     # so we have a prediction dict in which each sample
     # is for a specific nd pixel.
     def _flatten(self,
                  coord_dict: dict[str, np.ndarray],
                  pred_dict : dict[str, np.ndarray],):
-        
+
+        pred_dict = self._match_shape(coord_dict, pred_dict)
         batch = coord_dict | pred_dict
         
         # take the batch_size out of the shape tuple
@@ -406,7 +433,7 @@ class Archiver(BaseAbstract):
             
         return flat_coords, flat_vars
     
-    # a function to get the sum and count 
+    # a function to get the sum and count
     # (TODO: stats in general)
     def _flatten_sum_count(self,
                            coord_dict_flat: dict,
@@ -417,8 +444,8 @@ class Archiver(BaseAbstract):
 
         # get the stats
         ds = ds.set_index(sample=list(coord_dict_flat.keys()))
-        ds_sum = ds.groupby('sample').sum().unstack()
-        ds_count = ds.groupby('sample').count().unstack()
+        ds_sum = ds.groupby('sample').sum(dim=...).unstack()
+        ds_count = ds.groupby('sample').count(dim=...).unstack()
         
         # if the coords are different than the schema coords values
         # then use nearest method to insert them values in correct
@@ -447,6 +474,8 @@ class Archiver(BaseAbstract):
                           coord_dict: dict[str, np.ndarray],
                           pred_dict : dict[str, np.ndarray],
                           sample_index: int,):
+        
+        pred_dict = self._match_shape(coord_dict, pred_dict)
 
         batch = coord_dict | pred_dict
         stat_arrays = []
@@ -464,8 +493,8 @@ class Archiver(BaseAbstract):
             ds_sum = ds_sum.reindex_like(self.out_datafile, method=method)
             ds_count = ds_count.reindex_like(self.out_datafile, method=method)
             
-            stacked = xr.concat([ds_sum, ds_count], dim="stat")
-            stacked = stacked.assign_coords(stat=["sum", "count"])
+            stacked = xr.concat([ds_sum, ds_count], dim="stats")
+            stacked = stacked.assign_coords(stats=["sum", "count"])
             stat_arrays.append(stacked)
 
         final = xr.concat(stat_arrays, dim="features")

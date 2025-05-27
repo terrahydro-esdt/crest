@@ -10,29 +10,16 @@ from crest.data.loading import Dataset
 def _get_coordinate(sample,
                     coordinate_key: str,
                     index: int,):
- 
+
     c = sample.coords[coordinate_key][index]
-    c = c[-1] if c.size > 0 else c
+    c = c[-1] if c.size > 1 else c
  
     return c
-
-# a function to get an index of a datafile in a dataset
-# using the name of its zarr file source
-def _get_index_from_name(df_name: str, dataset):
-    if dataset is None:
-        message = 'To capture the coordinate by the names'
-        message += ' of the datafiles, specify the crest dataset'
-        raise ValueError(message)
-    
-    try:
-        return next(i for i, df in enumerate(dataset) if df_name in df.name.lower())
-    except StopIteration:
-        raise ValueError(f'{df_name} not found')
  
 def batch_for_archiver(batcher: Batcher,
                        model_inputs: list[str],
                        coordinate_df: int | str | dict[str, int | str],
-                       dataset: Dataset | None = None,
+                       dataset: Dataset,
                        default_index: int | str = 0,):
     """A function to prepare the batches of samples for the archiver.
     
@@ -63,8 +50,9 @@ def batch_for_archiver(batcher: Batcher,
     default_index is used for it.
     
     dataset         : crest.data.loading.Dataset.Dataset, optional
-    The crest dataset that the batcher uses. It is only required
-    if coordinate_df is of type str or a dict with str values.
+    The crest dataset that the batcher uses. It is required
+    to capture the datafiles information like coordinates and
+    names.
     
     default_index         : int | str
     The default index for the coordinates that are missing in the
@@ -77,9 +65,6 @@ def batch_for_archiver(batcher: Batcher,
 
     Raises
     ------
-    ValueError: When the dataset is missing while the coordinate_df
-    is of type str or a dict with str values.
-    
     ValueError: When the datafile is not found using the name specified
     in coordinate_df.
 
@@ -90,22 +75,36 @@ def batch_for_archiver(batcher: Batcher,
     batch = next(batcher)
     first_batch = True
     
-    # prepare the coordinate_df for different cases
-    if isinstance(coordinate_df, int):
-        coordinate_df = {c: coordinate_df for c in batch[0].coords.keys()}
-
-    if isinstance(coordinate_df, str):
-        coordinate_df = {c: _get_index_from_name(coordinate_df, dataset) for c in batch[0].coords.keys()}
-        
-    if any(isinstance(v, str) for v in coordinate_df.values()):
-        coordinate_df = {c: _get_index_from_name(v, dataset) for c, v in coordinate_df.items()}
-        
+    # coordinate_df refers to the index of the datafile requested by the user 
+    # for coordinate information. However, the batcher's coordinate dictionary 
+    # only includes datafiles that actually contain coordinate variables (e.g., 'datetime'). 
+    # Here, we check the index of the requested datafile within the batcher's coordinate keys.
+    dict_coord_df = {k: [] for k in batch[0].coords.keys()}
+    for df in dataset:
+        for k in dict_coord_df.keys():
+            if k in list(df.data.coords):
+                dict_coord_df[k].append(df.name)
+    
+    # check the type of the coordinate_df and make dictionary
+    # of coordinate index for all cases
     if isinstance(coordinate_df, dict):
+        coordinate_df = {c: dataset[v].name if isinstance(v, int) else v for c, v in coordinate_df.items()}
         for k in batch[0].coords.keys():
             if not k in coordinate_df.keys():
-                coordinate_df[k] = default_index if isinstance(default_index, int) else _get_index_from_name(default_index, dataset)
+                coordinate_df[k] = default_index if isinstance(default_index, str) else dataset[default_index].name
+    else:
+        if isinstance(coordinate_df, int):
+            coordinate_df = dataset[coordinate_df].name
+        coordinate_df = {c: coordinate_df for c in batch[0].coords.keys()}
     
-    # get rid of the features coordinate in the sample.coords
+    for c, ind in coordinate_df.items():
+        i = next((i for i, s in enumerate(dict_coord_df[c]) if ind in s.lower()), None)
+        if i is None:
+            raise ValueError(f'The datafile of the selected index does not have coordinate {c}')
+
+        coordinate_df[c] = i
+    
+    # # get rid of the features coordinate in the sample.coords
     coordinate_df.pop('features', None)
     
     # loop over the original batcher
