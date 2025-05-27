@@ -29,6 +29,7 @@ dependencies:
   - jsonpickle=3.0.2
   - crick=0.0.3
   - netCDF4=1.6.2
+  - prettytable=3.16
   - pip:
     - pyreadline3==3.4.1
       

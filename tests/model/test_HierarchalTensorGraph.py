@@ -520,9 +520,8 @@ def test_recurrent_single():
     result = htg({'x_1': np.array([[1, 2, 3]])})
 
     # {'add_1': {'s_1': [array([1]), array([3]), array([6])]}}
-    assert ('add_1' in result)
-    assert ('s_1' in result['add_1'])
-    assert (result['add_1']['s_1'] == [
+    assert ('s_1' in result)
+    assert (result['s_1'] == [
             np.array([1]), np.array([3]), np.array([6])])
 
 
@@ -577,3 +576,16 @@ def test_recurrent_dual():
             np.array([1]), np.array([5]), np.array([18])])
     assert (result['add_3']['s_3'] == [
             np.array([1]), np.array([5]), np.array([18])])
+
+def test_recurrent_renaming():
+    sr = SingleRecurrent()
+    htg = HierarchalTensorGraph(name='rename')
+    htg.add_edge('input',sr)
+    htg.add_edge(sr,'output')
+
+    htg({'x_1': np.array([[1, 2, 3]])})
+    #assert ('add_1' in result)
+    #assert ('s_1' in result['add_1'])
+    #assert (result['add_1']['s_1'] == [
+    #        np.array([1]), np.array([3]), np.array([6])])
+

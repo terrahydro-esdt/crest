@@ -63,6 +63,9 @@ class TensorSpec(object):
             raise Exception(
                 'TensorSpec must be initialized with a tuple or dict')
 
+    def __repr__(self):
+        return f'TensorSpec{tuple(self.spec_dict.values())}'
+
     def _modify_shape(self, shape):
         if isinstance(shape, tf.TensorShape):
             return tuple(shape.as_list())

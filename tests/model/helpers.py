@@ -52,12 +52,8 @@ class AddMult(HierarchalTensorGraph):
         mult = Multiplier()
         self.add_edge('input', adder)
         self.add_edge('input', mult)
-        self.add_edge(adder, mult)
-        self.add_edge(mult, 'output')
-        self.add_edge(adder, mult)
-        self.rename_io(inputs_map={'sum': 'x'},
-                       outputs_map={'product': 'add_mult_res'}, node=mult)
-
+        self.add_edge(adder, mult,rename={'sum' : 'x'})
+        self.add_edge(mult, 'output',rename={'product' : 'add_mult_res'})
 
 class AddMultExp(HierarchalTensorGraph):
 
@@ -71,11 +67,8 @@ class AddMultExp(HierarchalTensorGraph):
         add_mult = AddMult()
         expo = Exponentiator()
         self.add_edge('input', add_mult)
-        self.add_edge(add_mult, expo)
-        self.add_edge(expo, 'output')
-        self.rename_io(inputs_map={'add_mult_res': 'x'},
-                       outputs_map={'exp': 'add_mult_exp_res'}, node=expo)
-
+        self.add_edge(add_mult, expo,rename={'add_mult_res' : 'x'})
+        self.add_edge(expo, 'output',rename={'exp' : 'add_mult_exp_res'})
 
 class AddSequentialLayer(HierarchalTensorGraph):
 
@@ -93,11 +86,6 @@ class AddSequentialLayer(HierarchalTensorGraph):
 
         self.add_edge('input', dense_layer)
         self.add_edge(dense_layer, 'output')
-        self.rename_io(
-            inputs_map={'dense_layer': 'x'},
-            outputs_map={'y': 'add_sequential_layer_res'},
-            node=dense_layer)
-
 
 def AddKerasModel():
 
@@ -373,10 +361,9 @@ class SingleRecurrent(HierarchalTensorGraph):
 
     # input, recurrent, output
     def __init__(self):
-        super().__init__(name='parent')
+        super().__init__(name='parent',inputs='x_1',outputs='s_1')
 
         add_single = Add1_Single('add_1')
-
         self.add_edge('input', add_single, rollout_axis=1)
         self.add_edge(add_single, add_single, rollout_axis=1)
         self.add_edge(add_single, 'output')
