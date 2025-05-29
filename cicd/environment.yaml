@@ -24,6 +24,7 @@ dependencies:
   - ipywidgets=7.7.1
   - pyarrow=11.0.0
   - jsonpickle=3.0.2
+  - pyvis=0.3.2
 
   # FAISS
   # - pytorch

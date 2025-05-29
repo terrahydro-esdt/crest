@@ -566,6 +566,14 @@ class Batcher:
                     #     yield self._queue.recv()
                     jobs = list(filter(alive, jobs))
 
+                # If the exit flag hasn't actually been set, yield remaining
+                while not self._exit:
+                    try: 
+                        yield self._parse_batch( self._queue.get(timeout=0.1) )
+
+                    # Break once empty since no jobs are alive to add batches
+                    except Empty: break
+
                 # Exit code 3221225477 is STATUS_ACCESS_VIOLATION, which is
                 # commonly caused by an issue with data cached on disk. It can
                 # also occur when the system runs out of memory, however.
@@ -1432,7 +1440,7 @@ class Batcher:
 
         # Wait a second for them to start, then ensure that they are running
         time.sleep(1)
-        if any(not job.is_alive() for job in jobs):
+        if any(not job.is_alive() and (job.exitcode != 0) for job in jobs):
             message = 'Batcher processes are stopping immediately. This is '
             message += 'possibly due to issues pickling the given Dataset, if '
             message += 'no other exceptions are logged.'

@@ -12,7 +12,7 @@ from crest.data.loading import Datafile
 # to supress a warning about the large chunk indexing
 dask.config.set(**{'array.slicing.split_large_chunks': True})
 
-logger = logging.getLogger(__name__)  # create logger here or...
+logger = logging.getLogger(__name__)
 
 
 # a function to get an index of a datafile in a dataset

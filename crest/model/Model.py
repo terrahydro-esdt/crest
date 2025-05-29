@@ -6,6 +6,8 @@ import numpy as np
 import warnings
 import os
 import json
+import inspect
+from pathlib import Path
 
 from crest.utils import Metrics
 from crest.data.loading import Dataset, StructuredDataset
@@ -14,6 +16,7 @@ from .BaseModel import BaseModel, ImproperModelError
 from .TensorGraph import TensorGraph
 from crest.model.TensorSpec import TensorSpec
 from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
+from crest.utils.save_node_class import write_pkl, read_pkl, gen_filename
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,8 @@ class Model(BaseModel):
         self.model = None
         self.name = graph.name
 
+        logger.info(f'Initializing CREST Model')
+
         if not graph.inputs or not graph.outputs:
             raise ImproperModelError(
                 'Inputs and outputs must be specified for HierarchalTensorGraph')
@@ -58,6 +63,8 @@ class Model(BaseModel):
         self.outputs = self.graph(self.inputs)
         self.metric = Metrics()
 
+        logger.info(f'Completed Initializing CREST Model')
+
     def _make_batcher(self, dataset, **kwargs) -> Batcher:
         """
         Makes a Batcher
@@ -72,11 +79,14 @@ class Model(BaseModel):
         kwargs: kwargs to pass to the Batcher
 
         """
+        logger.info(f'Called _make_batcher, making batcher from dataset')
+
         if isinstance(dataset, Batcher):
             return dataset
 
         if isinstance(dataset, dict):
-            ds = StructuredDataset(*list(dataset.values()), labels=list(dataset.keys()))
+            ds = StructuredDataset(
+                *list(dataset.values()), labels=list(dataset.keys()))
             return Batcher(ds, **kwargs)
 
         if isinstance(dataset, (Dataset, StructuredDataset)):
@@ -88,6 +98,8 @@ class Model(BaseModel):
 
     def build(self, _internal=False, **kwargs):
         """ Builds Keras model """
+        logger.info(f'Building Keras Model')
+
         if not _internal:
             warnings.warn('Use Model.compile instead of Model.build')
             return self.compile(**kwargs)
@@ -110,6 +122,8 @@ class Model(BaseModel):
             args passed as keras.Model.compile(kwargs)
 
         """
+        logger.info(f'Compiling Keras Model')
+
         # Check kwargs for metrics locally defined
         # if 'metrics' in kwargs:
         #     metrics = self.metric.get_callbacks(kwargs['metrics'])
@@ -139,6 +153,7 @@ class Model(BaseModel):
         accepted by Keras.fit().
 
         """
+        logger.info(f'Training Keras Model')
 
         # Add default options for kwargs if necessary
         defaults = {'steps_per_epoch': 1,
@@ -175,7 +190,8 @@ class Model(BaseModel):
                 'workers': 0
             }
 
-            kwargs['validation_data'] = self._make_batcher(kwargs['validation_data'], **valid_kwargs)
+            kwargs['validation_data'] = self._make_batcher(
+                kwargs['validation_data'], **valid_kwargs)
 
             kwargs['validation_data'] = self._make_batcher(
                 kwargs['validation_data'], **valid_kwargs)
@@ -200,6 +216,7 @@ class Model(BaseModel):
         accepted by Keras.predict().
 
         """
+        logger.info(f'Predicting with Keras Model')
 
         # Set default options for kwargs
         defaults = {
@@ -232,15 +249,18 @@ class Model(BaseModel):
             for i in range(steps):
                 batch = next(data)
                 # Pop out auxillary outputs
-                if coords: lbls = {i: batch.pop(i) for i in coords}
+                if coords:
+                    lbls = {i: batch.pop(i) for i in coords}
                 pred_batch = self.model.predict(batch, **kwargs)
                 # Add additional coords
                 if coords:
-                    for k, v in lbls.items(): pred_batch[k] = v
+                    for k, v in lbls.items():
+                        pred_batch[k] = v
 
                 if pred:
                     for key in pred_batch.keys():
-                        pred[key] = np.concatenate([pred[key], pred_batch[key]])
+                        pred[key] = np.concatenate(
+                            [pred[key], pred_batch[key]])
                 if not pred:
                     pred = pred_batch
         return pred
@@ -261,7 +281,6 @@ class Model(BaseModel):
         accepted by Keras.predict().
 
         """
-
         # Make sure coords is a list
         if isinstance(coords, str):
             coords = [coords]
@@ -271,12 +290,14 @@ class Model(BaseModel):
         lbls = []
 
         # Pop out auxillary outputs
-        if coords: lbls = {i: batch.pop(i) for i in coords}
+        if coords:
+            lbls = {i: batch.pop(i) for i in coords}
         pred_batch = self.model.predict_on_batch(batch)
 
         # Add additional coords
         if coords:
-            for k, v in lbls.items(): pred_batch[k] = v
+            for k, v in lbls.items():
+                pred_batch[k] = v
 
         if pred:
             for key in pred_batch.keys():
@@ -303,6 +324,7 @@ class Model(BaseModel):
         accepted by Keras.predict().
 
         """
+        logger.info(f'Predicting exhaustive')
 
         # Set default options for kwargs
         defaults = {
@@ -329,7 +351,8 @@ class Model(BaseModel):
         batcher = self._make_batcher(dataset, **batch_kwargs)
 
         if kwargs.get('exhaust') and batcher.repeat:
-            raise ImproperModelError('Cannot exhaust batcher when batcher is set to repeat.')
+            raise ImproperModelError(
+                'Cannot exhaust batcher when batcher is set to repeat.')
 
         # Make prediction using Keras.predict()
         with batcher as data:
@@ -374,6 +397,8 @@ class Model(BaseModel):
 
         """
 
+        logger.info(f'Evaluating Keras Model')
+
         # Default options since we use generators
         defaults = {
             'batch_size': 1,
@@ -400,6 +425,8 @@ class Model(BaseModel):
         Save the weights of the model
 
         """
+        logger.info(f'Save weights')
+
         os.makedirs('crest_cache', exist_ok=True)
         self.model.save_weights('crest_cache/htg.weights.h5')
 
@@ -408,32 +435,90 @@ class Model(BaseModel):
         Load the weights of the model
 
         """
+        logger.info(f'Load weights')
+
         self.model.load_weights(os.path.join(path, 'htg.weights.h5'))
 
-    def save(self):
+    def save_model(self, model_path):
+        """
+        Save model by registering the keras model
+
+        """
+        logger.info(f'Save model as custom_model')
+
+        if hasattr(self.model, 'save') and callable(self.model.save):
+            from tensorflow.keras.utils import get_custom_objects
+
+            logger.info('Saving model with tensorflow keras.')
+
+            get_custom_objects()[model_path] = self.model
+            self.model.save(model_path)
+        else:
+            logger.info("Saving model using pickle.")
+
+            if (os.path.isdir(model_path)):
+                pickle_name = gen_filename(self.name, '.pkl')
+                pickle_name = os.path.join(model_path, pickle_name)
+            
+            write_pkl(self.model, pickle_name)
+
+            logger.info(f"Saved metadata to the same root path: {Path(model_path).parent}")
+            
+
+    @staticmethod
+    def load_model(model_type: str = 'keras', path: str = 'htg_model'):
+        """
+        Load model registered as custom object
+
+        """
+        root_dir = Path(path).parent
+
+        logger.info(f'Load custom model from {root_dir}')
+
+        try:
+            if (model_type == 'keras'):
+                logger.info('Loading model using Tensorflow Keras library.')
+
+                loaded = tf.keras.models.load_model(path)
+                return loaded
+            else:
+                logger.info('Loading model using pickle.')
+
+                model_obj = read_pkl(root_dir)
+                
+                logger.info(f'Model object loaded.')
+                return model_obj
+        except Exception as e:
+            logger.error(f'Could not load model from CREST Model: {e}')
+            raise ImproperModelError('Cannot recreate previous CREST Model')
+
+    def save(self, dir='crest_cache', save_metrics=False):
         """
         Converts the model to a json string
 
         """
-        os.makedirs('crest_cache', exist_ok=True)
+        logger.info(f'Save Keras Model')
+
+        os.makedirs(dir, exist_ok=True)
 
         # convert graph to json
         graph_json = self.graph.to_json()
 
-        with open(os.path.join('crest_cache', 'htg.graph.json'), 'w') as f:
+        with open(os.path.join(dir, 'htg.graph.json'), 'w') as f:
             json.dump(graph_json, f)
 
         # convert model to json
-        self.model.save('crest_cache/htg.model.h5')
+        self.save_model(dir)
 
-        # covert metrics to json
-        metric_json = self.metric.to_json()
+        if (save_metrics):
+            # covert metrics to json
+            metric_json = self.metric.to_json()
 
-        with open(os.path.join('crest_cache', 'htg.metric.json'), 'w') as f:
-            json.dump(metric_json, f)
+            with open(os.path.join(dir, 'htg.metric.json'), 'w') as f:
+                json.dump(metric_json, f)
 
     @staticmethod
-    def load(path: str):
+    def load(path: str, model_type: str, load_metrics=False):
         """
         Converts the model from a json string.
 
@@ -449,17 +534,21 @@ class Model(BaseModel):
             graph = HierarchalTensorGraph.from_json(graph_json)
 
         model = Model(graph)
+        model.model = Model.load_model(model_type, path)
 
-        metrics = None
+        if (load_metrics):
+            metrics = None
 
-        # convert metrics from json
-        with open(os.path.join(path, 'htg.metric.json'), 'r') as f:
-            metric_json = json.load(f)
-            metrics = Metrics.from_json(metric_json)
+            # convert metrics from json
+            with open(os.path.join(path, 'htg.metric.json'), 'r') as f:
+                metric_json = json.load(f)
+                metrics = Metrics.from_json(metric_json)
 
-        custom_metrics = {v: metrics.get_handler(v) for v in metrics.customs}
+            custom_metrics = {v: metrics.get_handler(
+                v) for v in metrics.customs}
 
-        # convert model from json
-        model.model = tf.keras.models.load_model(os.path.join(path, 'htg.model.h5'), custom_objects=custom_metrics)
+            # convert model from json
+            model.model = tf.keras.models.load_model(os.path.join(
+                path, 'htg.model.h5'), custom_objects=custom_metrics)
 
         return model

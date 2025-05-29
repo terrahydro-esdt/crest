@@ -2,17 +2,33 @@ from math import exp
 
 import pytest
 import cloudpickle as pickle
-import json
 import os
 
 from .helpers import *
-from crest import HierarchalTensorGraph, ROOT_PATH
+from crest import ROOT_PATH
+from crest.model.HierarchalTensorGraph import HierarchalTensorGraph, HTG, HierarchichalTensorGraph
 from crest.model.TensorGraph import ImproperTensorGraphError
 from crest.model.LambdaNode import LambdaNode
 from crest.model.TensorSpec import TensorSpec
 
 root_path = os.path.join(ROOT_PATH.as_posix(),
                          os.path.join('..', 'tests', 'model'))
+
+def test_alias_long():
+    m = HierarchichalTensorGraph(
+        node=lambda X: {'output': X['scalar'] * X['input']},
+        name='mult'
+    )
+
+    assert m({'scalar': 2, 'input': 3}) == {'output': 6}
+
+def test_alias_short():
+    m = HTG(
+        node=lambda X: {'output': X['scalar'] * X['input']},
+        name='mult'
+    )
+
+    assert m({'scalar': 2, 'input': 3}) == {'output': 6}
 
 
 def test_basenode():
@@ -382,6 +398,8 @@ def test_json_basic_exception():
 def test_basenode_exception():
     l = LambdaNode(lambda X: X['x'] + 10, name='add',
                    inputs={'x': None}, outputs={'add': None})
+    
+    print(l.to_json())
 
     assert HierarchalTensorGraph.from_json(l.to_json())
 

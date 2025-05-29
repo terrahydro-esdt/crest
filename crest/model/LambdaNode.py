@@ -3,7 +3,7 @@ import base64
 import types
 import json
 import crest.model.HierarchalTensorGraph as HierarchalTensorGraph
-
+from crest.utils.save_node_class import get_class_module_path
 
 class LambdaNode(HierarchalTensorGraph):
     """
@@ -47,6 +47,7 @@ class LambdaNode(HierarchalTensorGraph):
         lambda_json['node'] = func_json
         lambda_json['node_class'] = self.__class__.__name__
         lambda_json['node_module'] = self.__module__
+        lambda_json['node_path'] = get_class_module_path(self)
 
         print(f'LambdaNode.to_json: {lambda_json}')
         
