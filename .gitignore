@@ -16,3 +16,7 @@ crest_cache/
 soil_moisture/
 *.pkl
 *.log.jsonl*
+shapefiles*/
+interactive_graph.html
+*.yaml
+soil_moisture*

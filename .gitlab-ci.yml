@@ -5,9 +5,15 @@ before_script:
     #   https://www.anaconda.com/blog/conda-is-fast-now
     - conda install -n base conda-libmamba-solver -q
     - conda config --set solver libmamba
+    # - conda install -n base -c conda-forge mamba
+    - apt-get update && apt-get install -y libglib2.0-0 libsm6 libxext6 libxrender-dev libtiff-dev libgl1 libgl1-mesa-glx build-essential libgdal-dev gdal-bin
+    # libclang
+    - conda update -n base -c conda-forge conda -y
+
 
 test:
   script:
+    # - conda env create -f cicd/environment_cpu.yaml -q
     - conda env create -f cicd/environment_cpu.yaml -q
     - source activate crest_cpu
     - pytest --color=yes tests -m"not integtest"
@@ -21,6 +27,7 @@ pages:
     - source activate crest_doc
     - pip install --upgrade pip
     - pip install sphinx_rtd_theme
+    - pip install opencv-python==4.5.5.64
     - sphinx-build -b html docs public
   artifacts:
     paths:

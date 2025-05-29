@@ -400,6 +400,306 @@ class Metrics(object):
             The Beta-NSE value
         """
         return float((tf.reduce_mean(y_pred) - tf.reduce_mean(y_true)) / tf.math.reduce_std(y_true))
+    
+    from keras.metrics import Metric
+    class BetaNSE(Metric):
+        def __init__(self, name='beta_nse', **kwargs):
+            super(Metrics.BetaNSE, self).__init__(name=name, **kwargs)
+            self.beta_nse = Metrics().beta_nse
+
+        def update_state(self, y_true, y_pred, sample_weight=None):
+            self.metric = self.beta_nse(y_true, y_pred)
+            return self.metric
+
+        def result(self):
+            return self.metric
+
+        def reset_states(self):
+            self.metric = 0.0
+
+        def get_config(self):
+            config = super(Metrics.BetaNSE, self).get_config()
+            return config
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(**config)
+        
+    class AlphaNSE(Metric):
+        def __init__(self, name='alpha_nse', **kwargs):
+            super(Metrics.AlphaNSE, self).__init__(name=name, **kwargs)
+            self.alpha_nse = Metrics().alpha_nse
+
+        def update_state(self, y_true, y_pred, sample_weight=None):
+            self.metric = self.alpha_nse(y_true, y_pred)
+            return self.metric
+
+        def result(self):
+            return self.metric
+
+        def reset_states(self):
+            self.metric = 0.0
+
+        def get_config(self):
+            config = super(Metrics.AlphaNSE, self).get_config()
+            return config
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(**config)
+        
+    class Pearson(Metric):
+        def __init__(self, name='pearson', **kwargs):
+            super(Metrics.Pearson, self).__init__(name=name, **kwargs)
+            self.pearson = Metrics().pearsonr
+
+        def update_state(self, y_true, y_pred, sample_weight=None):
+            self.metric = self.pearson(y_true, y_pred)
+            return self.metric
+
+        def result(self):
+            return self.metric
+
+        def reset_states(self):
+            self.metric = 0.0
+
+        def get_config(self):
+            config = super(Metrics.Pearson, self).get_config()
+            return config
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(**config)
+        
+    class LKGE(Metric):
+        def __init__(self, name='lkge', **kwargs):
+            super(Metrics.LKGE, self).__init__(name=name, **kwargs)
+            self.lkge = Metrics().lkge
+
+        def update_state(self, y_true, y_pred, sample_weight=None):
+            self.metric = self.lkge(y_true, y_pred)
+            return self.metric
+
+        def result(self):
+            return self.metric
+
+        def reset_states(self):
+            self.metric = 0.0
+
+        def get_config(self):
+            config = super(Metrics.LKGE, self).get_config()
+            return config
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(**config)
+        
+    class KGE(Metric):
+        def __init__(self, name='kge', **kwargs):
+            super(Metrics.KGE, self).__init__(name=name, **kwargs)
+            self.kge = Metrics().kge
+
+        def update_state(self, y_true, y_pred, sample_weight=None):
+            self.metric = self.kge(y_true, y_pred)
+            return self.metric
+
+        def result(self):
+            return self.metric
+
+        def reset_states(self):
+            self.metric = 0.0
+
+        def get_config(self):
+            config = super(Metrics.KGE, self).get_config()
+            return config
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(**config)
+        
+    class MSE(Metric):
+        def __init__(self, name='mse', **kwargs):
+            super(Metrics.MSE, self).__init__(name=name, **kwargs)
+            self.mse = Metrics().mse
+
+        def update_state(self, y_true, y_pred, sample_weight=None):
+            self.metric = self.mse(y_true, y_pred)
+            return self.metric
+
+        def result(self):
+            return self.metric
+
+        def reset_states(self):
+            self.metric = 0.0
+
+        def get_config(self):
+            config = super(Metrics.MSE, self).get_config()
+            return config
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(**config)
+        
+    class NSE(Metric):
+        def __init__(self, name='nse', **kwargs):
+            super(Metrics.NSE, self).__init__(name=name, **kwargs)
+            self.nse = Metrics().nse
+
+        def update_state(self, y_true, y_pred, sample_weight=None):
+            self.metric = self.nse(y_true, y_pred)
+            return self.metric
+
+        def result(self):
+            return self.metric
+
+        def reset_states(self):
+            self.metric = 0.0
+
+        def get_config(self):
+            config = super(Metrics.NSE, self).get_config()
+            return config
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(**config)
+        
+    class NSELog(Metric):
+        def __init__(self, name='nse_log', **kwargs):
+            super(Metrics.NSELog, self).__init__(name=name, **kwargs)
+            self.nse_log = Metrics().nse_log
+
+        def update_state(self, y_true, y_pred, sample_weight=None):
+            self.metric = self.nse_log(y_true, y_pred)
+            return self.metric
+
+        def result(self):
+            return self.metric
+
+        def reset_states(self):
+            self.metric = 0.0
+
+        def get_config(self):
+            config = super(Metrics.NSELog, self).get_config()
+            return config
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(**config)
+        
+    class TripleCollocationError(Metric):
+        def __init__(self, name='triple_collocation_error', **kwargs):
+            super(Metrics.TripleCollocationError, self).__init__(name=name, **kwargs)
+            self.triple_collocation_error = Metrics().triple_collocation_error
+
+        def update_state(self, y_true, y_pred, sample_weight=None):
+            self.metric = self.triple_collocation_error(y_true, y_pred)
+            return self.metric
+
+        def result(self):
+            return self.metric
+
+        def reset_states(self):
+            self.metric = 0.0
+
+        def get_config(self):
+            config = super(Metrics.TripleCollocationError, self).get_config()
+            return config
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(**config)
+        
+    class RelativeError(Metric):
+        def __init__(self, name='relative_error', **kwargs):
+            super(Metrics.RelativeError, self).__init__(name=name, **kwargs)
+            self.relative_error = Metrics().relative_error
+
+        def update_state(self, y_true, y_pred, sample_weight=None):
+            self.metric = self.relative_error(y_true, y_pred)
+            return self.metric
+
+        def result(self):
+            return self.metric
+
+        def reset_states(self):
+            self.metric = 0.0
+
+        def get_config(self):
+            config = super(Metrics.RelativeError, self).get_config()
+            return config
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(**config)
+        
+    class MetricEntropy(Metric):
+        def __init__(self, name='metric_entropy', **kwargs):
+            super(Metrics.MetricEntropy, self).__init__(name=name, **kwargs)
+            self.metric_entropy = Metrics().metric_entropy
+
+        def update_state(self, y_true, y_pred, sample_weight=None):
+            self.metric = self.metric_entropy(y_true, y_pred)
+            return self.metric
+
+        def result(self):
+            return self.metric
+
+        def reset_states(self):
+            self.metric = 0.0
+
+        def get_config(self):
+            config = super(Metrics.MetricEntropy, self).get_config()
+            return config
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(**config)
+        
+    class FluctuationComplexity(Metric):
+        def __init__(self, name='fluctuation_complexity', **kwargs):
+            super(Metrics.FluctuationComplexity, self).__init__(name=name, **kwargs)
+            self.fluctuation_complexity = Metrics().fluctuation_complexity
+
+        def update_state(self, y_true, y_pred, sample_weight=None):
+            self.metric = self.fluctuation_complexity(y_true, y_pred)
+            return self.metric
+
+        def result(self):
+            return self.metric
+
+        def reset_states(self):
+            self.metric = 0.0
+
+        def get_config(self):
+            config = super(Metrics.FluctuationComplexity, self).get_config()
+            return config
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(**config)
+        
+    class UnbiasedRMSE(Metric):
+        def __init__(self, name='unbiased_rmse', **kwargs):
+            super(Metrics.UnbiasedRMSE, self).__init__(name=name, **kwargs)
+            self.unbiased_rmse = Metrics().unbiased_rmse
+
+        def update_state(self, y_true, y_pred, sample_weight=None):
+            self.metric = self.unbiased_rmse(y_true, y_pred)
+            return self.metric
+
+        def result(self):
+            return self.metric
+
+        def reset_states(self):
+            self.metric = 0.0
+
+        def get_config(self):
+            config = super(Metrics.UnbiasedRMSE, self).get_config()
+            return config
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(**config)  
 
     def to_json(self):
         """
@@ -439,4 +739,4 @@ class Metrics(object):
             if not metric in m.all:
                 m.register(metric, saved_dict[metric])
 
-        return m
+        return m  

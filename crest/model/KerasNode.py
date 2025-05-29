@@ -2,9 +2,10 @@ from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
 from enum import Enum
 import tensorflow as tf
 import tensorflow.keras as keras
-from .TensorSpec import TensorSpec
-from .BaseModel import ImproperModelError
+from crest.model.TensorSpec import TensorSpec
+from crest.model.BaseModel import ImproperModelError
 import json
+from crest.utils.save_node_class import get_class_module_path
 
 
 class KerasNodeType(Enum):
@@ -158,6 +159,8 @@ class KerasNode(HierarchalTensorGraph):
         keras_json['node'] = self.keras_obj.to_json()
         keras_json['node_class'] = self.__class__.__name__
         keras_json['node_module'] = self.__module__
+        keras_json['node_path'] = get_class_module_path(self)
+
         keras_json['inputs'] = TensorSpec.dict_to_json(self.inputs)
         keras_json['outputs'] = TensorSpec.dict_to_json(self.outputs)
 
