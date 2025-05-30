@@ -17,30 +17,28 @@ import tensorflow as tf
 
 # networkx breaks numpy if it's not also loaded, due to nx.lazy_import modifying sys modules
 import networkx as nx
-from .TensorSpec import TensorSpec
-
 from .TensorGraph import TensorGraph, ImproperTensorGraphError
 from .graphs.NetworkXGraph import NetworkXGraph
 
 logger = logging.getLogger(__name__)
 
 
-class BaseNode:
+class HierarchalTensorGraph(TensorGraph):
     """
-    BaseNode : The BaseNode is the core object to construct the
-    HierarchalTensorGraphs from in CREST.
+    HierarchalTensorGraph (HTG): The HTG is the core object where the Earth System Model (ESM)
+    is encoded and specified. The HTG provides the information needed to build a CREST
+    model using the Tensor Network backend. As the name suggest, HTG is a hierarchal graph object,
+    and as such, nodes within a HTG are HTGs themselves.
 
     It has 2 modes:
 
-    1.	A single node graph that represents a fundamental physical
-    process in an ESM. This the mode is intended for specifying an actual model
-    of a physical process. It passes in a callable function and
-    provides inputs and outputs tensor specs and attributes.
+    1.	A single node graph, referred to as a basenode, that represents a fundamental physical
+    process in an ESM. The basenode is the main object intended for specifying an actual model
+    of a physical process. As such, you must supply a callable function when instantiating a basenode.
 
-    2.	A multi-node graph (nodes>1) used to represent ESM
-    sub-systems. In this mode, basenode is not
-    instantiated with callable function, just a name.
-    Instead, nodes and edges are added to create a sub-system.
+    2.	A multi-node graph (nodes>1) used to represent ESM sub-systems. In this mode, HTG is not
+    instantiated with callable function. Instead, nodes and edges are added to create a sub-system.
+    Nodes can either be fundamental processes (basenode) or sub-systems (multi-node HTGs).
 
 
     Parameters
@@ -70,78 +68,31 @@ class BaseNode:
         return logging.getLogger(__name__)
 
     def __init__(self,
-                 node: None | Callable = None,
-                 name: None | str = None,
-                 inputs: dict | str | list | tuple | None = None,
-                 outputs: dict | str | list | tuple | None = None,
-                 edges: list = []
-                 ):
+                 name: str,
+                 ):   
 
-
-        # Enforce setting of inputs and outputs when creating basenodes
-        if(node is not None):
-            if((inputs is None) or (outputs is None)):
-                message = "When creating a basenode both inputs and outputs "
-                message += " must be set"
-                raise ImproperTensorGraphError(message)
-        # Warn if setting inputs and outputs when creating graphs
-        else:
-            if(inputs or outputs):
-                message = "When creating a graph with HTG inputs "
-                message += "and outputs are automatically determined. "
-                message += "Any inputs given here will be overwritten."
-                raise warnings.warn(ImproperTensorGraph(message))
-
-
-        self.name = name or HierarchalTensorGraph.get_name(node)
-        self.node = node or self
+        self.name = name
+        self.node = self
         self.graph = NetworkXGraph()
         self.output = []
-        self._inputs_map = {}  # dictionary specifying input feature renaming
-        self._outputs_map = {}  # dictionary specifying input feature renaming
-        self.is_recurrent = False
-
-        # Set the inputs/outputs
         self.inputs = {}
-        if(inputs):
-            if(isinstance(inputs,str)):
-                self.inputs = {inputs : None}
-            if(isinstance(inputs,list) or isinstance(inputs,tuple)):
-               self.inputs = {k : None for k in inputs}
-            if(isinstance(inputs,dict)):
-                self.inputs = {k : TensorSpec(v) for k,v in inputs.items()}
+        self.outputs ={}
 
-        self.outputs = {}
-        if(outputs):
-            if(isinstance(outputs,str)):
-                self.outputs = {outputs : None}
-            if(isinstance(outputs,list) or isinstance(outputs,tuple)):
-               self.outputs = {k : None for k in outputs}
-            if(isinstance(outputs,dict)):
-                self.outputs = {k : TensorSpec(v) for k,v in outputs.items()}
+        # Default attributes for nodes
+        self.attributes = {
+               'edge_inputs' : {},
+               'recurrent' : False,
+               'return_seq' : False
+        }
 
-        # check that the HTG has a name
-        if self.name == 'None':
-            message = f'A HierarchalTensorGraph name must be given, but a {self.name} was found'
-            raise ImproperTensorGraphError(message)
 
-        # check that if node is passed it is callable
-        if (self.node is not self) and (not callable(self.node)):
-            message = f'node must be callable'
-            raise ImproperTensorGraphError(message)
+        self._inputs_map = {}  # TODO: Remove this
+        self._outputs_map = {}  # TODO: Remove this
+        self.is_recurrent = False # TODO: Remove this
 
-        # check that node is not an HTG
-        if isinstance(node, HierarchalTensorGraph):
-            message = "A HierarchalTensorGraph can not be used to"
-            message += "create a basenode (i.e., node cannot be a"
-            message += "HierarchalTensorGraph)"
-            raise ImproperTensorGraphError(message)
-
+       
         # log the creation of the HTG
         self.logger.info(f'Created HierarchalTensorGraph {self.name}')
-
-        if (edges):
-            self.add_edges_from(edges)
 
     def __iter__(self):
         """ Iterate through all nodes within the HTG """
@@ -242,7 +193,7 @@ class BaseNode:
 
     def to_json(self):
         """
-        Enables the serialization of the HTG network graph as a JSON string.
+        Enables the serialization of the HTG network graph as a JSON string. 
         """
 
         self.logger.info(f'Serializing HTG {self.name} to JSON')
@@ -338,7 +289,7 @@ class BaseNode:
     def from_json(graph_json):
         """
 
-        Enables the deserialization of the HTG network graph represented in a JSON structure.
+        Enables the deserialization of the HTG network graph represented in a JSON structure. 
 
         Parameters:
         -----------
@@ -419,7 +370,7 @@ class BaseNode:
         """
 
         self.logger.info(f'Renaming inputs and outputs for node {node}')
-
+        
         if inputs_map:
             if not isinstance(inputs_map, dict):
                 raise ImproperTensorGraphError('inputs_map must be a dict')
@@ -527,19 +478,26 @@ class BaseNode:
              The name of the HTG
 
         """
-        return HierarchalTensorGraph(lambda x: x, name,inputs={},outputs={})
+        ident = HierarchalTensorGraph(name)
+        ident.node = lambda x : x
+        
+        return ident
 
     # TODO: Type hinting of HierarchicalTensorGraph is not working
 
-    def get_node(self, node: Union[str, Callable, TensorGraph]):
-        """Wrap the given node in a HTG and add to its graph if necessary.
+    def get_node(self, node: Union[str, TensorGraph]):
+        """ 
+        Adds a node to the graph if it doesn't exist and
+        does a variety of error checking before adding.
+        Also adds io nodes on the first use.
+        
+        ""
 
         Parameters
         ----------
-        node : str, callable, or HTG
-            If a callable is passed, it is wrapped into a HTG and added to
-            the graph if it doesn't yet exist. If a string is passed, the HTG
-            (which must already exist in the graph) is returned. If a HTG is passed,
+        node : str or HTG
+            If a string is passed, the HTG (which must already exist in the graph) 
+            is returned. If a HTG is passed,
             it is added to the graph if it doesn't yet exist.
 
         Returns
@@ -552,22 +510,16 @@ class BaseNode:
         ImproperTensorGraphError
             - If a node with the same name already exists in the graph, but is
             not the same HTG object.
-            - If a the same referenced HTG passed already exists in the HTG.
-            - If node is not callable, a string, or a HierarchalTensorGraph
-
+            - If the same referenced HTG passed already exists in the HTG.
+            - a string or a HierarchalTensorGraph
+            
         """
 
         self.logger.info(f'Getting node {node} in HTG {self.name}')
 
-        if not (isinstance(node, str) or isinstance(node, HierarchalTensorGraph) or callable(node)):
-            message = f'node must be either callable, a string, or a HierarchalTensorGraph'
+        if not (isinstance(node, str) or isinstance(node, HierarchalTensorGraph)):
+            message = f'node must be either a string, or a HierarchalTensorGraph'
             raise ImproperTensorGraphError(message)
-
-        # Default attributes for nodes
-        default_attributes = {
-               'edge_inputs' : {}
-               'recurrent' : False
-        }
 
         # fetch node by its name
         if isinstance(node, str):
@@ -575,27 +527,16 @@ class BaseNode:
             if (node in ['input', 'output']) and (node not in self):
                 io = HierarchalTensorGraph.identity(node)
                 io.parent = self
-                self.graph.add_node(io.name,
+                
+                self.graph.add_node(io.name, 
                                     htg=io,
-                                    **default_attributes
+                                    **io.attributes
                                    )
                 return io
 
             # otherwise if using a str() it must already be in the graph
             assert (node in self), f'Unknown name "{node}"'
             return self[node]
-
-        # if not a name (str) and not of type(HierarchalTensorGraph)
-        if not isinstance(node, HierarchalTensorGraph):
-
-            # check if basenode with this name exist and if it has the same node value.
-            # if it has the same node value then this refers to that basenode.
-            name = HierarchalTensorGraph.get_name(node)
-            if (name in self.graph) and (node is self[name].node):
-                return self[name]
-
-            # if it doesn't exist we need to create a basenode
-            node = HierarchalTensorGraph(node)
 
         # check if you passed a different HTG with the same name
         if (node.name in self.graph) and (node is not self.nodes[node.name]):
@@ -612,9 +553,9 @@ class BaseNode:
             node.parent = self
 
             # Add node to graph
-            self.graph.add_node(node.name,
+            self.graph.add_node(node.name, 
                                 htg=node,
-                                **default_attributes
+                                **node.attributes
                                )
 
             # Check we didn't duplicate a node (same id) that exist deeper in the graph
@@ -634,33 +575,27 @@ class BaseNode:
 
         return node
 
-    def add_node(self, node: Union[Callable, TensorGraph]):
+    def add_node(self, node: TensorGraph):
         """
         Add a node to the HierarchalTensorGraph.
 
         Parameters
         ----------
-        node : Callable, or HierarchalTensorGraph
-            If a callable is passed, it is wrapped into an HTG and added to
-            the graph if it doesn't yet exist. Otherwise, if an HTG is passed,
-            it is added to the graph if it doesn't yet exist.
+        node :  HierarchalTensorGraph or Node(HTG)
 
         Raises
         -------
         ImproperTensorGraphError
-            If not callable or a HierarchalTensorGraph.
+             HierarchalTensorGraph.
 
         """
 
         self.logger.info(f'Adding node {node} to HTG {self.name}')
 
-        if not (callable(node) or isinstance(node, HierarchalTensorGraph)):
-            message = f'A node must be either callable or a HierarchalTensorGraph'
+        if not isinstance(node, HierarchalTensorGraph):
+            message = f'A node must be a HierarchalTensorGraph'
             raise ImproperTensorGraphError(message)
 
-        # we'll use get_node to add it to the graph. get_node will check if exist
-        # and only add it if does not. It also checks node meets various criteria before
-        # adding it to the graph.
         self.get_node(node)
 
     def add_io(self, node: Union[str, Callable]):
@@ -764,8 +699,8 @@ class BaseNode:
 
         return node
 
-    def add_edge(self, source: Union[str, Callable],
-                 target: Union[str, Callable],
+    def add_edge(self, source: Union[str, Callable], 
+                 target: Union[str, Callable], 
                  rollout_axis: Union[int, None] = None,
                  rename: dict[str,str] = {},
                  features: list[str] | str = [],
@@ -817,42 +752,41 @@ class BaseNode:
         default_attributes = {
             'rollout_axis': rollout_axis,
             'rename' : rename,
-            'features' : list(features),
+            'features' : features if isinstance(features,list) else [features],
         }
 
         source = self.get_node(source)
         target = self.get_node(target)
 
-        # Why are we checking it's not None?
+        # Why are we checking it's not None? 
         if (source is not None) and (target is not None):
 
-            # Add edge to graph
-            self.graph.add_edge(source.name, target.name, **attr)
+            # Add or overwrite to default arguments 
+            for k,v in attr.items(): default_attributes[k] = v
 
-            # Add default edge attributes
-            self.graph.set_edge_attributes(
-                {(source.name, target.name):
-                 default_attributes
-                })
+            # If target is a recurrent node and not set
+            # add rollout_axis = 1
+            if(self.graph.get_node_attributes('recurrent')[target.name]):
+                if(default_attributes['rollout_axis'] is None):
+                    default_attributes['rollout_axis'] = 1
 
+            # Add edge
+            self.graph.add_edge(source.name, target.name, **default_attributes)
+            
             # Add recurrent. Should we make start moving this to graph attributes?
             if (source == target):
                 source.is_recurrent = True
-                if(('input',source.name) in self.graph.edges):
-                    for k in source.inputs:
-                       if(k in source.outputs):
-                           self.inputs.pop(k)
+                # if(('input',source.name) in self.graph.edges):
+                #     for k in source.inputs:
+                #        if(k in source.outputs):
+                #            self.inputs.pop(k)
 
             # Keep track of incoming keys for non I/O nodes
             if(source.name != 'input' and target.name != 'output'):
                 X = self._edge_mapping(source.outputs,source.name,target.name)
-                if(source == target):
-                    for k in source.inputs:
-                       if(k in source.outputs):
-                           X.pop(k)
-
+                           
                 edge_inputs = self.graph.get_node_attributes('edge_inputs')[target.name]
-
+                
                 # Check for duplicate keys before adding to edge_inputs
                 for key in X:
                     for k,v in edge_inputs.items():
@@ -864,8 +798,8 @@ class BaseNode:
                             message += f' to be passed in along these edges.'
                             raise ImproperTensorGraphError(message)
 
-                edge_inputs[(source.name,target.name)] = X
-
+                edge_inputs[(source.name,target.name)] = X 
+                
                 # Get subset of incoming keys in target input
                 X = self._edge_mapping(source.outputs,source.name,target.name)
                 subset = {k : v for k,v in X.items() if k in self[target.name].inputs}
@@ -901,33 +835,41 @@ class BaseNode:
                     # Check dims
                     for d in zip(v.shape,Y[k].shape):
                         if(d[1] is None): continue
-                        if(d[0] == d[1]): continue
+                        if(d[0] == d[1]): continue 
                         message = f'Inconsistent tensor specs.'
                         message += f' From {source.name} found {k} = {v} '
                         message += f' and from {target.name} found {k} = {Y[k]}.'
                         raise ImproperTensorGraphError(message)
-
+                        
 
             # Build input spec
             input_edges = [i for i in self.graph.edges if 'input' in i]
             if(source.name == 'input'):
                 X = self._edge_mapping(target.inputs,source.name,target.name)
+
+                # Remove recurrent inputs
+                if(self.graph.get_node_attributes('recurrent')[target.name]):
+                    for k in target.inputs:
+                       if(k in target.outputs):
+                           if(k in X): X.pop(k)
+                           
                 for k,v in X.items():
                     self.inputs[k] = v
-
-                # Update all input edges since we added input
+                
+                # Update all input edges since we added input 
                 for (src,tar) in input_edges:
                     edge_inputs = self.graph.get_node_attributes('edge_inputs')[tar]
                     edge_inputs[(src,tar)] = X
 
-
+            
             # Build output spec
             output_edges = [i for i in self.graph.edges if 'output' in i]
-            if(target.name == 'output'):
+            if(target.name == 'output'): 
                 # Check for duplicate keys in outpupt and use tuples if found
                 X = self._edge_mapping(source.outputs,source.name,target.name)
                 edge_inputs = self.graph.get_node_attributes('edge_inputs')[target.name]
-                _edge_inputs = edge_inputs.copy()
+                # Get outgoing edges only
+                edge_inputs = {k : v for k,v in edge_inputs.items() if k[1] == 'output'}
                 _X = X.copy()
                 for key in _X:
                     for k,v in edge_inputs.items():
@@ -936,9 +878,9 @@ class BaseNode:
                             X[(source.name,key)] = pop
                             pop = self.outputs.pop(key)
                             self.outputs[(k[0],key)] = pop
-
+                            
                 # Add keys to outputs
-                for k,v in X.items():
+                for k,v in X.items():     
                     self.outputs[k] = v
 
                 # Update all output edges information
@@ -1167,10 +1109,10 @@ class BaseNode:
         if io == 'input':
             if not self.inputs:
                 return X
-
+                
             # flatten/convert to tuples
             x = dict([i for i in flatten_dict(X, ())])
-
+          
             if self.inputs:
                 x = _find_and_select(self.inputs, x)
 
@@ -1183,14 +1125,14 @@ class BaseNode:
 
             # flatten/convert to tuples
             x = dict([i for i in flatten_dict(X, ())])
-
+            
             # select
             if self.outputs:
                 x = _find_and_select(self.outputs, x)
                 self.output = x.copy()
-
+                
         return x
-
+        
     def _edge_mapping(self,X,source,target):
         """
           Applies a mapping to the output of node across
@@ -1213,15 +1155,15 @@ class BaseNode:
                     message = f'Cannot select feature = {i} on edge {(source,target)}. '
                     message += f'Available keys are: {list(_X.keys())}'
                     raise ImproperTensorGraphError(message)
-
-
+                    
+            
             _X = { k : v for k,v in _X.items() if k in edge['features']}
-
+        
         if(edge['rename']):
            _X = self.find_and_replace(edge['rename'],X)
-
+    
         return _X
-
+        
 
     def __call__(self, X: dict) -> dict:
         """Propagate the given input through the graph.
@@ -1317,7 +1259,7 @@ class BaseNode:
                 #print('names', names, list(zip(*rollouts)))
                 for values in zip(*rollouts):
                     rollout_values = dict(zip(names, values))
-                    # Apply edge mapping
+                    # Apply edge mapping 
                     rollout_values = {k : self._edge_mapping(v,k,name) for k,v in rollout_values.items()}
                     rollout_values = {k: v for k, v in rollout_values.items()}
 
@@ -1328,20 +1270,32 @@ class BaseNode:
 
                 var_map = {k: [{x: y for x, y in o[k].items() if hasattr(
                     y, '__len__') or y is not None} if isinstance(o[k], dict) else o[k] for o in var if o[k] is not None] for k in var[0]}
-                var_map = {k: [x for x in v if len(x) > 0] for k, v in var_map.items()}
+                #var_map = {k: [x for x in v if len(x) > 0] for k, v in var_map.items()}
+                var_map = {k: [x for x in v if not isinstance(x,dict) or len(x) > 0] for k, v in var_map.items()}
 
-                # Restructure and stack recurrent output
+                # Restructure var_map as {'key' : [tensor,tensor,..]}
                 _var_map = {}
+                return_seq = self.graph.get_node_attributes('return_seq')[name]
                 for k,v in var_map.items():
                     collect = {}
                     for i in v:
-                        for m,n in i.items():
-                            if m not in collect:
-                                collect[m] = []
-                            collect[m].append(n)
-                    collect = {m : tf.stack(n) for m,n in collect.items()}
+                        if(isinstance(i,dict)):
+                            for m,n in i.items():
+                                if m not in collect:
+                                    collect[m] = []
+                                collect[m].append(n)
+                        else:
+                            collect = tf.stack(v) if return_seq else v[-1] 
+                    
+                    if(isinstance(collect,dict)):
+                        for m,n in collect.items():
+                            if(return_seq):
+                                collect[m] = tf.stack(n)
+                            else:
+                                collect[m] = v[-1]
+                            
                     _var_map[k] = collect
-
+                           
                 return _var_map
             else:
                 return self[name](output_dict or _X)
@@ -1367,6 +1321,7 @@ class BaseNode:
         X = {}
         for k,v in self.inputs.items():
             X[k] = rng.random(v.shape,dtype=v.dtype)
+            
         return X,self(X)
 
 
@@ -1375,29 +1330,32 @@ class BaseNode:
 
         def node_table(node):
             table = ColorTable([node.name, "Key", "Tensor Spec"],theme=Themes.GLARE_REDUCTION)
-            last = list(node.inputs.keys())[-1]
-            for k,v in node.inputs.items():
-                table.add_row(['input',k,v],divider=(k == last))
+            
+            if(node.inputs):
+                last = list(node.inputs.keys())[-1]
+                for k,v in node.inputs.items():
+                    table.add_row(['input',k,v],divider=(k == last))
 
-            last = list(node.outputs.keys())[-1]
-            for k,v in node.outputs.items():
-                table.add_row(['output',k,v],divider=(k == last))
-
+            if(node.outputs):
+                last = list(node.outputs.keys())[-1]
+                for k,v in node.outputs.items():
+                    table.add_row(['output',k,v],divider=(k == last))
+    
             if(node is not self):
                 edges = self.graph.get_node_attributes('edge_inputs')[node.name]
                 for key,val in edges.items():
                     for k,v in val.items():
                         table.add_row([key,k,v],divider=False)
             print(table)
-
+            
         # Parent
         node_table(self)
-
+            
         # Children summary
         for k,v in self.nodes.items():
             if k not in ['input','output']:
                 node_table(v)
-
+        
 
     def expand_graph_node(self, nodename: str, g=None):
         """ expands the graph of nodename and returns a new graph with the expansion
@@ -1471,7 +1429,7 @@ class BaseNode:
         """
 
         self.logger.info(f'Getting node {name} in HTG {self.name}')
-
+        
         node = self if node is None else node
 
         # if node is in current graph
@@ -1810,7 +1768,8 @@ class Recurrence:
     def __getitem__(self, index):
 
         self.logger.info(f'Getting item {index} in HTG {self.name}')
-        if not self.node[self.name].is_recurrent:
+        is_recurrent = self.node.graph.get_node_attributes('recurrent')[self.name]
+        if not is_recurrent:
             values = self.traverse(self.name)[
                 1] if self.name != 'input' else self.X
             if any(isinstance(v, list) for v in values.values()):
@@ -1834,13 +1793,13 @@ class Recurrence:
 
             # index is not yet computed
             for input_node in dict(self.node.graph.in_edges(self.name)):
-
+                
                 # if the input node is recurrent
                 if self.node.graph.edges[input_node, self.name]['rollout_axis'] is not None:
                     recurrence = self.node[input_node].roll_out
                     input_values[input_node] = self.node._edge_mapping(recurrence[index - 1],input_node,self.name)
                 else:
-
+                    
                     # get the value of the input node
                     _, output_value = self.traverse(input_node)
                     input_values[input_node] = output_value
