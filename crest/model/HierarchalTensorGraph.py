@@ -25,21 +25,8 @@ logger = logging.getLogger(__name__)
 
 class HierarchalTensorGraph(TensorGraph):
     """
-    HierarchalTensorGraph (HTG): The HTG is the core object where the Earth System Model (ESM)
-    is encoded and specified. The HTG provides the information needed to build a CREST
-    model using the Tensor Network backend. As the name suggest, HTG is a hierarchal graph object,
-    and as such, nodes within a HTG are HTGs themselves.
-
-    It has 2 modes:
-
-    1.	A single node graph, referred to as a basenode, that represents a fundamental physical
-    process in an ESM. The basenode is the main object intended for specifying an actual model
-    of a physical process. As such, you must supply a callable function when instantiating a basenode.
-
-    2.	A multi-node graph (nodes>1) used to represent ESM sub-systems. In this mode, HTG is not
-    instantiated with callable function. Instead, nodes and edges are added to create a sub-system.
-    Nodes can either be fundamental processes (basenode) or sub-systems (multi-node HTGs).
-
+    HierarchalTensorGraph (HTG): The HTG is used to build hierarchal graphs
+    of Nodes (or other HTGs).
 
     Parameters
     ----------
@@ -49,27 +36,13 @@ class HierarchalTensorGraph(TensorGraph):
        in the graph. If name is None, it will default to
        ['name', '__name__', '__qualname__'].
 
-    node : Callable, optional
-       A callable function to initalize a HTG. If set, a
-       single node (basenode) HTG is created.
-
-    inputs : dict | list | tuple | str, optional
-        A dictionary with the name (keys) and tensor specifications (values) for the
-        input expected input tensors and produced output produced tensors.
-        If list, tuple, or str, a dictionary is created with tensor specification
-        set to None. If inputs are specified, HierarchalTensorGraph will
-        select from the inputs the corresponding keys. To compile a model, input
-        keys and tensor specification must be specified.
-
     """
 
     @property
     def logger(self) -> logging.Logger:
         return logging.getLogger(__name__)
 
-    def __init__(self,
-                 name: str,
-                 ):   
+    def __init__(self,name: str):   
 
         self.name = name
         self.node = self
@@ -868,7 +841,8 @@ class HierarchalTensorGraph(TensorGraph):
                 # Check for duplicate keys in outpupt and use tuples if found
                 X = self._edge_mapping(source.outputs,source.name,target.name)
                 edge_inputs = self.graph.get_node_attributes('edge_inputs')[target.name]
-                # Get outgoing edges only
+                
+                # Get outgoing edges only and use tuples for duplicates
                 edge_inputs = {k : v for k,v in edge_inputs.items() if k[1] == 'output'}
                 _X = X.copy()
                 for key in _X:

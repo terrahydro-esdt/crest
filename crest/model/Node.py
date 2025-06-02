@@ -5,6 +5,28 @@ from .TensorGraph import ImproperTensorGraphError
 
 class Node(HTG):
     """
+    Node: Node is the object where individual ML models are defined. Nodes can then
+    be used in conjunction with the HierarchalTensorGraph to build Hierarchal models
+    composed of Nodes.
+
+    Parameters
+    ----------
+
+    name : str
+       The name of the HTG which must be different than other nodes
+       in the graph. If name is None, it will default to
+       ['name', '__name__', '__qualname__'].
+
+    node : Callable, optional
+       The model.
+
+    inputs : dict
+        A dictionary with the name (keys) and tensor specifications (values) for the
+        inputs to the model.
+
+    outputs : dict
+        A dictionary with the name (keys) and tensor specifications (values) for the
+        outputs to the model.
 
     """
     def __init__(self,

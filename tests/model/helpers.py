@@ -267,8 +267,7 @@ class Identity(Node):
 
 class Add1_Single(Node):
     def __init__(self, name):
-        self.name = name
-
+        
         def add(X):
             s_1 = X['s_1'] if X['s_1'] is not None else 0
             v = s_1 + X['x_1']
@@ -326,7 +325,6 @@ class Add1_Dual(Node):
                          recurrent=True,
                          reture_seq=False
                          )
-
 
 class Add2_Dual(Node):
     def __init__(self, name):
