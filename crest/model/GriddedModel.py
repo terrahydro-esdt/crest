@@ -1,18 +1,16 @@
 from .Model import Model
+from ..utils.batcher_for_archiver import batch_for_archiver
 from ..archiver.Archiver import Archiver
 from ..data.batching.Batcher import Batcher
 from ..data.loading.Datafile import Datafile
 from ..data.loading.Dataset import Dataset
 from ..configuration.Config import Config
-from pathlib import Path
 
+from tqdm import tqdm
 import logging
 import os
-import tlz
-import numpy as np
 import xarray as xr
 import zarr
-import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -253,35 +251,21 @@ class GriddedModel():
 
             logger.info(f'data_schema is initialized with first row of data')
 
-            coordinates = self.config.coordinates
-
-            logger.info(
-                f'Iterating across coordinates specified in config {coordinates}')
-
             with Archiver(output_path=output_dir,
-                          coords=coordinates,
                           data_schema=self.data_schema,
+                          datafile_index=self.config.coordinate_df,
                           overwrite=False) as a:
 
                 with batch_predict as batcher:
 
-                    for b in batcher:
-                        # get the input variables from each sample
-                        data = tlz.merge_with(
-                            np.array, [s.to_dict(self.model.graph.inputs) for s in b])
+                    batcher_archiver = batch_for_archiver(batcher,
+                                                        model_inputs = self.config.inputs,
+                                                        coordinate_df = self.config.coordinate_df,
+                                                        dataset=self.data)
+                    for coord, value in tqdm(batcher_archiver):
 
-                        # predict the output for each sample and remove extra axes
-                        pred = self.model.predict_on_batch(data)
-
-                        # capture the coordinates info
-                        coords = tlz.merge_with(
-                            np.array, [{c: s.coords[c][0][-1:] for c in coordinates} for s in b])
-
-                        # merge predictions and coordinates into one dict
-                        pred = pred | coords
-
-                        # archive predictions
-                        a.archive(pred)
+                        pred = self.model.predict_on_batch(value)
+                        a.archive(coord, pred)
 
             logger.info(
                 f'Successfully completed generating and archving predictions for iter {self.count=}')

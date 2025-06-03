@@ -100,5 +100,5 @@ class AddTenAddMultSub(HierarchalTensorGraph):
 
 def test_draw():
     htg = AddTenAddMultSub('test')
-    htg.draw()
+    htg.draw_int()
     assert(os.path.exists('interactive_graph.html'))

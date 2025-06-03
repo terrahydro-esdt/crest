@@ -711,6 +711,8 @@ class Metrics(object):
         """
         registered_metrics = list(self.handlers.keys())
 
+        print(registered_metrics)
+
         saved_dict = {}
         for metric in registered_metrics:
             saved_dict[metric] = self.get_handler(metric)

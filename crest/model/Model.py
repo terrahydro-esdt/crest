@@ -466,7 +466,7 @@ class Model(BaseModel):
             
 
     @staticmethod
-    def load_model(model_type: str = 'keras', path: str = 'htg_model'):
+    def load_model(model_type: str = 'keras', path: str = 'htg_model', custom_objects: dict = None):
         """
         Load model registered as custom object
 
@@ -479,7 +479,11 @@ class Model(BaseModel):
             if (model_type == 'keras'):
                 logger.info('Loading model using Tensorflow Keras library.')
 
-                loaded = tf.keras.models.load_model(path)
+                if (custom_objects is None):
+                    loaded = tf.keras.models.load_model(path)
+                else:
+                    loaded = tf.keras.models.load_model(path, custom_objects)
+                
                 return loaded
             else:
                 logger.info('Loading model using pickle.')
@@ -512,7 +516,11 @@ class Model(BaseModel):
 
         if (save_metrics):
             # covert metrics to json
+            print(self.metric.customs)
+
             metric_json = self.metric.to_json()
+
+            print(metric_json)
 
             with open(os.path.join(dir, 'htg.metric.json'), 'w') as f:
                 json.dump(metric_json, f)
@@ -534,9 +542,9 @@ class Model(BaseModel):
             graph = HierarchalTensorGraph.from_json(graph_json)
 
         model = Model(graph)
-        model.model = Model.load_model(model_type, path)
 
         if (load_metrics):
+            print(load_metrics)
             metrics = None
 
             # convert metrics from json
@@ -546,9 +554,9 @@ class Model(BaseModel):
 
             custom_metrics = {v: metrics.get_handler(
                 v) for v in metrics.customs}
-
-            # convert model from json
-            model.model = tf.keras.models.load_model(os.path.join(
-                path, 'htg.model.h5'), custom_objects=custom_metrics)
+            
+            model.model = Model.load_model(model_type, path, custom_metrics)
+        else:
+            model.model = Model.load_model(model_type, path)
 
         return model

@@ -10,6 +10,8 @@ import logging
 from pyvis.network import Network
 from ..utils.save_node_class import *
 import networkx as nx
+import matplotlib.colors as mcolors
+import random as rand
 
 from pathlib import Path
 
@@ -204,7 +206,13 @@ class HierarchalTensorGraph(TensorGraph):
 
             node_json['node_class'] = self.node.__class__.__name__
             node_json['node_module'] = self.node.__module__
-            node_json['node_path'] = get_class_module_path(self.node)
+
+            try:
+                node_path = get_class_module_path(self.node)
+            except:
+                node_path = ''
+            
+            node_json['node_path'] = node_path
 
             return json.dumps(node_json)
         else:
@@ -278,10 +286,14 @@ class HierarchalTensorGraph(TensorGraph):
             graph_dict = json.loads(graph_json)
 
         class_name = graph_dict['node_class']
-        # module_name = graph_dict['node_module']
-        module_path = graph_dict['node_path']
 
-        module = (import_module_from_path(module_path))[class_name][1]
+        if (len(graph_dict['node_path']) == 0):
+            module_name = graph_dict['node_module']
+            module = importlib.import_module(module_name)
+        else:
+            module_path = graph_dict['node_path']
+            module = (import_module_from_path(module_path))[class_name][1]
+        
         class_ = getattr(module, class_name)
 
         from_json = getattr(class_, "from_json", None)
@@ -1168,11 +1180,273 @@ class HierarchalTensorGraph(TensorGraph):
 
         return self.feature_map(flatten(dict(map(traverse, self.sinks))), 'output')
 
+
+    def expand_graph_node(self, nodename: str, g=None):
+        """ expands the graph of nodename and returns a new graph with the expansion
+
+        Parameters:
+
+        nodename : str
+             Name of the node to expand.
+
+        g: BaseGraph
+             Graph from which to expand the node. If None, uses
+             self.graph.
+
+        Returns: A new graph with the expanded node.
+
+        """
+
+        self.logger.info(f'Expanding node {nodename} in HTG {self.name}')
+
+        if not g:
+            graph = self.graph.copy()
+        else:
+            graph = g.copy()
+
+        # if basenode cannot be expanded
+        if self[nodename].is_basenode:
+            return graph
+
+        # in/out edges of node
+        in_node_edges = graph.in_edges(nodename)
+        out_node_edges = graph.out_edges(nodename)
+
+        # input/output edges of within the node
+        edges_within_node = self[nodename].edges
+        in_edges = [e for e in edges_within_node if 'input' in e]
+        out_edges = [e for e in edges_within_node if 'output' in e]
+
+        # create edges by fusing edges and adding parent to the names
+        create_edges = [(x[0], nodename + '.' + y[1])
+                        for x in in_node_edges for y in in_edges]
+        create_edges += [(nodename + '.' + x[0], y[1])
+                         for x in out_edges for y in out_node_edges]
+        create_edges += [(nodename + '.' + x[0], nodename + '.' + x[1]) for x in
+                         [e for e in edges_within_node if ('input' not in e) and (not 'output' in e)]]
+        subnodes = {nodename + '.' + k: node for (k, node) in self[nodename].nodes.items()
+                    if k not in ['input', 'output']}
+
+        # copy graph and remove node
+        graph.remove_node(nodename)
+
+        # add in new edges and subnodes
+        for k, v in subnodes.items():
+            graph.add_node(k, htg=v)
+
+        graph.add_edges_from(create_edges)
+
+        return graph
+
+    def _get_node(self, name, node=None):
+        """ Get the node with the given name
+
+        Parameters:
+
+        name : str
+                The name of the node to get
+
+        node : HierarchalTensorGraph
+
+        Returns: The node with the given name
+
+        """
+
+        self.logger.info(f'Getting node {name} in HTG {self.name}')
+        
+        node = self if node is None else node
+
+        # if node is in current graph
+        if (not '.' in name):
+            return node[name]
+
+        # if node is in a subgraph, recurse
+        ind = name.split('.', 1)[0]
+        name = name.split('.', 1)[1]
+        return self._get_node(name, node[ind])
+
+    def _get_parent(self, source, node=None):
+        """ Get the parent of the current node
+
+        Parameters:
+
+        source : str
+                The source node to get the output from
+
+        Returns: The parent node
+
+        """
+
+        self.logger.info(f'Getting parent of node {source} in HTG {self.name}')
+
+        node = self if node is None else node
+
+        # if parent is in current graph
+        if (source.count('.') == 1):
+            ind = source.split('.', 1)[0]
+            return node[ind]
+        elif (not '.' in source):
+            return self
+
+        # if parents is in a subgraph, recurse
+        ind = source.split('.', 1)[0]
+        source = source.split('.', 1)[1]
+
+        return self._get_parent(source, node[ind])
+
+    def edge_label(self, source, target):
+        """ Returns the edge label between source and target nodes
+
+        Parameters:
+
+        source : str
+                The source node to get the output from
+
+        target : str
+                The target node to get the input from
+
+        Returns: A dictionary with the edge label
+
+        """
+
+        self.logger.info(f'Getting edge label from {source} to {target} in HTG {self.name}')
+
+        # get source and target nodes
+        source_node = self._get_node(source)
+        target_node = self._get_node(target)
+
+        # get source outputs
+        tmp_output = source_node.outputs if not source == 'input' else self.inputs
+        tmp_output = self.get_outputs(self._get_parent(source)) if (
+            '.' in source and not '.' in target) else tmp_output
+
+        # convert source output format to list of labels
+        if isinstance(tmp_output, dict):
+            source_outputs = list(tmp_output.keys())
+        else:
+            source_outputs = tmp_output
+
+        # get source output correspecting to the mapped output
+        if len(source_node._outputs_map) > 0 or len(target_node._inputs_map) > 0:
+            tmp_outputs = []
+            for k in source_outputs:
+                if k in source_node._outputs_map:
+                    tmp_outputs.append(source_node._outputs_map[k])
+                elif k in target_node._inputs_map:
+                    tmp_outputs.append(target_node._inputs_map[k])
+                else:
+                    tmp_outputs.append(k)
+
+            source_outputs = tmp_outputs
+
+        # get target inputs
+        tmp_input = target_node.inputs if not target == 'output' else self.outputs
+
+        # convert target input format to list of labels
+        if isinstance(tmp_input, dict):
+            target_inputs = list(tmp_input.keys())
+        else:
+            target_inputs = tmp_input
+
+        # get target input correspecting to the mapped input
+        if len(source_node._outputs_map) > 0 and len(target_node._inputs_map) > 0:
+            tmp_inputs = []
+            for k in target_inputs:
+                if k in target_node._inputs_map:
+                    tmp_inputs.append(target_node._inputs_map[k])
+                elif k in source_node._outputs_map:
+                    tmp_inputs.append(source_node._outputs_map[k])
+                else:
+                    tmp_inputs.append(k)
+
+            target_inputs = tmp_inputs
+
+        # return dictionary of edge labels
+        return {(source, target): (source_outputs, target_inputs)}
+
+    def get_all_edge_labels(self, graph):
+        """ Returns all edge labels in the graph
+
+        Parameters:
+
+        graph : BaseGraph
+                The graph to get the edge labels from
+
+        Returns: A dictionary with the edge labels
+
+        """
+
+        self.logger.info(f'Getting all edge labels in HTG {self.name}')
+
+        edge_labels = {}
+        avial = {}
+        req = {}
+
+        # for all edges in the graph
+        for edge in graph.edges:
+            source = edge[0]
+            target = edge[1]
+
+            # get edge labels
+            edge_labels.update(self.edge_label(source, target))
+
+            # get available inputs
+            if target in avial:
+                if source == 'input':
+                    avial[target] += edge_labels[(source, target)][1]
+                else:
+                    avial[target] += edge_labels[(source, target)][0]
+            else:
+                if source == 'input':
+                    avial[target] = edge_labels[(source, target)][1]
+                else:
+                    avial[target] = edge_labels[(source, target)][0]
+                if source == 'input':
+                    avial[target] += edge_labels[(source, target)][1]
+                else:
+                    avial[target] += edge_labels[(source, target)][0]
+
+            # get required inputs
+            if target in req and not source == 'input':
+                req[target] += edge_labels[(source, target)][1]
+            else:
+                req[target] = edge_labels[(source, target)][1]
+
+        validity = {}
+        # check if all required inputs are available
+        for tar in avial.keys():
+            avial[tar] = list(set(avial[tar]))
+            req[tar] = list(set(req[tar]))
+
+            # determine validity color based on matching between required and available inputs
+            if all(x in avial[tar] for x in req[tar]):
+                validity[tar] = True
+            else:
+                validity[tar] = False
+
+        # colors = mcolors.CSS4_COLORS
+        colors = mcolors.XKCD_COLORS
+        # colors = mcolors.TABLEAU_COLORS
+
+        edge_attr = {}
+        for edge in graph.edges:
+            source = edge[0]
+            target = edge[1]
+
+            random = rand.randint(1, len(list(colors.keys())))
+
+            edge_attr[(source, target)] = {
+                'validity': validity[target],
+                'label': edge_labels[(source, target)],
+                'source-color': list(colors.keys())[random]}
+
+        return edge_attr
+
     def print_edge_labels(self, expand_nodes=None):
         """ Prints all edge labels in the graph
 
-        Parameters
-        ----------
+        Parameters:
+
         expand_nodes : str, list, or 'all'
 
         """
@@ -1223,6 +1497,64 @@ class HierarchalTensorGraph(TensorGraph):
 
         # return dataframe
         return label_output
+
+    def draw(self, expand_nodes=None, layout='kamada_kawai_layout'):
+        """ Draws the graph
+
+        Parameters:
+
+        expand_nodes : str, list, or 'all'
+
+        layout : str
+
+        Returns: A new graph with the expanded node.
+
+        """
+
+        self.logger.info(f'Drawing HTG {self.name}')
+
+        # check if nodes are empty
+        def is_not_all_empty(graph):
+            for v in graph:
+                if not graph.nodes[v]['htg'].is_basenode:
+                    return True
+            return False
+
+        g = self.graph
+
+        if expand_nodes:
+            if not isinstance(expand_nodes, list) and expand_nodes != 'all':
+                for node in [expand_nodes]:
+                    g = self.expand_graph_node(node, g)
+
+            # Expand graph nodes and create new graph
+            if isinstance(expand_nodes, list):
+                for node in expand_nodes:
+                    g = self.expand_graph_node(node, g)
+
+            if expand_nodes == 'all':
+                while is_not_all_empty(g):
+                    nodes = g.get_node_attributes('htg')
+                    for k, node in nodes.items():
+                        if not node.is_basenode:
+                            g = self.expand_graph_node(node.name, g)
+
+        # Draw the final graph
+        if layout == 'kamada_kawai_layout':
+            pos = nx.kamada_kawai_layout(g)
+        elif layout == 'spetral_layout':
+            pos = nx.kamada_kawai_layout(g)
+        else:
+            pos = None
+
+        # get all edge labels and attributes
+        edge_attributes = self.get_all_edge_labels(g)
+        edge_styles = ['solid' if v['validity'] else 'dashed' for k, v in edge_attributes.items()]
+        edge_colors = [v['source-color'] for k, v in edge_attributes.items()]
+
+        # draw
+        nx.draw(g, pos, edge_color=edge_colors, style=edge_styles, with_labels=True, alpha=1, font_size=10, node_size=1000,
+                node_color='white', font_color='darkblue', font_family='Impact')
 
     def _generate_color(self, number):
         """ Generates random color for each node group. """
@@ -1400,7 +1732,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         return (net_nodes, net_edges)
 
-    def draw(self, html_file='interactive_graph.html', inline=False):
+    def draw_int(self, html_file='interactive_graph.html', inline=False):
         """ The primary driving function that enables the visualization of the HTG.
 
         Parameter
@@ -1420,7 +1752,6 @@ class HierarchalTensorGraph(TensorGraph):
         if (not inline):
             import webbrowser
             webbrowser.open('file://' + os.path.abspath(html_file))
-
 
 class Recurrence():
     """
