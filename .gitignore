@@ -5,6 +5,7 @@
 *.log.backup
 *.log.*.backup
 *.json
+logs/*
 !crest/utils/crest_logging_configs/*.json
 *.h5
 __pycache__
