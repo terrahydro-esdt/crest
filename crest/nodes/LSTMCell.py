@@ -3,7 +3,7 @@ import tensorflow as tf
 import tensorflow.keras as keras
 import keras.backend as K
 
-class LSTMCellNode(Node):
+class LSTMCell(Node):
     """
     A Node implementing a Keras LSTMCell to be integrated
     within an HierarchalTensorGraph recurrent node. The
@@ -34,9 +34,6 @@ class LSTMCellNode(Node):
                  ,**kwargs
                 ):
 
-        # Initialize lstm cell
-        self.lstm = keras.layers.LSTMCell(units,**kwargs)
-
         # Add hiden and cell states to the inputs/outputs
         self.state_names = [name + '_' + i for i in ['h','c']] 
         for i in self.state_names: inputs[i] = (units,)
@@ -48,6 +45,16 @@ class LSTMCellNode(Node):
             'inputs' : inputs,
             'outputs' : outputs
         })
+
+             # Set as a recurrent node
+        self.attributes['recurrent'] = True
+        
+        if('return_seq' in kwargs):
+            self.attributes['return_seq'] = kwargs['return_seq']
+            kwargs.pop('return_seq')
+
+         # Initialize lstm cell
+        self.lstm = keras.layers.LSTMCell(units,**kwargs)
         
     def _node(self,X): 
         # Concat features

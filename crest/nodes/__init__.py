@@ -1,1 +1,2 @@
-from .LSTMCellNode import LSTMCellNode
+from .LSTMCell import LSTMCell
+from .LSTM import LSTM
