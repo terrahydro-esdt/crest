@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from functools import cache
+from functools import cache,cached_property,lru_cache
 from typing import Union
 import importlib
 import json
@@ -53,9 +53,11 @@ class HierarchalTensorGraph(TensorGraph):
 
         # Default attributes for nodes
         self.attributes = {
-               'edge_inputs' : {},
-               'recurrent' : False,
-               'return_seq' : False
+            'edge_inputs' : {},
+            'recurrent' : False,
+            'return_seq' : False,
+            'initialization' : None,
+            'roll_out' : None
         }
 
 
@@ -970,6 +972,7 @@ class HierarchalTensorGraph(TensorGraph):
         raise ImproperTensorGraphError(
             'must pass either a str, tuple, or HierarchalTensorGraph')
 
+            
     # find keys and replace them
     def find_and_replace(self,namelist: dict, X: dict) -> dict:
         """Tries to find keys specified in namelist and replace them with the values in namelist"""
@@ -1107,7 +1110,11 @@ class HierarchalTensorGraph(TensorGraph):
                 
         return x
         
-    def _edge_mapping(self,X,source,target):
+    def _edge_mapping(self,
+                      X : dict, 
+                      source : str,
+                      target : str
+                     ):
         """
           Applies a mapping to the output of node across
           a particular outgoing edge.
@@ -1115,26 +1122,33 @@ class HierarchalTensorGraph(TensorGraph):
           X : dict
             Output dict coming from the node
 
-          edge :
-              Graph edge
+          source : str
+              Name of the source node
+              
+          target : str
+              Name of the source node
+
+          build : bool
+            Whether executing during graph building vs. execution
+              
         """
 
-        # Apply renaming
         edge = self.graph.edges[source,target]
         _X = X.copy()
 
+        # Select from incoming features
         if(edge['features']):
             for i in edge['features']:
                 if(not i in _X):
                     message = f'Cannot select feature = {i} on edge {(source,target)}. '
                     message += f'Available keys are: {list(_X.keys())}'
                     raise ImproperTensorGraphError(message)
-                    
             
             _X = { k : v for k,v in _X.items() if k in edge['features']}
-        
+
+        # Rename features after selection if needed
         if(edge['rename']):
-           _X = self.find_and_replace(edge['rename'],X)
+           _X = self.find_and_replace(edge['rename'],_X)
     
         return _X
         
@@ -1219,7 +1233,7 @@ class HierarchalTensorGraph(TensorGraph):
             # the cache logic would have to live in the respective function for caching.
             for input_node in nodes(name):
                 if self.graph.edges[input_node, name]['rollout_axis'] is not None:
-                    rollout_dict[input_node] = self[input_node].roll_out
+                    rollout_dict[input_node] = self[input_node].attributes['roll_out']
                 else:
                     tmp_depth = depth + (input_node == name)
                     input_name, output_value = traverse(
@@ -1278,12 +1292,13 @@ class HierarchalTensorGraph(TensorGraph):
 
         # can loop through and define
         for node in self.nodes:
-            if not hasattr(self[node], 'roll_out'):
+            # if not hasattr(self[node], 'roll_out'):
+            if(not self[node].attributes['roll_out']):
                 for input_node in nodes(node):
                     if self.graph.edges[input_node, node]['rollout_axis'] is not None:
                         rollout_axis = self.graph.edges[input_node,
                                                         node]['rollout_axis']
-                        self[input_node].roll_out = Recurrence(
+                        self[input_node].attributes['roll_out'] = Recurrence(
                             self, input_node, traverse, _X, rollout_axis)
 
         return self.find_and_select(flatten(dict(map(traverse, self.sinks))), 'output')
@@ -1759,18 +1774,19 @@ class Recurrence:
 
             raise StopIteration('No more values')
 
+        # Initialization of recurrent states
         if index == 0:
-            self.cache[index] = {k: None for k in self.node[self.name].outputs}
+            self.cache[index] = self.node[self.name].attributes['roll_out'].initial_state
 
         elif index not in self.cache:
             input_values = {}
 
-            # index is not yet computed
+            # Index is not yet computed
             for input_node in dict(self.node.graph.in_edges(self.name)):
                 
                 # if the input node is recurrent
                 if self.node.graph.edges[input_node, self.name]['rollout_axis'] is not None:
-                    recurrence = self.node[input_node].roll_out
+                    recurrence = self.node[input_node].attributes['roll_out']
                     input_values[input_node] = self.node._edge_mapping(recurrence[index - 1],input_node,self.name)
                 else:
                     
@@ -1781,6 +1797,24 @@ class Recurrence:
             self.cache[index] = self.node[self.name](input_values)
 
         return self.cache[index]
+
+    
+    @cached_property
+    def initial_state(self) -> dict:
+        """ 
+            Calls node initialization routine.
+            
+            Returns:
+                Initial states
+                
+        """
+        # Check that initialization has been defined
+        if(not self.node[self.name].attributes['initialization']):
+            message = f'Recurrent node ({self.name} has not defined an initialzation routine. '
+            message += f'recurrent nodes must define the initialzation routine.'
+            raise ImproperTensorGraphError(message)
+    
+        return self.node[self.name].attributes['initialization'](self.X)
 
     # Removes 'input' or 'output' nesting of keys
     def flatten(self, d):

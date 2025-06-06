@@ -137,7 +137,7 @@ def AddSquareNode():
     square = LambdaNode(name='square')
 
     add_square_htg = HierarchalTensorGraph(name="add_square")
-    
+
     # Create the graph
     self.add_edge('input', add)
     self.add_edge(add, square,rename={'sum','x'})
@@ -260,18 +260,20 @@ class Identity(Node):
         self.name = name
         super().__init__(
             node=lambda x:x,
-            inputs=inputs, 
+            inputs=inputs,
             outputs=inputs,
             name=name
         )
 
 class Add1_Single(Node):
     def __init__(self, name):
-        
+
         def add(X):
-            s_1 = X['s_1'] if X['s_1'] is not None else 0
-            v = s_1 + X['x_1']
+            v = X['s_1'] + X['x_1']
             return {'s_1':  v}
+
+        def initialize(X):
+            return {'s_1' : 0}
 
         # call the basenode constructor
         super().__init__(node=add,
@@ -281,6 +283,9 @@ class Add1_Single(Node):
                          recurrent=True,
                          return_seq=True
                          )
+
+        self.attributes['initialization'] = initialize
+
 
 class SingleRecurrent(HierarchalTensorGraph):
 
@@ -302,20 +307,22 @@ class IdentityPlusSingleRecurrent(HierarchalTensorGraph):
 
         sr = Add1_Single('add_single')
         ident = Identity('add_identity',sr.outputs)
-        
+
         self.add_edge('input', sr)
         self.add_edge(sr,sr)
         self.add_edge(sr,ident)
         self.add_edge(ident, 'output')
-        
+
 
 class Add1_Dual(Node):
     def __init__(self, name):
-        
+
         def add(X):
-            s_1 = X['s_1'] if X['s_1'] is not None else 0
-            v = s_1 + X['x_1']
+            v = X['s_1'] + X['x_1']
             return {'s_1':  v}
+
+        def initialize(X):
+            return {'s_1' : 0}
 
         # call the basenode constructor
         super().__init__(node=add,
@@ -326,14 +333,17 @@ class Add1_Dual(Node):
                          reture_seq=False
                          )
 
+        self.attributes['initialization'] = initialize
+
 class Add2_Dual(Node):
     def __init__(self, name):
- 
+
         def add(X):
-            s_1 = X['s_1'] if X['s_1'] is not None else 0
-            s_2 = X['s_2'] if X['s_2'] is not None else 0
-            v = s_1 + s_2 + X['x_2']
+            v = X['s_1'] + X['s_2'] + X['x_2']
             return {'s_2':  v}
+
+        def initialize(X):
+            return {'s_2' : 0}
 
         # call the basenode constructor
         super().__init__(node=add,
@@ -343,6 +353,8 @@ class Add2_Dual(Node):
                          recurrent=True,
                          reture_seq=False
                          )
+
+        self.attributes['initialization'] = initialize
 
 
 class DualRecurrent(HierarchalTensorGraph):
@@ -367,11 +379,11 @@ class Add1_Triple(Node):
     def __init__(self, name):
 
         def add(X):
-            s_1 = X['s_1'] if X['s_1'] is not None else 0
-            s_2 = X['s_2'] if X['s_2'] is not None else 0
-            s_3 = X['s_3'] if X['s_3'] is not None else 0
-            v = s_1 + s_2 + s_3 + X['x_1']
+            v = X['s_1'] + X['s_2'] + X['s_3'] + X['x_1']
             return {'s_1':  v}
+
+        def initialize(X):
+            return {'s_1' : 0}
 
         # call the basenode constructor
         super().__init__(node=add,
@@ -381,16 +393,18 @@ class Add1_Triple(Node):
                          recurrent=True,
                          )
 
+        self.attributes['initialization'] = initialize
+
 
 class Add2_Triple(Node):
     def __init__(self, name):
-        
+
         def add(X):
-            s_1 = X['s_1'] if X['s_1'] is not None else 0
-            s_2 = X['s_2'] if X['s_2'] is not None else 0
-            s_3 = X['s_3'] if X['s_3'] is not None else 0
-            v = s_1 + s_2 + s_3 + X['x_2']
+            v = X['s_1'] + X['s_2'] + X['s_3'] + X['x_2']
             return {'s_2':  v}
+
+        def initialize(X):
+            return {'s_2' : 0}
 
         # call the basenode constructor
         super().__init__(add,
@@ -400,16 +414,17 @@ class Add2_Triple(Node):
                          recurrent=True
                          )
 
+        self.attributes['initialization'] = initialize
 
 class Add3_Triple(Node):
     def __init__(self, name):
 
         def add(X):
-            s_1 = X['s_1'] if X['s_1'] is not None else 0
-            s_2 = X['s_2'] if X['s_2'] is not None else 0
-            s_3 = X['s_3'] if X['s_3'] is not None else 0
-            v = s_1 + s_2 + s_3 + X['x_3']
+            v = X['s_1'] + X['s_2'] + X['s_3'] + X['x_3']
             return {'s_3':  v}
+
+        def initialize(X):
+            return {'s_3' : 0}
 
         # call the basenode constructor
         super().__init__(add,
@@ -419,6 +434,7 @@ class Add3_Triple(Node):
                          recurrent=True
                          )
 
+        self.attributes['initialization'] = initialize
 
 class TripleRecurrent(HierarchalTensorGraph):
     # hyper connected graph with three recurrent nodes
