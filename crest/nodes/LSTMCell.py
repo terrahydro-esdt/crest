@@ -63,7 +63,7 @@ class LSTMCell(Node):
         self.attributes['initialization'] = self.initialize
 
     # Initialize states to zero
-    def initialize(self,X) -> dict:
+    def initialize(self,X : dict) -> dict:
         inp = X[list(X.keys())[0]]
         batch_size = tf.shape(inp)[0]
         s = [tf.zeros([batch_size,self.units]) for i in
@@ -75,7 +75,6 @@ class LSTMCell(Node):
         # Concat features
         features = {k : v for k,v in X.items() if k not in self.state_names}
         inp = tf.concat(list(features.values()),axis=-1)
-
         [h,c] = [X[k] for k in self.state_names]
         _,[h,c] = self.lstmcell(inp,(h,c))
 
