@@ -1,9 +1,10 @@
 from crest.model.Node import Node
+from .BaseTFNode import BaseTFNode
 import tensorflow as tf
 import tensorflow.keras as keras
 import keras.backend as K
 
-class LSTMCell(Node):
+class LSTMCell(BaseTFNode):
     """
     A Node implementing a Keras LSTMCell to be integrated
     within an HierarchalTensorGraph recurrent node. The
@@ -42,7 +43,7 @@ class LSTMCell(Node):
         outputs = {i: (units,) for i in self.state_names}
 
         super().__init__(**{
-            'node' : lambda X :  self._node(X),
+            'node' : lambda X :  self.call(X),
             'name' : name,
             'inputs' : inputs,
             'outputs' : outputs
@@ -70,7 +71,7 @@ class LSTMCell(Node):
              self.state_names]
         return dict(zip(self.state_names,s))
 
-    def _node(self,X):
+    def call(self,X):
 
         # Concat features
         features = {k : v for k,v in X.items() if k not in self.state_names}

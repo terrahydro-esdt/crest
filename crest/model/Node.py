@@ -40,7 +40,7 @@ class Node(HTG):
         if(isinstance(node,HTG)):
             message = f'You cannot create a Node from a HierarchalTensorGraph.'
             raise ImproperTensorGraphError(message)
-            
+
         super().__init__(name or HTG.get_name(node))
         self.node = node
         self.inputs = inputs
@@ -61,6 +61,6 @@ class Node(HTG):
 
     def from_json():
         pass
-        
 
-        
+
+
