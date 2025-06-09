@@ -1,11 +1,11 @@
 .. include:: ../README.rst
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
    :caption: Contents:
    
    overview
    quickstart
-   frame/index
+   tutorial/index
    examples/index
    api/index

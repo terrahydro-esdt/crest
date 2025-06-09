@@ -20,14 +20,6 @@ crest.data.Batcher module
    :undoc-members:
    :show-inheritance:
 
-crest.data.ThreadedFunction module
-----------------------------------
-
-.. automodule:: crest.data.ThreadedFunction
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 Module contents
 ---------------
 

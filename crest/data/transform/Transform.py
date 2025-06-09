@@ -278,7 +278,7 @@ class Transform(BaseAbstract):
 
     # Internal functions
     # ==================
-    def __getattr__(self, stat: str) -> float | int | xr.DataArray:
+    def __getattr__(self, stat: str) -> Union[float, int, xr.DataArray]:
         """ Get a statistic for the current data, e.g. self.mean """
         stats = object.__getattribute__(self, 'stats')
         if stat == 'stats': return stats

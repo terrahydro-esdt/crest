@@ -263,9 +263,9 @@ class Blockset(BaseSet):
 
     def _grouped(self, 
         matches      : np.ndarray, 
-        counts       : np.ndarray | None, 
+        counts       : Union[np.ndarray, None], 
         task_bytes   : Number,
-        task_samples : int | None,
+        task_samples : Union[int, None],
     ):
         """ Combine matches into larger groups for higher throughput """
         # Number of samples in the cartesian product for dataframe divisions

@@ -64,11 +64,10 @@ class Block(BaseAbstract):
         samples to be generated across different blocks at the boundaries. If 
         instead this is False (the defalt), there will not be any duplicated
         samples generated, but instead there *may* be samples missing at the
-        block boundaries. 
-
-    """
+        block boundaries.
+      """
     def __init__(self, 
-        data          : da.Array | Collection,
+        data          : Union[da.Array, Collection],
         coords        : da.Array,
         inbound_mask  : da.Array,
         overlap_mask  : da.Array,
