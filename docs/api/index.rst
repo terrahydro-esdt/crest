@@ -11,11 +11,13 @@ The API reference contains detailed descriptions of the CREST classes, functions
 
 
 .. toctree::
-   :maxdepth: 4
+   :maxdepth: 2
 
    crest.archiver
    crest.base
+   crest.configuration
    crest.data
    crest.data_server
+   crest.engine
    crest.model
    crest.utils

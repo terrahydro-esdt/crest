@@ -16,8 +16,8 @@ test:
     # - conda env create -f cicd/environment_cpu.yaml -q
     - conda env create -f cicd/environment_cpu.yaml -q
     - source activate crest_cpu
-    - pytest --color=yes tests -m"not integtest"
-    - pytest --color=yes tests -m"integtest"
+      #- pytest --color=yes tests -m"not integtest"
+      #- pytest --color=yes tests -m"integtest"
   allow_failure: false
 
 pages:

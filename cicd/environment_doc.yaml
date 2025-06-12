@@ -3,20 +3,26 @@
 name: crest_doc
 channels:
  - conda-forge
- - defaults
 
 dependencies:
-  - python=3.10
-  - ipykernel=6.19
+  - python =3.10,<3.14
+  - ipykernel
+  - flit >=3.9.0
   # Documentation packages
-  - sphinx=7.2.5
+  - sphinx >=7.0.0
+  - sphinx-autobuild >=2024.4.16
+  - sphinx-autodoc-typehints
+  - sphinx-design
   - pandoc=3.1.3
+  - furo >=2023.9.10
   - pip
   - pip:
      - sphinx_autodoc_typehints
-     - furo
      - sphinx_rtd_theme
      - sphinx-design
      - nbsphinx
      - nbsphinx-link
+     - myst-parser
+     - sphinxcontrib-mermaid
+
 
