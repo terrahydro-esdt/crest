@@ -16,6 +16,16 @@ case "$ASTGapp" in
    'crest_cpu')
       cd /opt/sw/crest
       python host.py
+      maxRetry=15; loop=1
+      sleep 15
+      until [ $loop -ge $maxRetry ];do
+         curl http://localhost:5000/run-dre &> /dev/null
+	 if [ $? -ne 0 ]; then
+            loop=`expr $loop + 1`
+	 else
+	    break
+	 fi
+      done
       ;;
    'autoviz')
       cd /opt/sw/autoviz
