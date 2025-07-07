@@ -5,6 +5,12 @@ import numpy as np
 import xarray as xr
 import dask
 
+import s3fs
+import boto3
+import json
+from botocore.exceptions import NoCredentialsError
+from crest.utils.S3Path import S3Path
+
 from crest.base.BaseAbstract import BaseAbstract
 from crest.data.loading import Dataset
 from crest.data.loading import Datafile
@@ -102,6 +108,11 @@ class Archiver(BaseAbstract):
         must be True and the stats zarr file must exist or a FileNotFound
         error will raise.
 
+    aws_credentials_path : str, optional
+        If the output_path is an S3 URI (starts with s3://), the path to 
+        an aws_credentials txt file is required unless a 'cred_cache.json'
+        file with the valid 'key', 'secret', 'token' values exists.
+    
     **kwargs
         Any additional kwargs are passed into xr.Dataset.to_netcdf
         if the final output must be saved as a netcdf file.
@@ -129,6 +140,7 @@ class Archiver(BaseAbstract):
                  per_sample: bool = False,
                  task_bytes: float | None = None,
                  keep_stats: bool = True,
+                 aws_credentials_path: str | None = None,
                  **kwargs
                  ):
 
@@ -140,17 +152,80 @@ class Archiver(BaseAbstract):
         self.per_sample = per_sample
         self.task_bytes = task_bytes
         self.keep_stats = keep_stats
+        self.aws_credentials_path = aws_credentials_path
         self.kwargs = kwargs
         
         # initialize an empty var to keep the computations
         # in memory for the task_bytes.
         self.data_in_memory = None
-
+        
+         # handle the output_path for being either s3 or local
         if isinstance(self.output_path, str):
-            self.output_path = Path(self.output_path)
+            suffix = self.output_path.split('.')[-1].lower()
+            if suffix not in ['nc', 'zarr']:
+                raise ValueError(f'invalid output file extension: {suffix}')
+            if self.output_path.startswith('s3://'):
+                # cannot directly ingest into netcdf in s3
+                if suffix == 'nc':
+                    message = 'Saving to NetCDF format is not supported when '
+                    message+= 'the output_path is an S3 bucket'
+                    raise NotImplementedError(message)
+                try:
+                    S3Path(self.output_path).exists()
+                    
+                # when the credential is needed for s3 (e.g.
+                # accessing bucket from a local system) either
+                # cached credentials in json file or
+                # credentials in txt file is needed. When
+                # a bucket is accessed from an aws instance,
+                # no credentials are needed.
+                except NoCredentialsError:
+                    if Path('./cred_cache.json').exists():
+                        with open("./cred_cache.json", "r") as f:
+                            aws_credentials = json.load(f)
 
+                    else:
+                        if self.aws_credentials_path is None:
+                            raise ValueError('AWS credentials are needed but aws_credentials_path is None')
+
+                        # prepare the credentials secret keys from a txt file if needed
+                        if not Path(aws_credentials_path).exists():
+                            message = f'AWS credentials file missing at {aws_credentials_path}'
+                            raise FileNotFoundError(message)
+                            
+                        key, secret, mfa_serial = Path(aws_credentials_path).read_text().strip().split(',')
+                        mfa_kwargs = {
+                            'DurationSeconds': 129600,
+                            'SerialNumber': mfa_serial,
+                            'TokenCode': input('Enter AWS MFA code: '),
+                        }
+                        session = boto3.Session(key, secret)
+                        mfa_auth = session.client('sts').get_session_token(**mfa_kwargs)
+                        aws_credentials =  {
+                            'key': mfa_auth['Credentials']['AccessKeyId'],
+                            'secret': mfa_auth['Credentials']['SecretAccessKey'],
+                            'token': mfa_auth['Credentials']['SessionToken'],
+                        }
+                        
+                        # make the credentials cache file
+                        with open("./cred_cache.json", "w") as f:
+                            json.dump(aws_credentials, f, indent=4) 
+                    
+                    # make the s3 mapper for the output directory
+                    store  = s3fs.S3FileSystem(**aws_credentials)
+                    self.output_path = store.get_mapper(self.output_path)
+                
+                self.output_path = S3Path(self.output_path)
+            
+            else:
+                self.output_path = Path(self.output_path)
+
+        else:
+            suffix = self.output_path.name.split('.')[-1].lower()
+            if suffix not in ['nc', 'zarr']:
+                raise ValueError(f'invalid output file extension: {suffix}')
         # specify the name of the stats zarr file
-        self.output_path_stats = self.output_path.parent / f'{self.output_path.stem}_stats.zarr'
+        self.output_path_stats = self.output_path.parent.joinpath(f'{self.output_path.stem}_stats.zarr')
 
         # create the data schema
         self.out_datafile = self._create_schema()
@@ -262,9 +337,9 @@ class Archiver(BaseAbstract):
 
                 # if the user asks for overwriting the existing file
                 if self.overwrite:
-                    shutil.rmtree(self.output_path)
+                    self._delete_existing(self.output_path)
                     if self.output_path_stats.exists():
-                        shutil.rmtree(self.output_path_stats)
+                        self._delete_existing(self.output_path_stats)
                     
 
                 # if overwriting is not asked and the specified data schema
@@ -296,7 +371,7 @@ class Archiver(BaseAbstract):
                             raise FileExistsError(message)
                         
                     if self.output_path.exists():
-                        shutil.rmtree(self.output_path)
+                        self._delete_existing(self.output_path)
 
         # the case that the data_schema is not specified,
         # check for any existing file at output_path to
@@ -321,49 +396,50 @@ class Archiver(BaseAbstract):
     # a function to convert the zarr file to other formats
     def _to_file(self,
                  dataset: xr.Dataset,
-                 output_dir: str | Path,
+                 output_dir: str | Path | S3Path,
                  mode: str | None = None,
                  region: dict | None = None):
 
         # only supports netcdf and zarr
         if isinstance(output_dir, str):
             output_dir = Path(output_dir)
-        suffix = output_dir.suffix.lower()
+        suffix = output_dir.name.split('.')[-1].lower()
 
-        if suffix == '.zarr':
+        if suffix == 'zarr':
             dataset.to_zarr(output_dir,
                             mode=mode,
                             region=region,
                             **self.kwargs)
 
-        if suffix == '.nc':
+        if suffix == 'nc':
             mode = mode if mode else 'w'
             dataset.to_netcdf(output_dir,
                               mode=mode,
                               **self.kwargs)
 
+    # a function to remove either local or s3 zarr files
+    def _delete_existing(self,
+                         file_path: Path | S3Path):
+        if isinstance(file_path, S3Path):
+            file_path.delete()
         else:
-            message = f"Unknown file extension {suffix}. "
-            message += "The file writer only supports netcdf"
-
+            if file_path.name.split('.')[-1] == 'nc':
+                file_path.unlink()
+            else:
+                shutil.rmtree(file_path)
+            
     # a function to read a xarray dataset from disk
     def _open_file(self,
-                   output_dir: str | Path,
+                   output_dir: str | Path | S3Path,
                    **kwargs):
 
         # only supports zarr and netcdf
-        suffix = output_dir.suffix.lower()
-        if suffix == '.zarr':
+        suffix = output_dir.name.split('.')[-1].lower()
+        if suffix == 'zarr':
             return xr.open_zarr(output_dir, **kwargs)
 
-        elif suffix == '.nc':
+        elif suffix == 'nc':
             return xr.open_dataset(output_dir, **kwargs)
-
-        else:
-            message = f"Unknown file extension {suffix}. "
-            message += "The file reader only supports zarr "
-            message += "and netcdf extensions."
-            raise NotImplementedError(message)
     
     # a function to add axis to pred dict if the number
     # of axis in pred is not equal to the number of coords
@@ -524,7 +600,7 @@ class Archiver(BaseAbstract):
         # if we don't have task_bytes then we push the
         # changes to the stats zarr file immediately
         if self.task_bytes is None:
-            if Path(self.output_path_stats).exists():
+            if self.output_path_stats.exists():
                 data1 = self._open_file(self.output_path_stats)
                 data1 = data1.to_array(dim='features')
                 if set(data1.to_dataset('features').data_vars.keys()) != set(data.to_dataset('features').data_vars.keys()):
@@ -643,4 +719,4 @@ class Archiver(BaseAbstract):
         
         # remove the stats zarr file if asked
         if not self.keep_stats:
-            shutil.rmtree(self.output_path_stats)
+            self._delete_existing(self.output_path_stats)
