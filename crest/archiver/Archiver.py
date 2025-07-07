@@ -61,7 +61,8 @@ class Archiver(BaseAbstract):
         path. If no file extension is given, it will default to using the
         zarr format. The dataset located at the output_path (if exists) is
         treated as the default data_schema for storing predicted
-        values and it must have at least one variable.
+        values and it must have at least one variable. output_path
+        can also be an s3 URI starts with 's3://'.
 
     data_schema      : Datafile | Dataset | dict, Optional
         This argument pertains to a Datafile used for storing predicted
@@ -119,11 +120,13 @@ class Archiver(BaseAbstract):
 
     Raises
     ------
-    FileExistsError
-        - When temp.zarr file exists in the output_path directory.
-          This file name is saved for the Archiver process when
-          the requested output file format is something other than
-          zarr.
+    ValueError
+        - When the file extension of the output_path is not nc or zarr.
+        - When the output_path is an s3 URI but aws_credentials_path is None.
+    NotImplementedError
+        - When the output_path is an s3 URI but the file extension is nc.
+    FileNotFoundError
+        - When aws_credentials_path does not exist.
 
     """
 
