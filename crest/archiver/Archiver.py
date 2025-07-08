@@ -127,6 +127,8 @@ class Archiver(BaseAbstract):
         - When the output_path is an s3 URI but the file extension is nc.
     FileNotFoundError
         - When aws_credentials_path does not exist.
+    FileExistsError
+        - When the output_path directory does not exist.
 
     """
 
@@ -227,6 +229,10 @@ class Archiver(BaseAbstract):
             suffix = self.output_path.name.split('.')[-1].lower()
             if suffix not in ['nc', 'zarr']:
                 raise ValueError(f'invalid output file extension: {suffix}')
+            
+        
+        if not self.output_path.parent.exists():
+            raise FileExistsError(f'{self.output_path.parent} does not exist')
         # specify the name of the stats zarr file
         self.output_path_stats = self.output_path.parent.joinpath(f'{self.output_path.stem}_stats.zarr')
 
