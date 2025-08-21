@@ -1,9 +1,10 @@
-from ..model.GriddedModel import GriddedModel
-from ..configuration.Config import Config
+from crest.model.GriddedModel import GriddedModel
+from crest.configuration.Config import Config
 import os
 import logging
 
 logger = logging.getLogger(__name__)
+
 
 class DigitalReplicaEngine():
     """ Digital Replica Engine performs an update on a specified model.
@@ -11,7 +12,7 @@ class DigitalReplicaEngine():
         The update of the model is performed with the data specified in the config. 
     """
 
-    def __init__(self, config: str):
+    def __init__(self, config: str, model_loader=None, process_dataset=None):
         """ Initializes the DigitalReplicaEngine. 
 
         Parameters
@@ -25,6 +26,9 @@ class DigitalReplicaEngine():
         logger.info(f'Load configuration.')
         self.config = Config(config)
 
+        self.model_loader = model_loader
+        self.process_dataset = process_dataset
+
         logger.info(
             'Create the directory required to store all out-going data.')
         if not os.path.exists(self.config.output_path):
@@ -32,9 +36,7 @@ class DigitalReplicaEngine():
             os.makedirs(os.path.join(self.config.output_path, 'logs'))
 
         logger.info(f'Initialize Gridded Model to initiate an update.')
-        self.gridModel = GriddedModel(self.config)
-        if (not self.gridModel.init_dataset()):
-            raise RuntimeError('Could not initialize data.')
+        self.gridModel = GriddedModel(self.config, alt_model_loader=model_loader)
 
     def reset_config(self, new_config: Config | str):
         """ Set self.config to different configuration. 
@@ -59,8 +61,7 @@ class DigitalReplicaEngine():
                 self.config = new_config
 
             self.gridModel = GriddedModel(self.config)
-            if (not self.gridModel.init_dataset()):
-                raise RuntimeError('Could not initialize data.')
+
         except Exception as e:
             logger.exception(f'Could not set configuration for DRE. {e=}')
             return False
@@ -98,22 +99,21 @@ class DigitalReplicaEngine():
 
             logger.info(f'Reinitialize Gridded Model.')
             self.gridModel = GriddedModel(self.config)
-            if (not self.gridModel.init_dataset()):
-                raise RuntimeError('Could not initialize data.')
-            
+
             return True
         except Exception as e:
             logger.exception(f'Could not update config: {e}')
             return False
-        
+
     def nowcast(self):
         """ Updating the model based on data specified in config. """
 
         try:
             logging.info(f'Update dataset.')
-            self.gridModel.init_dataset()
+            self.gridModel.init_dataset(process_dataset=self.process_dataset)
 
             logging.info(f'Update DigitalReplicaEngine')
-            self.gridModel.predict()
+            return self.gridModel.predict()
         except:
             logger.exception('Could not complete nowcast.')
+            return False

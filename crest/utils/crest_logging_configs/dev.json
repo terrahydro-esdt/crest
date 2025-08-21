@@ -2,8 +2,11 @@
     "version": 1,
     "disable_existing_loggers": false,
     "formatters": {
+      "plain": {
+        "format": "[%(levelname)s] %(asctime)s - %(name)s - %(message)s"
+      },
       "json": {
-        "()": "crest.utils.setup_logging.CrestJSONFormatter",
+        "()": "crest.utils.crest_logger.CrestJSONFormatter",
         "fmt_keys": {
           "level": "levelname",
           "message": "message",
@@ -20,15 +23,16 @@
       "file": {
         "class": "logging.handlers.RotatingFileHandler",
         "level": "DEBUG",
-        "formatter": "json",
-        "filename": "logs/crest.log.jsonl",
+        "formatter": "plain",
+        "encoding": "utf-8",
+        "filename": "${LOG_FILE}",
         "maxBytes": 1000000,
         "backupCount": 3
       },
       "stderr": {
         "class": "logging.StreamHandler",
         "level": "WARNING",
-        "formatter": "json",
+        "formatter": "plain",
         "stream": "ext://sys.stderr"
       }
     },
