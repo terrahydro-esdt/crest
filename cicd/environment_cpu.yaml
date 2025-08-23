@@ -47,7 +47,7 @@ dependencies:
     - opencv-python==4.11.0.86
     - osmnx==2.0.3
     - geopandas==1.0.1
-    - sparse>==0.14.0
+    - sparse==0.14.0
 
       
   # FAISS
