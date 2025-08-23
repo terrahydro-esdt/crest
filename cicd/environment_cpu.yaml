@@ -37,7 +37,7 @@ dependencies:
   - s3path=0.6.2
   - pyvis=0.2.0
   - python-fastjsonschema=2.21.2
-  - sparse=0.17.0
+  - sparse>=0.15,<0.16
   - nbconvert=7.16.6
   - nbconvert-pandoc=7.16.6
   - pandoc=3.7.0.2
