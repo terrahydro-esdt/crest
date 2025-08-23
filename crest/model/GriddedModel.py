@@ -5,6 +5,8 @@ from crest.data.batching.Batcher import Batcher
 from crest.data.loading.Datafile import Datafile
 from crest.data.loading.Dataset import Dataset
 from crest.configuration.Config import Config
+from crest.utils import Stopwatch
+from functools import cached_property, reduce
 
 from tqdm import tqdm
 import logging
@@ -48,10 +50,20 @@ class GriddedModel():
         self.models = self.load_model(alt_model_loader=alt_model_loader)
         logger.info('Initialized Gridded Model')
 
-    def stamp_operation(self, operation: str):
-        """ Adds an operation stamp once completed. """
+    @cached_property
+    def benchmark(self):
+        """ Return a Stopwatch function for benchmarking """
+        debug = print if not hasattr(self, 'logger') else self.logger.debug
+        return lambda label, logger=debug, **kwargs: Stopwatch(**({
+            'message' : f'\t\t\t{self}.{label}',
+            'logger'  : logger,
+            'silent'  : not hasattr(self, 'logger'),
+        } | kwargs))
 
-        data = {
+    def stamp_operation(self, operation: str):
+        """ Appends the operation data to a JSON file. """
+
+        operation_data = {
             "timestamp": pd.Timestamp.now().isoformat(),
             "operation": operation,
             "model": self.config.model_path,
@@ -59,12 +71,6 @@ class GriddedModel():
             "region": self.region,
             "extent": self.extent
         }
-
-        logger.debug(f"Adding operation data: {data}")
-        self.operation_data.append(data)
-
-    def append_operation_data(self):
-        """ Appends the operation data to a JSON file. """
 
         json_file = os.path.join(self.config.output_path, 'operation_data.json')
 
@@ -80,13 +86,11 @@ class GriddedModel():
             logger.debug(f"No existing operation data file found at {json_file}")
             op_data = []
 
-        op_data.extend(self.operation_data)
+        op_data.append(operation_data)
 
         with open(json_file, 'w') as f:
             logger.debug(f"Writing operation data to {json_file}")
             json.dump(op_data, f, indent=4)
-
-        self.operation_data = []
 
     def _resolve_function_path(self, path: str):
         """ Resolves a function path to the actual function object. """
@@ -118,54 +122,57 @@ class GriddedModel():
 
     def init_model_dataset(self):
         """ Initializes the model dataset class if specified in the config. """
+        with self.benchmark(f'init_model_dataset'):
 
-        logger.debug("Initializing model dataset class")
+            logger.debug("Initializing model dataset class")
 
-        if not hasattr(self.config, 'model_dataset_class') or not self.config.model_dataset_class:
-            logger.debug("No model_dataset_class defined in config")
-            return
+            if not hasattr(self.config, 'model_dataset_class') or not self.config.model_dataset_class:
+                logger.debug("No model_dataset_class defined in config")
+                return
 
-        try:
-            base_model_class = self._resolve_function_path(
-                self.config.model_dataset_class)
+            try:
+                base_model_class = self._resolve_function_path(
+                    self.config.model_dataset_class)
 
-            class ModelDataset(base_model_class):
-                outputs = {}
+                class ModelDataset(base_model_class):
+                    outputs = {}
 
-            self.model_dataset_class = ModelDataset
-            logger.debug("Model dataset class successfully created")
+                self.model_dataset_class = ModelDataset
+                logger.debug("Model dataset class successfully created")
 
-            print("DEBUG: model_dataset_class =", self.model_dataset_class)
-            print("DEBUG: type =", type(self.model_dataset_class))
-        except (ImportError, AttributeError) as e:
-            logger.exception(
-                f"Error importing model_dataset_class '{self.config.model_dataset_class}'")
-            raise ImportError(
-                f"Could not import model_dataset_class '{self.config.model_dataset_class}': {e}")
+                print("DEBUG: model_dataset_class =", self.model_dataset_class)
+                print("DEBUG: type =", type(self.model_dataset_class))
+            except (ImportError, AttributeError) as e:
+                logger.exception(
+                    f"Error importing model_dataset_class '{self.config.model_dataset_class}'")
+                raise ImportError(
+                    f"Could not import model_dataset_class '{self.config.model_dataset_class}': {e}")
 
     def load_model(self, alt_model_loader=None):
         """ Loads the model(s) specified in the configuration."""
 
-        logger.debug("Loading model(s)")
-        models = []
-        if isinstance(self.config.model_path, list):
-            for i, model_path in enumerate(self.config.model_path):
-                model_type = self.config.model_type if not isinstance(
-                    self.config.model_type, list) else self.config.model_type[i]
-                model = self._load_single_model(
-                    model_path, alt_model_loader=alt_model_loader, model_type=model_type)
-                models.append(model)
-        elif isinstance(self.config.model_path, str):
-            model = self._load_single_model(
-                self.config.model_path, alt_model_loader=alt_model_loader, model_type=self.config.model_type)
-            models.append(model)
-        else:
-            logger.error("model_path in config has an invalid format")
-            raise Exception(
-                'model_path in yaml config is in an unrecognized format.')
+        with self.benchmark(f'load_model'):
 
-        logger.info(f"Loaded {len(models)} model(s)")
-        return models
+            logger.debug("Loading model(s)")
+            models = []
+            if isinstance(self.config.model_path, list):
+                for i, model_path in enumerate(self.config.model_path):
+                    model_type = self.config.model_type if not isinstance(
+                        self.config.model_type, list) else self.config.model_type[i]
+                    model = self._load_single_model(
+                        model_path, alt_model_loader=alt_model_loader, model_type=model_type)
+                    models.append(model)
+            elif isinstance(self.config.model_path, str):
+                model = self._load_single_model(
+                    self.config.model_path, alt_model_loader=alt_model_loader, model_type=self.config.model_type)
+                models.append(model)
+            else:
+                logger.error("model_path in config has an invalid format")
+                raise Exception(
+                    'model_path in yaml config is in an unrecognized format.')
+
+            logger.info(f"Loaded {len(models)} model(s)")
+            return models
 
     def _load_single_model(self, model_path, alt_model_loader=None, model_type=None):
         """ Loads a single model from the specified path. """
@@ -183,130 +190,131 @@ class GriddedModel():
 
     def init_dataset(self, process_dataset: callable = None):
         """ Initializes the dataset based on the configuration and extent strategy. """
+        with self.benchmark(f'init_dataset'):
 
-        try:
-            logger.info("Updating Extents")
-            self.extent = self.extent_strategy.update_extents()
+            try:
+                logger.info("Updating Extents")
+                self.extent = self.extent_strategy.update_extents()
 
-            logger.debug(f"Updated extent: {self.extent}")
+                logger.debug(f"Updated extent: {self.extent}")
 
-            if not self.is_base_node_type:
-                logger.info("Initializing dataset using Datafile list")
+                if not self.is_base_node_type:
+                    logger.info("Initializing dataset using Datafile list")
 
-                self.data = Dataset([Datafile(
-                    location=self.config.locations[source],
-                    features=self.config.features[source],
-                    window_depth=self.config.depth[source],
-                    extent=self.extent[source],
-                    region=self.region
-                ) for source in self.config.features])
-            else:
-                target_dt = self.config.process_dataset_args['target_dt']
-                start_dt = (pd.Timestamp(target_dt[0]) - pd.Timedelta(hours=(
-                    self.config.variable_depth['datetime'][0] + 1))).strftime('%Y-%m-%d %H:%M:%S')
-                dt_range = {'datetime': [start_dt, target_dt if isinstance(
-                    target_dt, str) else target_dt[-1]]}
-                self.extent = self.extent | dt_range
+                    self.data = Dataset([Datafile(
+                        location=self.config.locations[source],
+                        features=self.config.features[source],
+                        window_depth=self.config.depth[source],
+                        extent=self.extent[source],
+                        region=self.region
+                    ) for source in self.config.features])
+                else:
+                    target_dt = self.config.process_dataset_args['target_dt']
+                    start_dt = (pd.Timestamp(target_dt[0]) - pd.Timedelta(hours=(
+                        self.config.variable_depth['datetime'][0] + 1))).strftime('%Y-%m-%d %H:%M:%S')
+                    dt_range = {'datetime': [start_dt, target_dt if isinstance(
+                        target_dt, str) else target_dt[-1]]}
+                    self.extent = self.extent | dt_range
 
-                print(f'{self.extent}=')
+                    print(f'{self.extent}=')
 
-                datafile_kwargs = {'*': {'extent': self.extent}}
-                for key, funcs in self.preprocessors.items():
-                    datafile_kwargs[key] = {'preprocessors': funcs}
+                    datafile_kwargs = {'*': {'extent': self.extent}}
+                    for key, funcs in self.preprocessors.items():
+                        datafile_kwargs[key] = {'preprocessors': funcs}
 
-                logger.info('Datafile arguments: ' + str(datafile_kwargs))
-                logger.debug("Calling Dataset.from_models with model class")
+                    logger.info('Datafile arguments: ' + str(datafile_kwargs))
+                    logger.debug("Calling Dataset.from_models with model class")
 
-                self.data = Dataset.from_models(verbose=False, **{
-                    'models': [self.model_dataset_class],
-                    'database_folder': self.config.database_path,
-                    'variable_depths': self.config.variable_depth,
-                    'datafile_kwargs': datafile_kwargs,
-                })
+                    self.data = Dataset.from_models(verbose=False, **{
+                        'models': [self.model_dataset_class],
+                        'database_folder': self.config.database_path,
+                        'variable_depths': self.config.variable_depth,
+                        'datafile_kwargs': datafile_kwargs,
+                    })
 
-            if process_dataset is not None:
-                logger.info("Applying process_dataset function")
-                self.data = process_dataset(
-                    self.data, **self.config.process_dataset_args)
+                if process_dataset is not None:
+                    logger.info("Applying process_dataset function")
+                    self.data = process_dataset(
+                        self.data, **self.config.process_dataset_args)
 
-            if self.data_schema is None:
-                logger.debug("Initializing data_schema from dataset")
-                self.data_schema = {
-                    'datetime': self.data[self.config.data_schema_ind]._raw_data['datetime'],
-                    'latitude': self.data[self.config.data_schema_ind].data['latitude'],
-                    'longitude': self.data[self.config.data_schema_ind].data['longitude']
-                }
+                if self.data_schema is None:
+                    logger.debug("Initializing data_schema from dataset")
+                    self.data_schema = {
+                        'datetime': self.data[self.config.data_schema_ind]._raw_data['datetime'],
+                        'latitude': self.data[self.config.data_schema_ind].data['latitude'],
+                        'longitude': self.data[self.config.data_schema_ind].data['longitude']
+                    }
 
-            logger.debug("Caching data")
-            self.data.cache(**(self.config.cache_kwargs['train']))
+                logger.debug("Caching data")
+                self.data.cache(**(self.config.cache_kwargs['train']))
 
-            logger.info(f'Successfully initialized dataset with {self.region}')
-            return True
-        except Exception as e:
-            logger.exception(f'Dataset initialization failed. {e}')
-            return False
+                logger.info(f'Successfully initialized dataset with {self.region}')
+                return True
+            except Exception as e:
+                logger.exception(f'Dataset initialization failed. {e}')
+                return False
 
     def predict(self):
         """ Runs the prediction phase of the model."""
+        with self.benchmark(f'predict'):
+            try:
+                logger.info("Starting prediction phase")
 
-        try:
-            logger.info("Starting prediction phase")
+                batch_predict = Batcher(self.data, **{
+                    'batch_size': self.config.batch_size,
+                    'repeat': self.config.repeat,
+                    'shuffle': self.config.shuffle,
+                    'numblocks': self.config.numblocks,
+                    'workers': self.config.workers,
+                    'seed': self.config.seed
+                })
 
-            batch_predict = Batcher(self.data, **{
-                'batch_size': self.config.batch_size,
-                'repeat': self.config.repeat,
-                'shuffle': self.config.shuffle,
-                'numblocks': self.config.numblocks,
-                'workers': self.config.workers,
-                'seed': self.config.seed
-            })
+                logger.info(
+                    f'Initialized batch_predict with size: {batch_predict.batch_size}')
 
-            logger.info(
-                f'Initialized batch_predict with size: {batch_predict.batch_size}')
+                base_name = self.model.graph.name if not hasattr(
+                    self.config, 'output_name') else self.config.output_name
+                output_dir = (os.path.join(
+                    self.config.output_path, base_name)) + '.zarr'
 
-            base_name = self.model.graph.name if not hasattr(
-                self.config, 'output_name') else self.config.output_name
-            output_dir = (os.path.join(
-                self.config.output_path, base_name)) + '.zarr'
+                logger.info(f'Outputting predictions to {output_dir}')
 
-            logger.info(f'Outputting predictions to {output_dir}')
+                if os.path.exists(output_dir):
+                    output_data = xr.open_zarr(output_dir)
+                    print('output_data', output_data.coords)
 
-            if os.path.exists(output_dir):
-                output_data = xr.open_zarr(output_dir)
-                print('output_data', output_data.coords)
+                logger.info(f'data_schema is initialized with first row of data')
 
-            logger.info(f'data_schema is initialized with first row of data')
+                with Archiver(output_path=output_dir,
+                            data_schema=self.data_schema,
+                            datafile_index=self.config.coordinate_df,
+                            task_bytes=1e9,
+                            overwrite=False) as a:
 
-            with Archiver(output_path=output_dir,
-                          data_schema=self.data_schema,
-                          datafile_index=self.config.coordinate_df,
-                          task_bytes=1e9,
-                          overwrite=False) as a:
+                    with batch_predict as batcher:
+                        logger.debug("Entered batcher context")
 
-                with batch_predict as batcher:
-                    logger.debug("Entered batcher context")
+                        if hasattr(self, 'model_dataset_class') and self.model_dataset_class is not None:
+                            model_inputs = list(
+                                self.model_dataset_class.input_spec)
+                        else:
+                            model_inputs = self.config.inputs
 
-                    if hasattr(self, 'model_dataset_class') and self.model_dataset_class is not None:
-                        model_inputs = list(
-                            self.model_dataset_class.input_spec)
-                    else:
-                        model_inputs = self.config.inputs
+                        batcher_archiver = batch_for_archiver(batcher,
+                                                            model_inputs=model_inputs,
+                                                            coordinate_df=self.config.coordinate_df,
+                                                            dataset=self.data)
 
-                    batcher_archiver = batch_for_archiver(batcher,
-                                                          model_inputs=model_inputs,
-                                                          coordinate_df=self.config.coordinate_df,
-                                                          dataset=self.data)
+                        for coord, value in tqdm(batcher_archiver):
+                            pred = {}
+                            for model in self.models:
+                                pred = pred | model.predict_on_batch(value)
 
-                    for coord, value in tqdm(batcher_archiver):
-                        pred = {}
-                        for model in self.models:
-                            pred = pred | model.predict_on_batch(value)
+                            a.archive(coord, pred)
 
-                        a.archive(coord, pred)
-
-            self.stamp_operation('predict')
-            logger.info("Prediction phase completed successfully")
-            return True
-        except Exception as e:
-            logger.exception('Could not complete predicting.')
-            return False
+                self.stamp_operation('predict')
+                logger.info("Prediction phase completed successfully")
+                return True
+            except Exception as e:
+                logger.exception('Could not complete predicting.')
+                return False
