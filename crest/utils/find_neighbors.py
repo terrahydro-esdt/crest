@@ -210,7 +210,7 @@ def implode(table):#: np.ndarray | pl.DataFrame):
     # Exclude one name from the full list
     # Groupby all names except one, then concat into a comma-delimited string
     excl = lambda remove: list( set(names) - {remove} )
-    join = lambda tbl, n: tbl.groupby(excl(n)).agg(pl.col(n).str.concat(','))
+    join = lambda tbl, n: tbl.group_by(excl(n)).agg(pl.col(n).str.concat(','))
 
     if isinstance(table, (pl.DataFrame, pl.LazyFrame)):
         dtype = table.dtypes[0]

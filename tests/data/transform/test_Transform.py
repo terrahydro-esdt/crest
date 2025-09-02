@@ -57,6 +57,7 @@ def check_equality(transform, data, transformed, tol=1e-5):
         assert(np.isclose(data[k], transformed[k], atol=tol).all()), err_vals
 
 
+@pytest.mark.filterwarnings('ignore::RuntimeWarning')
 @pytest.mark.skip_on_fail
 @pytest.mark.parametrize('datastats', all_examples)
 @pytest.mark.parametrize('transform', Transform.available_transforms)

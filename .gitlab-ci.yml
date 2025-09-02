@@ -1,4 +1,4 @@
-image: continuumio/miniconda3:latest
+image: condaforge/miniforge3
 
 before_script:
     # Switch to using libmamba solver:
@@ -6,7 +6,7 @@ before_script:
     - conda install -n base conda-libmamba-solver -q
     - conda config --set solver libmamba
     # - conda install -n base -c conda-forge mamba
-    - apt-get update && apt-get install -y libglib2.0-0 libsm6 libxext6 libxrender-dev libtiff-dev libgl1 libgl1-mesa-glx build-essential libgdal-dev gdal-bin
+    - apt-get update && apt-get install -y libglib2.0-0 libsm6 libxext6 libxrender-dev libtiff-dev libgl1 libglx-mesa0 build-essential libgdal-dev gdal-bin
     # libclang
     - conda update -n base -c conda-forge conda -y
 
@@ -14,9 +14,9 @@ before_script:
 test:
   script:
     # - conda env create -f cicd/environment_cpu.yaml -q
-    - conda env create -f cicd/environment_cpu.yaml -q
+    - conda env create -f cicd/environment.yaml -q
     - source activate crest_cpu
-      #- pytest --color=yes tests -m"not integtest"
+    - pytest --color=yes tests
       #- pytest --color=yes tests -m"integtest"
   allow_failure: false
 

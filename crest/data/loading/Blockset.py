@@ -204,7 +204,7 @@ class Blockset(BaseSet):
         # array (in order to satisfy dask's built in assumptions)
         kwargs = {
             'meta'             : (0, int), 
-            'token'            : f'product{id(matches)}',
+            #'token'            : f'product{id(matches)}',
             'divisions'        : [0] + divs.tolist(), 
             'enforce_metadata' : False,
             'features'         : self.feature_subset(features),

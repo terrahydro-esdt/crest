@@ -10,7 +10,7 @@ from tensorflow.keras.layers import Dense, Activation
 
 def setup_seqmodel():
     model = Sequential()
-    model.add(Dense(32, input_dim=784))
+    model.add(Dense(32))
     model.add(Activation('relu'))
     model.add(Dense(10))
     model.add(Activation('softmax'))
@@ -19,7 +19,7 @@ def setup_seqmodel():
 
 def setup_kerasmodel():
     layers = [keras.layers.Dense(32, activation="relu"), keras.layers.Dropout(0.5), keras.layers.Dense(10, activation="softmax")]
-    inputs = tf.keras.Input(shape=(32, ))
+    inputs = tf.keras.Input(shape=(32, ),name='x')
 
     outputs = inputs
     for layer in layers:
@@ -30,19 +30,17 @@ def setup_kerasmodel():
     return model
 
 def setup_keraslayers():
-    return Dense(32, input_dim=784)
+    return Dense(32)
 
 def test_init():
     model = setup_kerasmodel()
-    model.inputs = {"x": tf.TensorSpec([None, 32], tf.float32)}
-    model.outputs = {"y": tf.TensorSpec([None, 5], tf.float32)}
 
     node = KerasNode(model, name='test', inputs={"x": tf.TensorSpec(
-        [None, 32], tf.float32)}, outputs={"y": tf.TensorSpec([None, 10], tf.float32)})
+        [None, 32], tf.float32,name='x')}, outputs={"y": tf.TensorSpec([None, 10], tf.float32,name='y')})
 
     inp = TensorSpec((None, 32), 'float32', None)
     out = TensorSpec((None, 10), 'float32', None)
- 
+
     assert node.inputs["x"].shape == inp.shape
     assert node.inputs["x"].dtype == inp.dtype
 

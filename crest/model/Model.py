@@ -65,7 +65,7 @@ class Model(BaseModel):
 
         logger.info(f'Completed Initializing CREST Model')
 
-    def _make_batcher(self, dataset, **kwargs) -> Batcher:
+    def _make_batcher(self, dataset, **kwargs):
         """
         Makes a Batcher
 
@@ -80,7 +80,7 @@ class Model(BaseModel):
 
         """
         logger.info(f'Called _make_batcher, making batcher from dataset')
-
+        
         if isinstance(dataset, Batcher):
             return dataset
 
@@ -174,7 +174,7 @@ class Model(BaseModel):
             'shuffle': kwargs['shuffle'],
             'workers': 0
         }
-
+        
         training_batcher = self._make_batcher(dataset, **train_kwargs)
 
         # Validation Batcher
@@ -193,11 +193,18 @@ class Model(BaseModel):
             kwargs['validation_data'] = self._make_batcher(
                 kwargs['validation_data'], **valid_kwargs)
 
-            kwargs['validation_data'] = self._make_batcher(
-                kwargs['validation_data'], **valid_kwargs)
+        if 'workers' in kwargs:
+            kwargs.pop('workers')
+
+        def generator(x):
+            yield from x
 
         with training_batcher as data, kwargs.get('validation_data', nullcontext()):
-            self.model.fit(data, **kwargs)
+
+            if 'validation_data' in kwargs:
+                kwargs['validation_data'] = generator(kwargs['validation_data'])
+
+            self.model.fit(generator(data), **kwargs)
 
     def predict(self, dataset: Dataset | StructuredDataset | Batcher | dict, coords=[], **kwargs) -> dict:
         """
@@ -415,10 +422,13 @@ class Model(BaseModel):
             'features': [list(self.inputs), list(self.outputs)],
             'shuffle': False
         }
+        
+        def generator(x):
+            yield from x
 
         batcher = self._make_batcher(dataset, **batch_kwargs)
         with batcher as data:
-            return self.model.evaluate(data, **kwargs)
+            return self.model.evaluate(generator(data), **kwargs)
 
     def save_weights(self):
         """

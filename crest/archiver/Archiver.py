@@ -264,7 +264,7 @@ class Archiver(BaseAbstract):
                         coords = list(set(c for d in self.data_schema for c in d.coords if c != 'features'))
 
                         finest_resolution = dict.fromkeys(coords, np.inf)
-                        finest_min = dict.fromkeys(coords, np.NINF)
+                        finest_min = dict.fromkeys(coords, -np.inf)
                         finest_max = dict.fromkeys(coords, np.inf)
                         finest_coordinate = dict.fromkeys(coords)
                         finest_df_name = dict.fromkeys(coords)

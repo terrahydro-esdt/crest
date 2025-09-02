@@ -18,7 +18,7 @@ latitude = np.linspace(-90, 90, 90)
 longitude = np.linspace(-180, 180, 90)
 datetime = pd.date_range('2015-04-01 00:00:00',
                          '2015-08-31 23:00:00',
-                         freq='H').values
+                         freq='h').values
 
 coords = ['datetime', 'latitude', 'longitude']
 
@@ -126,7 +126,7 @@ latitude = np.linspace(-90, 90, 60)
 longitude = np.linspace(-180, 180, 180)
 datetime = pd.date_range('2015-04-01 00:00:00',
                          '2015-08-31 23:00:00',
-                         freq='H').values
+                         freq='h').values
 
 
 var2 = da.full(shape=(datetime.size, latitude.size, longitude.size),
@@ -195,7 +195,7 @@ def test_create_schema_dataset_no_index():
     
     datetime_out = pd.date_range('2015-04-01 00:00:00',
                                  '2015-05-01 00:00:01',
-                                 freq='H').values
+                                 freq='h').values
     cond3 = np.all(np.array(a.datetime,
                             dtype='datetime64[ns]') == datetime_out)
     
@@ -245,7 +245,6 @@ def test_create_data_schema_index_dict():
     assert a.out_datafile['datetime'][0] == _DF1.data['datetime'][0]
 
 def test_archiver():
-
     a = Archiver(output_path='tests/archiver/test3.zarr',
                  data_schema=Dataset([_DF1, _DF2]),)
 

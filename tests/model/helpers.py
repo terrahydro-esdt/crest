@@ -161,7 +161,7 @@ def AddKerasModel():
 
     layers = [keras.layers.Dense(32, activation="relu"), keras.layers.Dropout(
         0.5), keras.layers.Dense(10, activation="softmax")]
-    inputs = tf.keras.Input(shape=(32, ))
+    inputs = tf.keras.Input(shape=(32, ),name='x')
 
     outputs = inputs
     for layer in layers:

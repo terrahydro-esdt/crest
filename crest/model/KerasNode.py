@@ -81,7 +81,13 @@ class KerasNode(HierarchalTensorGraph):
             # Create a keras model with the given layer
             key_x = list(self.inputs.keys())[0]
             key_y = list(self.outputs.keys())[0]
-            x = tf.keras.Input(type_spec=self.inputs[key_x].tf)
+            # Compatibility with future TF versions
+            ts = self.inputs[key_x].tf
+            try:
+                x = tf.keras.Input(type_spec=ts)
+            except: 
+
+                x = tf.keras.Input(shape=ts.shape[1:], dtype=ts.dtype, name=key_x)
             y = keras_obj(x)
 
             self.keras_obj = keras.Model(inputs={key_x: x}, outputs={key_y: y})
@@ -105,7 +111,13 @@ class KerasNode(HierarchalTensorGraph):
             # Create a keras model with the given layer
             key_x = list(self.inputs.keys())[0]
             key_y = list(self.outputs.keys())[0]
-            x = tf.keras.Input(type_spec=self.inputs[key_x].tf)
+            # Compatibility with future TF versions
+            ts = self.inputs[key_x].tf
+            try:
+                x = tf.keras.Input(type_spec=ts)
+            except: 
+
+                x = tf.keras.Input(shape=ts.shape[1:], dtype=ts.dtype, name=key_x)
             y = keras_obj(x)
 
             self.keras_obj = keras.Model(inputs={key_x: x}, outputs={key_y: y})
