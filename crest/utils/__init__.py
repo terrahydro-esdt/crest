@@ -12,3 +12,4 @@ from .silence_warnings import silence_warnings
 from .Stopwatch        import Stopwatch
 from .synthetic_data   import synthetic_data
 from .TimedHandler     import TimedHandler
+from .sys_metrics       import SysMetrics

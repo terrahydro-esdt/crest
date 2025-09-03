@@ -6,7 +6,7 @@ from crest.data.loading.Datafile import Datafile
 from crest.data.loading.Dataset import Dataset
 from crest.configuration.Config import Config
 from crest.utils import Stopwatch
-from functools import cached_property, reduce
+from functools import cached_property
 
 from tqdm import tqdm
 import logging
@@ -17,6 +17,7 @@ import pandas as pd
 import json
 
 from crest.model.ExtentStrategy import ExtentStrategy
+from crest.utils.sys_metrics import SysMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,8 @@ class GriddedModel():
 
     def __init__(self, config: Config, alt_model_loader=None):
         logger.debug("GriddedModel: Starting __init__")
+
+        self.sm = SysMetrics()
         self.config = config
         self.extent = self.config.extent
         self.region = self.config.region
@@ -53,44 +56,11 @@ class GriddedModel():
     @cached_property
     def benchmark(self):
         """ Return a Stopwatch function for benchmarking """
-        debug = print if not hasattr(self, 'logger') else self.logger.debug
-        return lambda label, logger=debug, **kwargs: Stopwatch(**({
-            'message' : f'\t\t\t{self}.{label}',
+        return lambda label, logger=logger.debug, **kwargs: Stopwatch(**({
+            'message' : f'GriddedModel.{label}',
             'logger'  : logger,
-            'silent'  : not hasattr(self, 'logger'),
+            'silent'  : {'time': 0.05}, # Don't log when time < 0.05 seconds
         } | kwargs))
-
-    def stamp_operation(self, operation: str):
-        """ Appends the operation data to a JSON file. """
-
-        operation_data = {
-            "timestamp": pd.Timestamp.now().isoformat(),
-            "operation": operation,
-            "model": self.config.model_path,
-            "framework": self.config.framework,
-            "region": self.region,
-            "extent": self.extent
-        }
-
-        json_file = os.path.join(self.config.output_path, 'operation_data.json')
-
-        if json_file and os.path.exists(json_file):
-            with open(json_file, 'r') as f:
-                logger.debug(f"Appending operation data from {json_file}")
-                try:
-                    op_data = json.load(f)
-                except json.JSONDecodeError:
-                    logger.warning(f"JSON decode error for {json_file}, starting with empty list")
-                    op_data = []
-        else:
-            logger.debug(f"No existing operation data file found at {json_file}")
-            op_data = []
-
-        op_data.append(operation_data)
-
-        with open(json_file, 'w') as f:
-            logger.debug(f"Writing operation data to {json_file}")
-            json.dump(op_data, f, indent=4)
 
     def _resolve_function_path(self, path: str):
         """ Resolves a function path to the actual function object. """
@@ -120,33 +90,33 @@ class GriddedModel():
                 raise ImportError(
                     f"Could not load preprocessors for {key}: {e}")
 
+    
     def init_model_dataset(self):
         """ Initializes the model dataset class if specified in the config. """
-        with self.benchmark(f'init_model_dataset'):
 
-            logger.debug("Initializing model dataset class")
+        logger.debug("Initializing model dataset class")
 
-            if not hasattr(self.config, 'model_dataset_class') or not self.config.model_dataset_class:
-                logger.debug("No model_dataset_class defined in config")
-                return
+        if not hasattr(self.config, 'model_dataset_class') or not self.config.model_dataset_class:
+            logger.debug("No model_dataset_class defined in config")
+            return
 
-            try:
-                base_model_class = self._resolve_function_path(
-                    self.config.model_dataset_class)
+        try:
+            base_model_class = self._resolve_function_path(
+                self.config.model_dataset_class)
 
-                class ModelDataset(base_model_class):
-                    outputs = {}
+            class ModelDataset(base_model_class):
+                outputs = {}
 
-                self.model_dataset_class = ModelDataset
-                logger.debug("Model dataset class successfully created")
+            self.model_dataset_class = ModelDataset
+            logger.debug("Model dataset class successfully created")
 
-                print("DEBUG: model_dataset_class =", self.model_dataset_class)
-                print("DEBUG: type =", type(self.model_dataset_class))
-            except (ImportError, AttributeError) as e:
-                logger.exception(
-                    f"Error importing model_dataset_class '{self.config.model_dataset_class}'")
-                raise ImportError(
-                    f"Could not import model_dataset_class '{self.config.model_dataset_class}': {e}")
+            logger.debug("Model_dataset_class =", self.model_dataset_class)
+            logger.debug("Model type =", type(self.model_dataset_class))
+        except (ImportError, AttributeError) as e:
+            logger.exception(
+                f"Error importing model_dataset_class '{self.config.model_dataset_class}'")
+            raise ImportError(
+                f"Could not import model_dataset_class '{self.config.model_dataset_class}': {e}")
 
     def load_model(self, alt_model_loader=None):
         """ Loads the model(s) specified in the configuration."""
@@ -159,12 +129,20 @@ class GriddedModel():
                 for i, model_path in enumerate(self.config.model_path):
                     model_type = self.config.model_type if not isinstance(
                         self.config.model_type, list) else self.config.model_type[i]
+                    
+                    model_version = self.config.model_version if not isinstance(
+                        self.config.model_version, list) else self.config.model_version[i]
+                    
                     model = self._load_single_model(
                         model_path, alt_model_loader=alt_model_loader, model_type=model_type)
+                    
+                    self.sm.record_model_info(name=model.name, path=model_path, version=model_version)
                     models.append(model)
             elif isinstance(self.config.model_path, str):
                 model = self._load_single_model(
                     self.config.model_path, alt_model_loader=alt_model_loader, model_type=self.config.model_type)
+                
+                self.sm.record_model_info(name=model.name, path=self.config.model_path, version=self.config.model_version)
                 models.append(model)
             else:
                 logger.error("model_path in config has an invalid format")
@@ -216,7 +194,12 @@ class GriddedModel():
                         target_dt, str) else target_dt[-1]]}
                     self.extent = self.extent | dt_range
 
-                    print(f'{self.extent}=')
+                    logger.debug(f'{self.extent}=')
+
+                    self.sm.record_dataset_info(
+                        start_dt=start_dt,
+                        end_dt=target_dt if isinstance(target_dt, str) else target_dt[-1]
+                    )
 
                     datafile_kwargs = {'*': {'extent': self.extent}}
                     for key, funcs in self.preprocessors.items():
@@ -249,6 +232,7 @@ class GriddedModel():
                 self.data.cache(**(self.config.cache_kwargs['train']))
 
                 logger.info(f'Successfully initialized dataset with {self.region}')
+
                 return True
             except Exception as e:
                 logger.exception(f'Dataset initialization failed. {e}')
@@ -305,16 +289,21 @@ class GriddedModel():
                                                             coordinate_df=self.config.coordinate_df,
                                                             dataset=self.data)
 
+                        count = 0
                         for coord, value in tqdm(batcher_archiver):
-                            pred = {}
-                            for model in self.models:
-                                pred = pred | model.predict_on_batch(value)
+                            with self.sm.record_batch(batch_idx=count, size=len(value[model_inputs[0]])):
+                                pred = {}
+                                for model in self.models:
+                                    pred = pred | model.predict_on_batch(value)
 
-                            a.archive(coord, pred)
+                                a.archive(coord, pred)
 
-                self.stamp_operation('predict')
+                                count += 1
+
                 logger.info("Prediction phase completed successfully")
+                self.sm.finalize(True)
                 return True
             except Exception as e:
                 logger.exception('Could not complete predicting.')
+                self.sm.finalize(False)
                 return False
