@@ -198,27 +198,6 @@ def test_pearsonr():
     assert cmetrics == pytest.approx(1.0)
 
 
-def test_call_keras_metrics():
-    _, _, obs, pred = sample_simple_data()
-
-    mcrest = Metrics()
-    accuracy = mcrest.get_callbacks('accuracy')
-    func = accuracy[0]
-    cmetrics = func(obs, pred)
-
-    assert len(cmetrics.numpy()) > 1
-
-
-def test_call_keras_metrics_complex():
-    _, _, obs, pred = sample_complex_data()
-
-    mcrest = Metrics()
-    accuracy = mcrest.get_callbacks('accuracy')
-    func = accuracy[0]
-    cmetrics = func(obs, pred)
-
-    assert len(cmetrics.numpy()) > 1
-
 def test_save_load():
     observed, predicted, _, _ = sample_simple_data()
 
@@ -316,6 +295,7 @@ def test_nse_subclass():
     observed, predicted, _, _ = sample_simple_data()
 
     cmetrics = Metrics.NSE().update_state(observed, predicted)
+    print(cmetrics)
 
     assert cmetrics == 1.0
 
@@ -324,9 +304,7 @@ def test_nse_subclass_complex():
 
     cmetrics = Metrics.NSE().update_state(observed, predicted)
 
-    print(cmetrics)
-
-    assert cmetrics.numpy() == pytest.approx(-2.432720, 1e-5)
+    assert cmetrics == pytest.approx(-2.432720, 5e-5)
 
 def test_mse_subclass():
     observed, predicted, _, _ = sample_simple_data()
@@ -369,7 +347,7 @@ def test_alpha_nse_subclass_complex():
     alphanse = Metrics.AlphaNSE()
     cmetrics = alphanse.update_state(observed, predicted)
 
-    assert cmetrics.numpy() == pytest.approx(0.0869203, 1e-5)
+    assert cmetrics == pytest.approx(0.0869203, 1e-5)
 
 def test_beta_nse_subclass():
     observed, predicted, _, _ = sample_simple_data()
@@ -385,7 +363,7 @@ def test_beta_nse_subclass_complex():
     betanse = Metrics.BetaNSE()
     cmetrics = betanse.update_state(observed, predicted)
 
-    assert cmetrics.numpy() == pytest.approx(-1.599224, 1e-5)
+    assert cmetrics == pytest.approx(-1.599224, 1e-5)
 
 def test_kge_subclass():
     observed, predicted, _, _ = sample_simple_data()

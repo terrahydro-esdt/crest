@@ -10,6 +10,7 @@ class TensorSpec(object):
     def __init__(self, *specs):
 
         self.spec_dict = {}
+        print(f'{specs=}')
 
         if len(specs) == 1 and isinstance(specs[0], TensorSpec):
             self.spec_dict['shape'] = self._modify_shape(specs[0].shape)
@@ -66,6 +67,9 @@ class TensorSpec(object):
     def _modify_shape(self, shape):
         if isinstance(shape, tf.TensorShape):
             return tuple(shape.as_list())
+
+        if isinstance(shape,keras.KerasTensor):
+            return tuple(shape.shape)
 
         return shape
 

@@ -252,7 +252,7 @@ class Datafile(BaseAbstract):
         else:
             # If the given location isn't already an xr.Dataset, open it
             if not isinstance(self.location, (S3Path, FSMap)):
-                location = zarr.DirectoryStore(self.location)
+                location = self.location
             else: location = self.location
             raw = xr.open_zarr(location, **self._kwargs)
 
