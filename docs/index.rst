@@ -4,7 +4,6 @@
    :maxdepth: 2
    :caption: Contents:
    
-   overview
    quickstart
    tutorial/index
    examples/index

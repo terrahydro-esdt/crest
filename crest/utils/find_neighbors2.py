@@ -17,7 +17,7 @@ import logging
 from ._bruteforce import *
 from .print_table import print_table
 from .Stopwatch import Stopwatch
-from .entropy import entropy  
+from crest.utils.matchup.bruteforce.utils.entropy import entropy  
 # from .lexsort import lexsort
 
 

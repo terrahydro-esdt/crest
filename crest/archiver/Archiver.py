@@ -35,7 +35,8 @@ def _get_index_from_name(df_name: str, dataset):
         raise ValueError(f'{df_name} not found')
 
 class Archiver(BaseAbstract):
-    """Class which handles inserting the model predictions into the
+    """
+       Class which handles inserting the model predictions into the
        corresponding coordinates of an xarray dataset and write the
        result into disk.
        
@@ -46,10 +47,10 @@ class Archiver(BaseAbstract):
        It then generates two output files:
        
        - A statistics file in Zarr format, which contains the necessary
-       statistical values used to compute the final result.
+         statistical values used to compute the final result.
        
        - The final archived output file, which is produced by applying
-       those statistics and saved in either Zarr or NetCDF format.
+         those statistics and saved in either Zarr or NetCDF format.
 
     Parameters
     ----------
@@ -129,7 +130,6 @@ class Archiver(BaseAbstract):
         - When aws_credentials_path does not exist.
     FileExistsError
         - When the output_path directory does not exist.
-
     """
 
     @property

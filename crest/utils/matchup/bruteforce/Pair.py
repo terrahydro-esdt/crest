@@ -9,7 +9,8 @@ try:                from numba_progress import ProgressBar
 except ImportError: ProgressBar = None 
 
 from .Grid  import Grid
-from .utils import entropy, bruteforce_double, StreamingLogger
+from .utils import bruteforce_double, StreamingLogger
+from crest.utils.matchup.bruteforce.utils.entropy import entropy
 
 
 

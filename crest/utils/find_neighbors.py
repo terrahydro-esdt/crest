@@ -17,8 +17,8 @@ import logging
 # from ._bruteforce import *
 from .print_table import print_table
 from .Stopwatch import Stopwatch
-from .matchup.bruteforce.utils import entropy  
-from .matchup import brute
+from crest.utils.matchup.bruteforce.utils.entropy import entropy  
+from crest.utils.matchup.bruteforce import brute
 # from .lexsort import lexsort
 from .matchup.bruteforce.utils.bruteforce_numba import *
 from .matchup.bruteforce.utils.multiset_numba import multiset_single
