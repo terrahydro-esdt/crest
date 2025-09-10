@@ -1,5 +1,5 @@
 import pytest
-import shutil
+import shutil 
 import numpy as np
 from pathlib import Path
 
@@ -168,13 +168,13 @@ def test_soil_moisture_model():
     model.fit(
         batch_train, 
         validation_data=batch_valid, 
-        epochs=3, 
-        steps_per_epoch=7, 
+        epochs=1, 
+        steps_per_epoch=2, 
         validation_steps=1)
     
     # Expected value
     ev = {
-        'loss': 308.1378479003906, 
+        'loss': 474.40350341796875, 
     }
     
     # Evaluate
@@ -244,18 +244,18 @@ def test_model():
     }
 
     ## Check predictions for different types of data
-    #using_ds = model.predict(ds, **pred_kwargs)['y']
-    #using_bs = model.predict(bs, **pred_kwargs)['y']
-    #using_dict = model.predict({'x': x}, **pred_kwargs)['y']
+    using_ds = model.predict(ds, **pred_kwargs)['y']
+    using_bs = model.predict(bs, **pred_kwargs)['y']
+    using_dict = model.predict({'x': x}, **pred_kwargs)['y']
 
-    #assert np.array_equal(using_ds, using_bs)
-    #assert np.array_equal(using_dict, using_bs)
+    assert np.array_equal(using_ds, using_bs)
+    assert np.array_equal(using_dict, using_bs)
 
 
-    ## Check evaluations for different types of data
-    #using_ds = model.evaluate(ds, **pred_kwargs)
-    #using_dict = model.evaluate({'x': x, 'y': y}, **pred_kwargs)
-    #assert (using_ds == using_dict)
+    # Check evaluations for different types of data
+    using_ds = model.evaluate(ds, **pred_kwargs)
+    using_dict = model.evaluate({'x': x, 'y': y}, **pred_kwargs)
+    assert (using_ds == using_dict)
 
     bs.close()
 

@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.abspath(".."))
 about = {}
 with open("../crest/__about__.py", "r") as fp:
     exec(fp.read(), about)
+
 project = "CREST"
 copyright = f"{datetime.datetime.now().year}, Craig Pelissier et. al."
 release = about["__version__"]
@@ -28,8 +29,8 @@ extensions = [
       "myst_parser",
       "sphinxcontrib.mermaid",
       "sphinx_autodoc_typehints",
-      "nbsphinx",  # for direct embedding of jupyter notebooks into sphinx docs
-      "nbsphinx_link",  # to be able to include notebooks from outside of the docs folder
+      #"nbsphinx",  # for direct embedding of jupyter notebooks into sphinx docs
+      #"nbsphinx_link",  # to be able to include notebooks from outside of the docs folder
   ]
     
 autodoc_typehints_format = "fully-qualified"

@@ -1,6 +1,6 @@
-=====================================================
+======================================================
 Coupled Reusable Earth System Tensor (CREST) framework
-=====================================================
+======================================================
 
 The CREST framework provides a
 graph-based modeling framework built on-top-off tensor-based software
