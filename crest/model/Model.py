@@ -161,6 +161,9 @@ class Model(BaseModel):
                     'batch_size': 1,
                     'shuffle': True
                     }
+        
+        # get callbacks if any are specified
+        callbacks = kwargs.get('callbacks', [])
 
         for k, v in defaults.items():
             if k not in kwargs:
@@ -198,6 +201,8 @@ class Model(BaseModel):
 
         def generator(x):
             yield from x
+
+        logger.info(f'Fitting model with parameters: {kwargs.keys()}')
 
         with training_batcher as data, kwargs.get('validation_data', nullcontext()):
 

@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+
+  "formatters": {
+    "crest_json": {
+      "()": "crest.utils.logger.CrestJSONFormatter",
+      "fmt_keys": {
+        "level": "levelname",
+        "logger": "name"
+      }
+    }
+  },
+
+  "handlers": {
+    "app_file": {
+      "class": "logging.FileHandler",
+      "filename": "${LOG_FILE}",
+      "mode": "a",
+      "level": "INFO",
+      "formatter": "crest_json"
+    },
+    "metrics_file": {
+      "class": "logging.FileHandler",
+      "filename": "${SYS_METRICS_FILE}",
+      "mode": "a",
+      "level": "INFO",
+      "formatter": "crest_json"
+    },
+    "console": {
+      "class": "logging.StreamHandler",
+      "level": "INFO",
+      "formatter": "crest_json"
+    }
+  },
+
+  "loggers": {
+    "crest": {
+      "level": "INFO",
+      "handlers": ["app_file", "console"],
+      "propagate": false
+    },
+    "crest.metrics": {
+      "level": "INFO",
+      "handlers": ["metrics_file"],
+      "propagate": false
+    }
+  },
+
+  "root": {
+    "level": "WARNING",
+    "handlers": ["console"]
+  }
+}

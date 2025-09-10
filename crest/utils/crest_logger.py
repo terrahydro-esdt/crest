@@ -1,6 +1,8 @@
 import datetime as dt
-import json
 import logging
+import pathlib
+import sys
+import json
 
 LOG_RECORD_BUILTIN_ATTRS = {
     "args",
@@ -45,35 +47,92 @@ class CrestJSONFormatter(logging.Formatter):
 
     def __init__(self, *, fmt_keys: dict[str, str] | None = None):
         super().__init__()
-        self.fmt_keys = fmt_keys if fmt_keys is not None else {}
+        self.fmt_keys = fmt_keys or {}
 
-#    @override
     def format(self, record: logging.LogRecord) -> str:
-        """ Takes a log record object and convert to a string """
-        message = self._prepare_log_dict(record)
-        return json.dumps(message, default=str)
+        msg = self._prepare_log_dict(record)
+        return json.dumps(msg, default=str, ensure_ascii=False)
 
-    def _prepare_log_dict(self, record: logging.LogRecord):
-        """ Helper function to format the log record"""
-        always_fields = {
+    def _prepare_log_dict(self, record: logging.LogRecord) -> dict[str, any]:
+        always = {
             "message": record.getMessage(),
             "timestamp": dt.datetime.fromtimestamp(record.created, tz=dt.timezone.utc).isoformat(),
         }
         if record.exc_info is not None:
-            always_fields["exc_info"] = self.formatException(record.exc_info)
-
+            always["exc_info"] = self.formatException(record.exc_info)
         if record.stack_info is not None:
-            always_fields["stack_info"] = self.formatStack(record.stack_info)
+            always["stack_info"] = self.formatStack(record.stack_info)
 
-        message = {
-            key: msg_val
-            if (msg_val := always_fields.pop(val, None)) is not None
-            else getattr(record, val)
+        front = {
+            key: (always.pop(val, None)
+                  if val in always else getattr(record, val, None))
             for key, val in self.fmt_keys.items()
         }
-        message.update(always_fields)
+        out = {k: v for k, v in front.items() if v is not None}
+        out.update(always)
 
-        for key, val in record.__dict__.items():
-            if key not in LOG_RECORD_BUILTIN_ATTRS:
-                message[key] = val
-        return message
+        for k, v in record.__dict__.items():
+            if k not in LOG_RECORD_BUILTIN_ATTRS and k not in out:
+                out[k] = v
+        return out
+
+
+def logger_setup(log_file: str = "crest.log.jsonl",
+                 metrics_file: str = "metrics.jsonl",
+                 console: bool = True) -> None:
+    logs_dir = pathlib.Path("logs")
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    app_path = logs_dir / log_file
+    met_path = logs_dir / metrics_file
+
+    # Create formatter once
+    formatter = CrestJSONFormatter(fmt_keys={
+        "level": "levelname",
+        "logger": "name",
+        "kind": "kind",          
+        "stage": "stage",        
+        "run": "run",            
+    })
+
+    # App logger
+    crest = logging.getLogger("crest")
+    crest.setLevel(logging.INFO)
+    crest.propagate = False
+    fh_app = logging.FileHandler(app_path, mode="a", encoding="utf-8")
+    fh_app.setLevel(logging.INFO)
+    fh_app.setFormatter(formatter)
+    crest.addHandler(fh_app)
+    
+    if console:
+        ch = logging.StreamHandler(sys.stderr)
+        ch.setLevel(logging.INFO)
+        ch.setFormatter(formatter)
+        crest.addHandler(ch)
+
+    # Metrics logger (isolated to its file)
+    metrics = logging.getLogger("crest.metrics")
+    metrics.setLevel(logging.INFO)
+    metrics.propagate = False
+    fh_met = logging.FileHandler(met_path, mode="a", encoding="utf-8")
+    fh_met.setLevel(logging.INFO)
+    fh_met.setFormatter(formatter)
+    metrics.addHandler(fh_met)
+
+
+def install_global_exception_logger(logger_name: str = "crest"):
+    """Logs all uncaught exceptions to the given logger."""
+
+    original_hook = sys.excepthook
+
+    def log_uncaught_exceptions(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        logger = logging.getLogger(logger_name)
+        logger.critical("Uncaught exception occurred",
+                        exc_info=(exc_type, exc_value, exc_traceback))
+        
+        original_hook(exc_type, exc_value, exc_traceback)
+
+    sys.excepthook = log_uncaught_exceptions

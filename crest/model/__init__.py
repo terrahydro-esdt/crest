@@ -7,3 +7,4 @@ from .TensorSpec import TensorSpec
 from .TensorGraph import TensorGraph
 from .KerasNode import KerasNode
 from .LambdaNode import LambdaNode
+from .ExtentStrategy import ExtentStrategy

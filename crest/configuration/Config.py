@@ -79,9 +79,9 @@ class Config:
 
         if name in self._config:
             return self._config[name]
-
-        raise AttributeError(f"'Config' object has no attribute '{name}'")
-
+        
+        return None
+    
     def __str__(self):
         return f'Configuration: {self._config}'
 

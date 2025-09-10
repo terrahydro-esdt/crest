@@ -1,9 +1,12 @@
 import tlz
 import numpy as np
 import tensorflow as tf
+import logging
 
 from crest.data import Batcher
 from crest.data.loading import Dataset
+
+logger = logging.getLogger(__name__)
 
 # a function to get a coordinate value by indexing
 # the coords of the samples in a batch
@@ -13,7 +16,9 @@ def _get_coordinate(sample,
 
     c = sample.coords[coordinate_key][index]
     c = c[-1] if c.size > 1 else c
- 
+
+    logger.info(f"Retrieved coordinate '{coordinate_key}' at index {index}: {c}")
+
     return c
  
 def batch_for_archiver(batcher: Batcher,
@@ -74,6 +79,8 @@ def batch_for_archiver(batcher: Batcher,
     # an int or str
     batch = next(batcher)
     first_batch = True
+
+    logger.info("Preparing batches for archiver. First batch retrieved.")
     
     # coordinate_df refers to the index of the datafile requested by the user 
     # for coordinate information. However, the batcher's coordinate dictionary 
@@ -84,6 +91,8 @@ def batch_for_archiver(batcher: Batcher,
         for k in dict_coord_df.keys():
             if k in list(df.data.coords):
                 dict_coord_df[k].append(df.name)
+
+    logger.info(f"Datafile names with coordinate info in batcher: {dict_coord_df}")
     
     # check the type of the coordinate_df and make dictionary
     # of coordinate index for all cases
@@ -92,10 +101,14 @@ def batch_for_archiver(batcher: Batcher,
         for k in batch[0].coords.keys():
             if not k in coordinate_df.keys():
                 coordinate_df[k] = default_index if isinstance(default_index, str) else dataset[default_index].name
+
+        logger.info(f"Using provided coordinate mapping: {coordinate_df}")
     else:
         if isinstance(coordinate_df, int):
             coordinate_df = dataset[coordinate_df].name
         coordinate_df = {c: coordinate_df for c in batch[0].coords.keys()}
+
+        logger.info(f"Using uniform coordinate mapping for all coordinates: {coordinate_df}")
     
     for c, ind in coordinate_df.items():
         i = next((i for i, s in enumerate(dict_coord_df[c]) if ind in s.lower()), None)
@@ -106,6 +119,8 @@ def batch_for_archiver(batcher: Batcher,
     
     # # get rid of the features coordinate in the sample.coords
     coordinate_df.pop('features', None)
+
+    logger.debug(f"Final coordinate indices for extraction: {coordinate_df}")
     
     # loop over the original batcher
     while True:
@@ -116,8 +131,16 @@ def batch_for_archiver(batcher: Batcher,
             break
         
         # get the coords
-        coords = tlz.merge_with(np.array, [{c : _get_coordinate(s, c, coordinate_df[c]) for c in coordinate_df.keys()} for s in batch])
+        coords = tlz.merge_with(np.array, 
+                                [{c : _get_coordinate(s, c, coordinate_df[c]) for c in coordinate_df.keys()} for s in batch])
+        
+        logger.info(f"Extracted coordinates for current batch")
+        
         # get the data
         x = tlz.merge_with(tf.constant, [s.to_dict(model_inputs) for s in batch])
+
+        logger.info(f"Prepared batch with inputs")
  
         yield coords, x
+
+    logger.info("All batches prepared for archiver.")
