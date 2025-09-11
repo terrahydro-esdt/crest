@@ -1,14 +1,11 @@
-from crest import HierarchalTensorGraph
+from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
 from crest.model.Node import Node
-from math import exp
-from crest.model.KerasNode import KerasNode
-from crest.model.LambdaNode import LambdaNode
+#from crest.nodes.tensorflow.KerasNode import KerasNode
+from functools import cached_property
 import json
 import crest.model.TensorSpec as ts
 import numpy as np
-
-import crest.model.TensorSpec as ts
-import numpy as np
+from math import exp,log,sqrt
 
 
 class Adder(Node):
@@ -19,6 +16,23 @@ class Adder(Node):
             inputs={'x_1': (1,), 'x_2': (1,)},
             outputs={'sum': (1,)}
         )
+
+    @property
+    def json_dict(self):
+        pass
+
+class Square(Node):
+    def __init__(self):
+      super().__init__(**{
+          'node': lambda X: {'square': X['x']*X['x']},
+          'inputs': {'x': (1,)},
+          'outputs': {'square': (1,)},
+          'name': 'square'
+      })
+
+    @property
+    def json_dict(self):
+        pass
 
 class Multiplier(Node):
     def __init__(self):
@@ -49,6 +63,15 @@ class AddMult(HierarchalTensorGraph):
         self.add_edge(adder,mult,rename={'sum' : 'x'})
         self.add_edge(mult,'output',rename={'product' : 'add_mult_res'})
 
+        def to_json(self):
+            return super().to_json()
+
+        @staticmethod
+        def from_json(json_str):
+            jd = HierarchalTensorGraph.from_json(json_str)
+            obj = AddMult(False)
+            return super(AddMult,obj).build_from_json(jd)
+
 class AddMultExp(HierarchalTensorGraph):
 
     def __init__(self):
@@ -59,41 +82,27 @@ class AddMultExp(HierarchalTensorGraph):
         self.add_edge(add_mult, expo,rename={'add_mult_res' : 'x'})
         self.add_edge(expo, 'output',rename={'exp' : 'add_mult_exp_res'})
 
-class AddSequentialLayer(HierarchalTensorGraph):
-
-    def __init__(self):
-        super().__init__(
-            name='add_sequential_layer',
-            inputs={'x_1': None, 'x_2': None, 'scalar': None},
-            outputs={'add_sequential_layer_res': None}
-        )
-
-        from tensorflow.keras.layers import Dense
-
-        dense_layer = HierarchalTensorGraph(
-            lambda d: {'y': Dense(1)(d['x'])}, name='dense_layer')
-
-        self.add_edge('input', dense_layer)
-        self.add_edge(dense_layer, 'output')
-
-def AddKerasModel():
-
-    from tensorflow.keras.layers import Dense
-    import tensorflow.keras as keras
-    import tensorflow as tf
-
-    layers = [keras.layers.Dense(32, activation="relu"), keras.layers.Dropout(
-        0.5), keras.layers.Dense(10, activation="softmax")]
-    inputs = tf.keras.Input(shape=(32, ))
-
-    outputs = inputs
-    for layer in layers:
-        outputs = layer(outputs)
-
-    model = tf.keras.Model(inputs={'x': inputs}, outputs={'y': outputs})
-    node = KerasNode(model, name='test')
-
-    return node
+#def AddKerasModel():
+#
+#    from tensorflow.keras.layers import Dense
+#    import tensorflow.keras as keras
+#    import tensorflow as tf
+#
+#    layers = [
+#        keras.layers.Dense(32, activation="relu"),
+#        keras.layers.Dropout(0.5),
+#        keras.layers.Dense(10, activation="softmax")
+#    ]
+#
+#    inputs = tf.keras.Input(shape=(32, ))
+#    outputs = inputs
+#    for layer in layers:
+#        outputs = layer(outputs)
+#
+#    model = tf.keras.Model(inputs={'x': inputs}, outputs={'y': outputs})
+#    node = KerasNode(model, name='test')
+#
+#    return node
 
 
 class AddSquare(HierarchalTensorGraph):
@@ -102,92 +111,50 @@ class AddSquare(HierarchalTensorGraph):
         # Construct a multinode HTG and specify I/O
         super().__init__(name=name)
 
-        # Create an add basenode and specify I/O
-        add = Node(
-            node=lambda X: {'sum': X['x_1'] + X['x_2']},
-            inputs={'x_1': None, 'x_2': None},
-            outputs={'sum': None},
-            name='add'
-        )
-
-        # Create a square basenode and specify I/O
-        square = Node(
-            node=lambda X: {'square': X['x']*X['x']},
-            inputs={'x': None},
-            outputs={'square': None},
-            name='square'
-        )
+        add = Adder()
+        square = Square()
 
         # Create the graph
         self.add_edge('input', add)
-        self.add_edge(add, square,rename={'sum','x'})
-        self.add_edge(square, 'output',rename={'square','add_square'})
+        self.add_edge(add, square,rename={'sum' : 'x'})
+        self.add_edge(square, 'output',rename={'square' : 'add_square'})
 
-def AddSquareNode():
-
-    # Create and add basenode and specify I/O
-    add = LambdaNode(
-        lambda X: {'sum': X['x_1'] + X['x_2']},
-        inputs={'x_1': None, 'x_2': None},
-        outputs={'sum': None},
-        name='add'
-    )
-
-    # Create a square basenode and specify I/O
-    square = LambdaNode(name='square')
-
-    add_square_htg = HierarchalTensorGraph(name="add_square")
-
-    # Create the graph
-    self.add_edge('input', add)
-    self.add_edge(add, square,rename={'sum','x'})
-    self.add_edge(square, 'output',rename={'square','add_square'})
-
-    return add_square_htg
+    @classmethod
+    def from_json(cls,json_str):
+        jd = json.loads(json_str)
+        obj = cls(jd['name'])
+        obj.super().from_json(json_str)
+        return
 
 
 class LogAddSquare(HierarchalTensorGraph):
-
-    def __init__(self, name='log_add_square'):
-        from math import log
-
+    from math import log
+    def __init__(self, name='log_add_square',build=True):
         super().__init__(name=name)
 
-        # Create log basenode
-        lg = Node(
-            name='log',
-            node=lambda X: {'log': log(X['x'])},
-            inputs={'x': None},
-            outputs={'log': None}
-        )
+        if(build):
+            # Create log basenode
+            lg = Node(**{
+                'name': 'log',
+                'node': lambda X: {'log': log(X['x'])},
+                'inputs': {'x': None},
+                'outputs': {'log': None}
+            })
 
-        # Create graph
-        self.add_edge('input', AddSquare())
-        self.add_edge('add_square', lg,rename={'add_square' : 'x'})
-        self.add_edge('log', 'output',rename={'log': 'log_add_square'})
-        self.add_edge('add_square', 'output')
+            self.add_edge('input', AddSquare())
+            self.add_edge('add_square',lg,rename={'add_square' : 'x'})
+            self.add_edge('log', 'output',rename={'log': 'log_add_square'})
+            self.add_edge('add_square', 'output')
 
-def LogAddSquareNode():
+        def to_json():
+            super().to_json()
 
-    # Create log basenode
-    lg = LambdaNode(
-        lambda X: {'log': math.log(X['x'])},
-        name='log',
-        inputs={'x': None},
-        outputs={'log': None}
-    )
-
-    input_htg = AddSquareNode()
-
-    htg = HierarchalTensorGraph(name="log_add_square")
-
-    # Create graph
-    htg.add_edge('input', AddSquare())
-    htg.add_edge('add_square', lg,rename={'add_square' : 'x'})
-    htg.add_edge('log', 'output',rename={'log': 'log_add_square'})
-    htg.add_edge('add_square', 'output')
-
-    return htg
+        @staticmethod
+        def from_json(json_str):
+            jd = HierarchalTensorGraph.load_json(json_str)
+            obj = LogAddSquare(jd['name'],False)
+            super(LogAddSquare,obj).build_from_json(jd)
+            return obj
 
 
 class SquareRoot(HierarchalTensorGraph):
@@ -195,7 +162,6 @@ class SquareRoot(HierarchalTensorGraph):
     custom_lambda = None
 
     def __init__(self, name='square_root', inputs={'x': None}, outputs={'square_root': None}):
-        from math import sqrt
         self.name = name
         self.inputs = inputs
         self.outputs = outputs
@@ -231,7 +197,6 @@ class LogCustom():
     custom_lambda = None
 
     def __init__(self, name='log_custom', inputs={'x': None}, outputs={'log_custom': None}):
-        from math import log
 
         self.custom_lambda = lambda X: {'log': log(X['x'])}
         self.name = name
@@ -272,9 +237,6 @@ class Add1_Single(Node):
             v = X['s_1'] + X['x_1']
             return {'s_1':  v}
 
-        def initialize(X):
-            return {'s_1' : 0}
-
         # call the basenode constructor
         super().__init__(node=add,
                          name=name,
@@ -284,7 +246,9 @@ class Add1_Single(Node):
                          return_seq=True
                          )
 
-        self.attributes['initialization'] = initialize
+    def initial_state(self,X):
+        return {'s_1' : 0}
+
 
 
 class SingleRecurrent(HierarchalTensorGraph):
@@ -321,9 +285,6 @@ class Add1_Dual(Node):
             v = X['s_1'] + X['x_1']
             return {'s_1':  v}
 
-        def initialize(X):
-            return {'s_1' : 0}
-
         # call the basenode constructor
         super().__init__(node=add,
                          name=name,
@@ -333,7 +294,9 @@ class Add1_Dual(Node):
                          reture_seq=False
                          )
 
-        self.attributes['initialization'] = initialize
+    def initial_state(self,X):
+        return {'s_1' : 0}
+
 
 class Add2_Dual(Node):
     def __init__(self, name):
@@ -341,9 +304,6 @@ class Add2_Dual(Node):
         def add(X):
             v = X['s_1'] + X['s_2'] + X['x_2']
             return {'s_2':  v}
-
-        def initialize(X):
-            return {'s_2' : 0}
 
         # call the basenode constructor
         super().__init__(node=add,
@@ -354,7 +314,9 @@ class Add2_Dual(Node):
                          reture_seq=False
                          )
 
-        self.attributes['initialization'] = initialize
+    def initial_state(self,X):
+        return {'s_2': 0}
+
 
 
 class DualRecurrent(HierarchalTensorGraph):
@@ -382,9 +344,6 @@ class Add1_Triple(Node):
             v = X['s_1'] + X['s_2'] + X['s_3'] + X['x_1']
             return {'s_1':  v}
 
-        def initialize(X):
-            return {'s_1' : 0}
-
         # call the basenode constructor
         super().__init__(node=add,
                          name=name,
@@ -393,7 +352,9 @@ class Add1_Triple(Node):
                          recurrent=True,
                          )
 
-        self.attributes['initialization'] = initialize
+    def initial_state(self,X):
+        return {'s_1' : 0}
+
 
 
 class Add2_Triple(Node):
@@ -403,9 +364,6 @@ class Add2_Triple(Node):
             v = X['s_1'] + X['s_2'] + X['s_3'] + X['x_2']
             return {'s_2':  v}
 
-        def initialize(X):
-            return {'s_2' : 0}
-
         # call the basenode constructor
         super().__init__(add,
                          name=name,
@@ -414,7 +372,9 @@ class Add2_Triple(Node):
                          recurrent=True
                          )
 
-        self.attributes['initialization'] = initialize
+    def initial_state(self,X):
+        return {'s_2' : 0}
+
 
 class Add3_Triple(Node):
     def __init__(self, name):
@@ -422,9 +382,6 @@ class Add3_Triple(Node):
         def add(X):
             v = X['s_1'] + X['s_2'] + X['s_3'] + X['x_3']
             return {'s_3':  v}
-
-        def initialize(X):
-            return {'s_3' : 0}
 
         # call the basenode constructor
         super().__init__(add,
@@ -434,7 +391,9 @@ class Add3_Triple(Node):
                          recurrent=True
                          )
 
-        self.attributes['initialization'] = initialize
+    def initial_state(self,X):
+        return {'s_3' : 0}
+
 
 class TripleRecurrent(HierarchalTensorGraph):
     # hyper connected graph with three recurrent nodes

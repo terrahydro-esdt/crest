@@ -1,5 +1,6 @@
 from collections.abc import Collection
 from itertools import product
+import Grid
 import numpy as np 
 
 

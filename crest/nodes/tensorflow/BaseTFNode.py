@@ -1,8 +1,8 @@
-import tensorflow as tf
-from crest.model.Node import Node
 from collections.abc import Callable
+from ...model import Node
 
-class BaseTFNode(Node):
+class TFNode(Node):
+    """ Tensorflow node type """
     def __init__(self,
                  node : Callable,
                  inputs: dict,
@@ -12,4 +12,3 @@ class BaseTFNode(Node):
                 ):
 
         super().__init__(node,inputs,outputs,name,**attr)
-

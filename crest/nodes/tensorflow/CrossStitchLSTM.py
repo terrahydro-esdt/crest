@@ -1,10 +1,11 @@
+import dill
 from .LSTMCell import LSTMCell
-from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
-from crest.model.TensorGraph import ImproperTensorGraphError
+from ...model import HierarchalTensorGraph
+from ...model.TensorGraph import ImproperTensorGraphError
 
-class CoupledLSTM(HierarchalTensorGraph):
-    """ 
-    Creates a coupled LSTM.
+class CrossStitchLSTM(HierarchalTensorGraph):
+    """
+    Creates a cross-stich network of LSTMCells.
 
     Parameters
     ----------
@@ -14,7 +15,7 @@ class CoupledLSTM(HierarchalTensorGraph):
 
     nodenames : str | list(str)
        The names of the LSTMCell nodes.
-    
+
     inputs : dict
         The inputs dictionary defining the input tensor specs.
 
@@ -26,74 +27,81 @@ class CoupledLSTM(HierarchalTensorGraph):
         return_seq=False. Whether to return the last state or whole sequence.
         return_states = False. Whether to return both hidden and cell states.
         Anyone of the keras LSTMCell kwargs.
-
-    Returns
-    -------
     
-        
-
     """
     def __init__(self,
                  name : str,
                  nodenames : str | list[str],
                  inputs : dict,
                  units : int | list[int],
-                 **kwargs
+                 **attr
                 ):
-        
-        super().__init__(name)
-        
-        if(isinstance(nodenames,str)):
-            self.names = [nodenames]
-        else:
-            self.names = nodenames
 
-        if(isinstance(units,int)):
-            self.units = [units for i in self.names]
+        super().__init__(name,**attr)
+
+        self._inputs = inputs
+
+        if isinstance(nodenames,str):
+            self.nodenames = [nodenames]
+        else:
+            self.nodenames = nodenames
+
+        if isinstance(units,int):
+            self.units = [units for i in self.nodenames]
         else:
             self.units = units
-            if(len(units) != len(self.names)):
-                message = f'len(units) not equal to len(nodenames)'
+            if len(units) != len(self.nodenames):
+                message = 'len(units) not equal to len(nodenames)'
                 raise ImproperTensorGraphError(message)
-                
-        self.state_inputs = {}
-        for n,u in zip(self.names,self.units):
-            self.state_inputs[n] = {n + '_h' :  (u,)}
-        
-        # Create lstmcells
-        self.lstmcells = {}
-        for n,u in zip(self.names,self.units):
 
+        self.state_inputs = {}
+        for n,u in zip(self.nodenames,self.units):
+            self.state_inputs[n] = {n + '_h' :  (u,)}
+
+    def build(self):
+        """ builds the graph """
+
+        # Create lstmcells
+        lstmcells = {}
+        for n,u in zip(self.nodenames,self.units):
             # Add other node inputs
-            _inputs = inputs.copy()
+            _inputs = self._inputs.copy()
             for s,sv in self.state_inputs.items():
-                if(s != n):
+                if s != n:
                     for k,v in sv.items():
                         _inputs[k] = v
 
             # Create cell
-            self.lstmcells[n] = LSTMCell(**{
+            lstmcells[n] = LSTMCell(**{
                 'name' : n,
                 'inputs' : _inputs,
                 'units'  : u
             })
 
-        nodes = list(self.lstmcells.values())
+        nodes = list(lstmcells.values())
 
         # Add I/O edges
         for i in nodes:
-            self.add_edge('input',i,features=list(inputs.keys()))
+            self.add_edge('input',i,features=list(self._inputs.keys()))
             self.add_edge(i,'output')
 
         # Add self adges
         for i in nodes:
             self.add_edge(i,i)
-            
-        for i in self.lstmcells:
-            for j in self.lstmcells:
-                if(i != j):
+
+        for i in lstmcells:
+            for j in lstmcells:
+                if i != j:
                     self.add_edge(i,j,features=[i +'_h'])
 
         # Remove cell states
-        for i in self.names:
+        for i in self.nodenames:
             self.outputs.pop(i + '_c')
+
+    def encode(self,type='dill',**kwargs) -> dict:
+        """ Returns serialized dict """
+        keys = ['_inputs','nodenames','units']
+        encode = {k:dill.dumps(v,**kwargs) for k,v in self.__dict__.items() if k in keys}
+        encode['inputs'] = encode.pop('_inputs')
+        return {**encode,**super().encode(type,**kwargs)}
+    

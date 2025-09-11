@@ -1,9 +1,8 @@
-from crest.base import BaseAbstract
+from ..base import BaseAbstract
 
 
 class ImproperTensorGraphError(Exception):
     """ Raised when an improper TensorGraph is created """
-    pass
 
-
-class TensorGraph(BaseAbstract): pass
+class TensorGraph(BaseAbstract):
+    """ Non-hierarchal basecalss"""

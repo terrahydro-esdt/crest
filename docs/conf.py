@@ -25,8 +25,8 @@ extensions = [
     'sphinx.ext.mathjax',  # latex rendering of equations using MathJax
     "sphinx.ext.doctest",
     "sphinx_autodoc_typehints",
-    'nbsphinx',  # for direct embedding of jupyter notebooks into sphinx docs
-    'nbsphinx_link'  # to be able to include notebooks from outside of the docs folder
+    #'nbsphinx',  # for direct embedding of jupyter notebooks into sphinx docs
+    #'nbsphinx_link'  # to be able to include notebooks from outside of the docs folder
 ]
 #    "sphinx.ext.viewcode",
 

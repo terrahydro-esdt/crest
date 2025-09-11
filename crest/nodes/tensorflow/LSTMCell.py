@@ -1,16 +1,14 @@
-from crest.model.Node import Node
-from .BaseTFNode import BaseTFNode
+import dill
 import tensorflow as tf
-import tensorflow.keras as keras
-import keras.backend as K
+from ...model import Node
 
-class LSTMCell(BaseTFNode):
+class LSTMCell(Node):
     """
     A Node implementing a Keras LSTMCell to be integrated
-    within an HierarchalTensorGraph recurrent node. The
+    within a HierarchalTensorGraph. The
     hidden and cell states have keys = "name_h" and "name_c".
     Multiple inputs will be concatenated (axis=-1) to form a single
-    input to feed into the LSTMCell. States are initialized to zero.
+    input to feed into the LSTMCell. LSTMCell states are initialized to zero.
 
     Parameters
     ----------
@@ -57,26 +55,50 @@ class LSTMCell(BaseTFNode):
             self.attributes['return_seq'] = kwargs['return_seq']
             kwargs.pop('return_seq')
 
-        # Keras LSTMCell
-        self.lstmcell = keras.layers.LSTMCell(units,**kwargs)
+        self.units = units
+        self.kwargs = kwargs
+        self._lstmcell = None
 
-        # Set initialization
-        self.attributes['initialization'] = self.initialize
+    # Set the lstm cell
+    def build(self):
+        self._lstmcell = tf.keras.layers.LSTMCell(self.units,**self.kwargs)
 
     # Initialize states to zero
-    def initialize(self,X : dict) -> dict:
-        inp = X[list(X.keys())[0]]
+    def initial_state(self,x : dict) -> dict:
+        """ LSTM initializatoin """
+        inp = x[list(x.keys())[0]]
         batch_size = tf.shape(inp)[0]
         s = [tf.zeros([batch_size,self.units]) for i in
              self.state_names]
         return dict(zip(self.state_names,s))
 
-    def call(self,X):
-
-        # Concat features
-        features = {k : v for k,v in X.items() if k not in self.state_names}
+    def call(self,x) -> dict:
+        """ Node callable """
+        features = {k : v for k,v in x.items() if k not in self.state_names}
         inp = tf.concat(list(features.values()),axis=-1)
-        [h,c] = [X[k] for k in self.state_names]
-        _,[h,c] = self.lstmcell(inp,(h,c))
+        [h,c] = [x[k] for k in self.state_names]
+        _,[h,c] = self._lstmcell(inp,(h,c))
 
         return dict(zip(self.state_names,[h,c]))
+
+    def encode(self,type='dill',**kwargs):
+        """ Returns serialized dict """
+        self.build()
+        encode = super().encode()
+        encode.pop('outputs')
+        encode.pop('node')
+        encode.pop('attributes')
+        encode['units'] = dill.dumps(self.units,**kwargs)
+        encode['_lstmcell'] = dill.dumps(self._lstmcell,**kwargs)
+        return encode
+    
+    @classmethod
+
+    @classmethod
+    def decode(cls,encode,type='dill',**kwargs) -> 'LSTMCell':
+        """ decodes the result of encode """
+        decode = {k:dill.loads(v,**kwargs) for k,v in encode.items()}
+        _lstmcell = decode.pop('_lstmcell')
+        instance = cls(**decode)
+        instance._lstmcell = _lstmcell
+        return instance

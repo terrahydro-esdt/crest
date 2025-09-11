@@ -11,6 +11,7 @@ from tensorflow.keras.metrics import RootMeanSquaredError
 
 from crest.data_server.DataServer import DataServer
 from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
+from crest.model.Node import Node
 from crest.model.Model import Model
 from crest.data.loading import StructuredDataset,Dataset,Datafile
 from crest.data import Batcher
@@ -18,20 +19,19 @@ from crest.data import Batcher
 
 @pytest.mark.integtest
 def test_soil_moisture_model():
-    """ test a simple soil moisture model """ 
+    """ test a simple soil moisture model """
     # For reproducibility
     set_random_seed(812)
-    
+
     # Copy data to local directory from data server
     ROOT_PATH = Path(DataServer.load('soil_moisture','./'))
-    
+
     # Define data locations
     locations = {
         'ERA5'       : ROOT_PATH.joinpath('ERA5.zarr'),
         'SMAP'       : ROOT_PATH.joinpath('SMAP.zarr'),
         'Soil'       : ROOT_PATH.joinpath('StaticAttributes.zarr/Soil'),
         'Irrigation' : ROOT_PATH.joinpath('StaticAttributes.zarr/Irrigation'),
-    
     }
 
     # Define data attributes
@@ -41,7 +41,7 @@ def test_soil_moisture_model():
                         'pev', 'sd','skt','smlt','sp', 'sro','slhf',
                         'sshf','ssro','stl1', 'stl2', 'stl3', 'stl4',
                         't2m','tp','u10', 'v10', 'z'],
-        'Irrigation' : ['Actual', 'Equipped', 'GroundWater', 
+        'Irrigation' : ['Actual', 'Equipped', 'GroundWater',
                         'Non-Conventional', 'SurfaceWater'],
         'Soil'       : ['Clay_frac', 'Sand_frac', 'Silt_frac'],
         'SMAP'       : ['soil_moisture']
@@ -70,7 +70,7 @@ def test_soil_moisture_model():
                     'Soil': {},
                     'Irrigation': {}
                     }
-    
+
     # Create Datasets and Batchers
     dataset_train = Dataset([
                     Datafile(
@@ -86,8 +86,8 @@ def test_soil_moisture_model():
         'repeat'     : True,
         'numblocks'  : [1,1,1],
         'task_bytes' : 1e4,
-        'workers'    : 0,
-        'seed'       : 46
+        'workers'    : 1,
+        'seed'       : 46,
     })
 
     dataset_test = Dataset([
@@ -105,7 +105,7 @@ def test_soil_moisture_model():
         'repeat'     : True,
         'numblocks'  : [1,1,1],
         'task_bytes' : 1e4,
-        'workers'    : 0,
+        'workers'    : 1,
         'seed'       : 46
     })
 
@@ -115,7 +115,7 @@ def test_soil_moisture_model():
         'repeat'     : False,
         'numblocks'  : [1,1,1],
         'task_bytes' : 1e4,
-        'workers'    : 0,
+        'workers'    : 1,
         'shuffle'    : False
     })
 
@@ -126,7 +126,7 @@ def test_soil_moisture_model():
             self._temporal = LSTM(units=256, name='temporal')
             self._head = Dense(1, activation='relu')
 
-        def __call__(self, X):
+        def call(self, X):
 
             era5 = stack([X[k] for k in features['ERA5']], axis=-1)
             era5 = Lambda(lambda x: squeeze(x, axis=[2,3]))(era5)
@@ -140,47 +140,49 @@ def test_soil_moisture_model():
             output = {'soil_moisture': self._head(x)}
 
             return output
-        
+
     # Create HTG basenode
-    inputs = {f: TensorSpec((None,336, 1, 1)) 
+    inputs = {f: TensorSpec((None,336, 1, 1))
               if f in features['ERA5'] else TensorSpec((None,1, 1)) for f in INP}
 
-    htg = HierarchalTensorGraph(
+    htg = Node(
         node=sm_model(),
         name='SM',
         inputs=inputs,
         outputs={f: TensorSpec((None,1)) for f in OUT}
     )
-    
+
     # Create, compile, fit
     model = Model(htg)
-    
-    
+
+
     model.compile(**{
-        'optimizer' : 'Adam', 
-        'loss'      : 'mse', 
+        'optimizer' : 'Adam',
+        'loss'      : 'mse',
         'metrics'   : [RootMeanSquaredError()]
     })
 
+
     model.fit(
-        batch_train, 
-        validation_data=batch_valid, 
-        epochs=3, 
-        steps_per_epoch=7, 
-        validation_steps=1)
-    
+        batch_train,
+        validation_data=batch_valid,
+        epochs=3,
+        steps_per_epoch=7,
+        validation_steps=1
+        )
+
     # Expected value
     ev = {
-        'loss': 0.023858146741986275, 
+        'loss': 0.023858146741986275,
         'root_mean_squared_error': 0.1544608324766159
     }
-    
+
     # Evaluate
     res = model.evaluate(batch_test,return_dict=True)
-    
+
     # Test
     assert res['loss'] == pytest.approx(ev['loss'], 1e-5)
- 
+
     # Clean up
     shutil.rmtree(ROOT_PATH)
 
@@ -197,7 +199,7 @@ def test_model():
     # Create a Batcher for prediction/evaluation
     bs = Batcher(ds, **{
         'batch_size': 5,
-        'features': ['x'],
+        'features': [['x'],['y']],
         'repeat': True,
         'workers': 1,
         'duplicate': True,
@@ -213,7 +215,7 @@ def test_model():
         Dense(1)
     ])
 
-    htg = HierarchalTensorGraph(
+    htg = Node(
         node=lambda X: {'y': layer(X['x'])},
         name='Dense',
         inputs={'x': TensorSpec(shape=[None, 1])},
@@ -227,12 +229,14 @@ def test_model():
         'loss': 'mean_absolute_error'
     })
 
-    model.fit(ds, **{
+    model.fit(bs, **{
         'batch_size': 5,
         'steps_per_epoch': 4,  # 20 samples / 5 samples per batch
-        'epochs': 20,
+        'epochs': 2,
         'verbose': False
     })
+
+    bs.close()
 
     # Predition/evaluation kwargs
     pred_kwargs = {
@@ -241,21 +245,41 @@ def test_model():
         'verbose': False
     }
 
+    # Create a Batcher for prediction/evaluation
+    bp = Batcher(ds, **{
+        'batch_size': 5,
+        'features': ['x'],
+        'repeat': False,
+        'workers': 1,
+        'duplicate': True,
+        'shuffle': False
+    })
+
     # Check predictions for different types of data
-    using_ds = model.predict(ds, **pred_kwargs)['y']
-    using_bs = model.predict(bs, **pred_kwargs)['y']
+    using_bp = model.predict(bp,**pred_kwargs)['y']
     using_dict = model.predict({'x': x}, **pred_kwargs)['y']
+    assert np.array_equal(using_dict, using_bp)
+    
+    bp.close()
 
-    assert np.array_equal(using_ds, using_bs)
-    assert np.array_equal(using_dict, using_bs)
-
+    
+    be = Batcher(ds, **{
+        'batch_size': 5,
+        'features': [['x'],['y']],
+        'repeat': False,
+        'workers': 1,
+        'duplicate': True,
+        'shuffle': False
+    })
 
     # Check evaluations for different types of data
-    using_ds = model.evaluate(ds, **pred_kwargs)
-    using_dict = model.evaluate({'x': x, 'y': y}, **pred_kwargs)
-    assert (using_ds == using_dict)
+    using_be = model.evaluate(be, **pred_kwargs)
+    using_dict = model.evaluate({'x': x},{'y': y},**pred_kwargs)
+    print(using_be)
+    print(using_dict)
+    assert np.array_equal(using_dict, using_be)
 
-    bs.close()
+    be.close()
 
 
 @pytest.mark.integtest
@@ -270,9 +294,9 @@ def test_model_exhaust():
     # Create a Batcher for prediction/evaluation
     bs = Batcher(ds, **{
         'batch_size': 20,
-        'features': ['x'],
+        'features': (['x'],['y']),
         'repeat': False,
-        'workers': 1,
+        'workers': 0,
         'shuffle': False,
         'duplicate': True
     })
@@ -286,13 +310,12 @@ def test_model_exhaust():
         Dense(1)
     ])
 
-    htg = HierarchalTensorGraph(
+    htg = Node(
         node=lambda X: {'y': layer(X['x'])},
         name='Dense',
         inputs={'x': TensorSpec(shape=[None, 1])},
         outputs={'y': TensorSpec(shape=[None, 1])}
     )
-
     # Build and fit the Model
     model = Model(htg)
     model.compile(**{
@@ -300,8 +323,7 @@ def test_model_exhaust():
         'loss': 'mean_absolute_error'
     })
 
-    model.fit(ds, workers=1, **{
-        'batch_size': 20,
+    model.fit(bs, workers=1, **{
         'steps_per_epoch': 5,  # 1000 samples / 20 samples per batch
         'epochs': 10,
         'verbose': False
@@ -311,7 +333,7 @@ def test_model_exhaust():
     pred_kwargs = {
         'batch_size': 20,
         'steps': 5,
-        'verbose': False,
+        'verbose': False
     }
 
     kwards = pred_kwargs.copy()
