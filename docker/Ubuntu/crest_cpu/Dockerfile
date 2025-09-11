@@ -7,6 +7,4 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get -y dist-upgrade
 COPY common/* common/.id_git /app/
 COPY setup.sh /app/
 RUN /app/setup.sh
-#CMD ["/app/startup.sh", "crest_cpu"]
-#CMD ["/bin/bash"]
 
