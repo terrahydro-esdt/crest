@@ -1,6 +1,8 @@
+# Hard requirements for running documentation generator (sphinx)
+# WARNING: Keep this up-to-date!
 name: crest_cpu
 channels:
-  - conda-forge
+ - conda-forge
 
 dependencies:
   - boto3=1.39.11
@@ -40,7 +42,17 @@ dependencies:
   - setuptools=80.9.0
   - sparse=0.17.0
   - tensorflow=2.18.0
-  - tiledb-py
+  - tiledb-py=0.34.0
   - tqdm=4.67.1
   - xarray=2025.9.0
   - zarr=3.1.2
+  
+  # for sphinx 
+  - flit=3.11.0
+  - sphinx=8.3.0
+  - sphinx-autodoc-typehints=3.2.0
+  - pandoc=3.8
+  - furo=2024.8.6
+  - sphinx_rtd_theme=3.0.1
+  - myst-nb=1.3.0
+  - sphinxcontrib-mermaid=1.0.0
