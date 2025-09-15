@@ -1,11 +1,15 @@
 from functools import cached_property
 from itertools import zip_longest
 from queue import Empty
+import numpy as np
+import time 
 
 from .Batcher import Batcher
 from .BlockConfig import BlockConfig
 from .BatchCombiner import BatchCombiner
 from .NonzeroSampler import NonzeroSampler
+from .FutureSampler import FutureSampler
+from .MultiBatcherQueue import MultiBatcherQueue
 
 
 class MultiBatcher(Batcher):
@@ -55,6 +59,7 @@ class MultiBatcher(Batcher):
             `batch_size * max(len(valid_percents), len(drop_datafiles))`
 
     """
+    
     def __init__(self, *args, directed_sampling=True, **kwargs):
         super().__init__(*args, **kwargs)
         self.directed_sampling = directed_sampling
@@ -78,6 +83,20 @@ class MultiBatcher(Batcher):
             try:    self.__dict__.pop(key, None)
             except: pass
         super().close(*args, **kwargs)
+
+    
+    def _get_status(self) -> list[str]:
+        """ Include configuration queue information in the status """
+        status = [str(self._batch_combiner)] + super()._get_status()
+        
+        # Forcing configs to reflect the true queue counts improves resiliency
+        self._batch_combiner.update_queued()
+        return status
+
+    
+    # def get_queue(self, context):
+    #     """ One queue per configuration, encapsulated in a Queue-like API """
+    #     return MultiBatcherQueue(self.max_queue, self._batch_combiner, context)
 
 
     @property
@@ -106,62 +125,96 @@ class MultiBatcher(Batcher):
         for c in self._block_configs:
             c.set_n_blocks(len(blocks))
         if self.directed_sampling:
-            self._sampler = NonzeroSampler(blocks, self._block_configs, self.random)
-        return super()._generate_batches(blocks)
+            # self._sampler = NonzeroSampler(blocks, self._block_configs, self.random)
+            self._sampler = FutureSampler(blocks, self._block_configs, self.random, batch_size=self.batch_size, max_queue=self.max_queue)
+        yield from super()._generate_batches(blocks)
+        
+        # After completing an epoch, reduce block counts so that adapting to
+        # actual block averages is faster (now that fewer zero blocks remain)
+        for c in self._block_configs:
+            with c:
+                c.n_blocks.value = c.n_blocks.value // 2
 
-
+    
     @cached_property
     def _batch_combiner(self) -> 'BatchCombiner':
         """ Object that combines batches from all BlockConfigs together """
-        return BatchCombiner(self._block_configs,self.features,self.batch_size)
+        return BatchCombiner(self._block_configs, self.features, self.shuffle, self.seed)
 
 
-    def _get_block_config(self, *block_idxs) -> BlockConfig | None:
+    def _get_block_config(self, blocks, *block_idxs):# -> BlockConfig | None:
         """ Return the best config to use for the next block computation """
-        nonzero = [c for c in self._block_configs if any(c.valid_blocks[i]==1 for i in block_idxs)]
-        if nonzero:
+        string = '\n\t'.join(map(str, ['']+self._block_configs))
+        self.debug(f'All configs: {string}')
+        if not self.directed_sampling:
+            nonzero = [c for c in self._block_configs if any(c.valid_blocks[i]==1 for i in block_idxs)]
+            assert(len(nonzero)), f'No configurations generate samples for block {block_idxs}'
             config = min(nonzero)
-            string = '\n\t'.join(map(str, ['']+self._block_configs))
             self.info(f'Selected {config}')
-            self.debug(f'All configs: {string}')
-            return config.add_worker() # Increment the number of workers
-        self.info(f'No configurations generate samples for block {block_idxs}')
+            return blocks, block_idxs, config.add_worker() # Increment the number of workers            
+            
+        # Enforce a soft-cap on the number of batches queued for each config
+        config = min(self._block_configs)
+        count = 0
+        while len(config) > self.max_queue:
+            config = self._block_configs[np.argmin(list(map(len, self._block_configs)))]
+            if len(config) <= self.max_queue:
+                break
+            if (count % 100) == 0:
+                self.info(f'All queues full! Waiting for batches to be' +
+                          f' pulled: {len(config)=} > {self.max_queue=}')
+            count += 1
+            time.sleep(0.1)
+
+        # Maximizing n_expected avoids all blocked workers choosing one config
+        config = min(self._block_configs)
+        block_idxs, blocks = zip(*self._sampler.get_block(config))
+        self.info(f'Selected {config} for {block_idxs=}')
+        return blocks, block_idxs, config.add_worker()
 
     
-    def _blocker(self, blocks):
-        """ Use the Sampler to select new blocks """
-        if self.directed_sampling:
-            blocks = next(self._sampler)
-        return super()._blocker(blocks)
+    # def _blocker(self, blocks):
+    #     """ Use the Sampler to select new blocks """
+    #     if self.directed_sampling:
+    #         blocks = next(self._sampler)
+    #     return super()._blocker(blocks)
 
 
     def _compute_block(self, blocks, config: BlockConfig, block_idxs):
         """ Update BlockConfig counters when no samples are found """
         samples = super()._compute_block(blocks, config, block_idxs)
         if not samples.size: 
-            self.debug(f'No samples found in block using {config}')
-            config.add_samples(block_idxs, n_samples=0)
+            self.debug(f'No samples found in block(s) {block_idxs} using {config}')
+            config.add_batches(block_idxs, n_batches=0)
             # self.error(f'{config}: {np.array(config.zero_blocks)}')
             if len(config.nonzero) == 0:
                 self.error(f'No blocks generate samples for {config}')
+            else: self.debug(f'{len(config.nonzero)} block options remaining')
         return samples
 
 
     def _batcher(self, samples, config: BlockConfig, block_idxs) -> list:
         """ Update BlockConfig counters and return the hash with each batch """
         batches = super()._batcher(samples, config, block_idxs)
-
+        
         # Update configuration attributes with newly created batches
-        if config is not None:
-            config.add_samples(block_idxs, n_samples=len(batches) * self.batch_size)
+        if config is not None and batches is not None:
+            self.debug(f'Sending {len(batches)} batches for {config}')
+            config.add_batches([], n_batches=len(batches))
             hashval = hash(config)
-            batches = [(batch, hashval) for batch in batches]
+            # batches = [(batch, hashval) for batch in batches]
+            batches = [(batches, hashval)]
         return batches
 
 
     def _parse_batch(self, batch):
         """ Ingest BlockConfig batches and return combined batched """
-                # Remainder samples aren't paired with any configuration
+        # Remainder samples aren't paired with any configuration
         if (len(batch) == 2) and isinstance(batch[1], int):
-            batch = self._batch_combiner(*batch).next()
-        return batch
+            self.debug(f'Received {len(batch[0])} batches for {batch[1]}')
+            batch = self._batch_combiner(*batch, method='extend').next()
+        # else: raise Exception(f'Received unprocessed batch: {batch}')
+            
+        # Yield the current batch, as well as any others that are ready
+        yield batch
+        yield from self._batch_combiner

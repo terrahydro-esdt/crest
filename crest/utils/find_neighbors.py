@@ -4,13 +4,16 @@ from collections.abc import Collection
 from contextlib import nullcontext
 from itertools import combinations, product, chain, starmap
 from functools import reduce, partial
+from threading import Timer
 
 # Allow bruteforce progress logging if numba_progress available
 try:                from numba_progress import ProgressBar
 except ImportError: ProgressBar = None 
 
+try:                import polars as pl
+except ImportError: pl = None
+    
 import numpy as np
-import polars as pl
 import pandas as pd 
 import logging 
 
@@ -19,10 +22,16 @@ from .print_table import print_table
 from .Stopwatch import Stopwatch
 from crest.utils.matchup.bruteforce.utils.entropy import entropy  
 from crest.utils.matchup.bruteforce import brute
+
+t = Timer(5, lambda: print('Compiling numba functions...'))
+t.start()
 # from .lexsort import lexsort
 from .matchup.bruteforce.utils.bruteforce_numba import *
-from .matchup.bruteforce.utils.multiset_numba import multiset_single
-
+from .matchup.bruteforce.utils.multiset_numba import multiset_single_numba
+if t.is_alive():
+    t.cancel()
+else: print('Finished compiling functions')
+    
 
 def get_indices(
     coordinates : Collection[np.ndarray],
@@ -206,7 +215,9 @@ def implode(table):#: np.ndarray | pl.DataFrame):
       [[1], [1], [1]  ] ]
 
     """
-
+    if pl is None: 
+        raise ImportError('implode requires polars to be installed')
+        
     # Exclude one name from the full list
     # Groupby all names except one, then concat into a comma-delimited string
     excl = lambda remove: list( set(names) - {remove} )
@@ -242,17 +253,75 @@ def implode(table):#: np.ndarray | pl.DataFrame):
         raise
 
 
+def multiset_single(
+    coordinates : list[np.ndarray], 
+    resolutions : list[np.ndarray], 
+    num_samples : int = -1,
+    shuffle     : bool = True,
+    logger      : logging.Logger | None = None, 
+):
+    log = getattr(logger, 'debug', print)
+    with Stopwatch('multiset_single preparation', log, silent=logger is None):
+        # Temporarily hard-code reversing feature dimension in order to
+        # put the datetime coordinate last
+        orig_idxs = []
+        for i in range(len(coordinates)):
+            coordinates[i] = coordinates[i][:, ::-1]
+            resolutions[i] = resolutions[i][:, ::-1]
+            idx = np.lexsort(coordinates[i].T[::-1])
+            orig_idxs.append(np.arange(len(coordinates[i]))[idx])
+            coordinates[i] = coordinates[i][idx]
+            if len(resolutions[i]) > 1:
+                resolutions[i] = resolutions[i][idx]
+        
+        array_lens = np.array([len(a) for a in coordinates], dtype=np.int32)
+
+        order = np.argsort(array_lens)
+        array_lens = array_lens[order].astype(np.int32)
+        array_idxs = np.cumsum(np.r_[[0], array_lens])
+        array_idxs = np.stack([array_idxs[:-1], array_idxs[1:]], axis=1).astype(np.int32)
+
+        c = np.vstack([coordinates[i] for i in order])
+        for i in range(len(coordinates)):
+            coordinates[i] = None
+        coordinates = None
+        c = np.tile(c, (1, 3))
+
+        for i, j in enumerate(order):
+            r = resolutions[j]
+            c[array_idxs[i, 0]:array_idxs[i, 1], r.shape[1]:] += np.c_[-r[..., 0], r[..., 1]]
+            resolutions[j] = r = None
+        resolutions = None
+        if logger is not None:
+            log(f'{array_lens=} {order=}')
+
+        n_threads = nb.get_num_threads()
+        chunksize = 0
+        if array_lens[0] > (n_threads*2):
+            chunksize = 1+array_lens[0] // (n_threads * 8)
+        # nb.set_num_threads(n_threads)
+        nb.set_parallel_chunksize(chunksize) 
+        
+        if logger is not None:
+            log(f'Set numba {chunksize=} (num threads={n_threads})')
+        
+    table = multiset_single_numba(c, array_lens, array_idxs, num_samples, shuffle)
+    order = np.argsort(order)
+    return np.array([i[t] for t,i in zip(table.T[order], orig_idxs)]).T
+
+    
 def find_neighbors(
     coordinates : Collection[np.ndarray], 
     resolutions : Collection[np.ndarray] | None = None,
     radius      : float = 0.5,
-    method      : str   = 'brute',
+    method      : str   = 'multi',
     allow_empty : bool  = False,
     use_implode : bool  = False,
     shuffle     : bool  = False,
     debug       : bool  = False,
     logger      : logging.Logger | None = None,
     eps         : float = 1e-5,
+    num_samples : int   = -1,
     grid_labels : Collection[str] | None = None,
     axis_labels : Collection[str] | None = None,
     **kwargs,
@@ -445,7 +514,7 @@ def find_neighbors(
             resolutions[i] = r.astype(ftype)
 
     # For anisotropic grids, the only available method is bruteforce
-    if any(r.ndim > 2 for r in resolutions): method = 'brute'
+    if any(r.ndim > 2 for r in resolutions): method = 'multi'
 
     # Single anchor grid, checked against all other grids
     if method == 'anchor':
@@ -475,6 +544,8 @@ def find_neighbors(
             """ Create a dataframe with the names/coordinates/resolutions """
             build_i, query_i = get_matches(*cs_rs, expand=True)
             if method == 'polars':
+                if pl is None:
+                    raise ImportError(f'polars must be installed for {method=}')
                 return pl.DataFrame(dict(zip(keys, [build_i, query_i]))).set_sorted(keys[1]).lazy()
             return pd.MultiIndex.from_arrays([build_i, query_i], names=keys)
 
@@ -550,23 +621,7 @@ def find_neighbors(
                 resolutions = list(map(np.atleast_1d, resolutions))
 
             if method == 'multi':
-                if logger is not None:
-                    logger.debug(f'\tStarting neighbor search with multiset')
-
-                # Temporarily hard-code reversing feature dimension in order to
-                # put the datetime coordinate last
-                orig_idxs = []
-                for i in range(len(coordinates)):
-                    coordinates[i] = coordinates[i][:, ::-1]
-                    resolutions[i] = resolutions[i][:, ::-1]
-                    idx = np.lexsort(coordinates[i].T[::-1])
-                    orig_idxs.append(np.arange(len(coordinates[i]))[idx])
-                    coordinates[i] = coordinates[i][idx]
-                    if len(resolutions[i]) > 1:
-                        resolutions[i] = resolutions[i][idx]
-
-                table = multiset_single(coordinates, resolutions)
-                table = np.array([i[t] for t,i in zip(table.T, orig_idxs)]).T
+                table = multiset_single(coordinates, resolutions, num_samples, shuffle, logger)
             else:
                 # Optimize column and grid orderings
                 optimizations = True

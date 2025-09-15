@@ -9,6 +9,7 @@ import numpy as np
 import logging
 import numbers
 import time 
+import dask 
 
 from crest.base import BaseSet
 from crest.utils import find_neighbors, Stopwatch
@@ -177,6 +178,7 @@ class Blockset(BaseSet):
                     self.valid_resolution,
                     grid_labels = [str(b) for b in self],
                     axis_labels = [b.dims for b in self],
+                    num_samples = task_samples or -1,
                     logger  = self.logger if self.timing else None,
                     shuffle = self.shuffle,
                     debug   = False,
@@ -203,23 +205,35 @@ class Blockset(BaseSet):
         # Create a dask dataframe first, then transform into a dask
         # array (in order to satisfy dask's built in assumptions)
         kwargs = {
-            'meta'             : (0, int), 
+            # 'meta'             : (0, int), 
             #'token'            : f'product{id(matches)}',
-            'divisions'        : [0] + divs.tolist(), 
-            'enforce_metadata' : False,
+            # 'divisions'        : [0] + divs.tolist(), 
+            # 'enforce_metadata' : False,
             'features'         : self.feature_subset(features),
             'make_objs'        : features is None,
             'singleton'        : len(lengths) == 1,
         }
-        try:
-            return dd.from_map(self._parse, matches, lengths, **kwargs
-                ).to_dask_array(lengths=list(lengths), meta=meta)
 
-        # Newer dask version does not have token keyword
-        except:
-            kwargs.pop('token')
-            return dd.from_map(self._parse, matches, lengths, **kwargs
-                ).to_dask_array(lengths=list(lengths), meta=meta)
+        # try:
+        #     return dd.from_map(self._parse, matches, lengths, **kwargs
+        #         ).to_dask_array(lengths=list(lengths), meta=meta)
+        # # Newer dask version does not have token keyword
+        # except:
+        #     kwargs.pop('token')
+        #     return dd.from_map(self._parse, matches, lengths, **kwargs
+        #         ).to_dask_array(lengths=list(lengths), meta=meta)
+
+        # After dask==2023.3.0, there is a change to dataframe which causes
+        # the prior approach (building an array from a dataframe) to run >2x 
+        # slower: https://github.com/dask/dask/commit/89db50e5d874cf999987344c44168d7b725810c5#diff-7f08628a92dd3add9053c4e6ede5459803a8e3e1f78464f356c65a75a6872a99L374
+        # 
+        # To avoid this issue, we can instead build the array by concatenating
+        # a list of delayed objects together. This approach is as fast as the
+        # dataframe method, and is not impacted by the change in v2023.3.1
+        delay = dask.delayed(partial(self._parse, **kwargs))
+        tasks = [task.values for task in map(delay, matches, lengths)]
+        array = partial(da.from_delayed, meta=meta)
+        return da.concatenate(map(array, tasks, lengths[:, None]))
 
 
     def _parse(self, 

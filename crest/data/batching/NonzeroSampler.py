@@ -11,3 +11,6 @@ class NonzeroSampler:
         """ Yield the block most needed currently from blocks with samples """
         index = self.random.choice( min(self.configs).nonzero )
         return [[index, self.blocks[index]]]
+
+    def get_block(self, config):
+        return next(self)

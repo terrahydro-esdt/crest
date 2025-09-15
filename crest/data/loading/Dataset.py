@@ -12,6 +12,7 @@ from typing import Union
 from pprint import pprint
 
 import cloudpickle as pkl
+import xarray as xr
 import numpy as np 
 import dask.array as da
 import dask
@@ -85,6 +86,18 @@ class Dataset(BaseSet):
         logger.addHandler(logging.StreamHandler())
         logger.setLevel(logging.INFO)
         return logger
+
+
+    def summaries(self, compute=True, keep='last') -> xr.DataArray:
+        """Gather summary statistics of all component Datafiles """
+        summary = self.summary.map_blocks(xr.DataArray.as_numpy)
+        summary = xr.concat(summary, dim='features')
+        summary = summary.drop_duplicates('features', keep=keep)
+        if compute:
+            with ProgressBar():
+                print(f'{summary=}\n\nComputing summaries...')
+                summary = summary.compute() 
+        return summary
 
 
     def align(self, a: str, *b, n=20):

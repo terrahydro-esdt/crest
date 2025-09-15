@@ -83,6 +83,7 @@ class Block(BaseAbstract):
         block_index   : int   = 0,
         label         : str   = '',
         sparsity      : float = 0.,
+        coord_vecs : Collection = [],
     ):
         self._data    = data
         self._coords  = coords
@@ -100,13 +101,18 @@ class Block(BaseAbstract):
         self.allow_repeats = allow_repeats
         self.block_count   = block_count
         self.block_index   = block_index
-
+        self.coord_vecs = coord_vecs
+        
         # Shape sanity checks
         arrays = [coords, inbound_mask, overlap_mask]
         shapes = [v.shape[:-1] for v in arrays]
         assert(len(set(shapes)) == 1), shapes
         assert(set(map(len, shapes)) == {len(dims)}), [shapes, dims]
 
+        # Sparse data should already be filtered so it contains only valid data
+        # if self.sparse and len(self.invalid_value):
+        #     raise Exception('Sparse data should already be filtered')
+            
 
     def __repr__(self) -> str:
         return f'Block[{self.label}]'
@@ -127,14 +133,20 @@ class Block(BaseAbstract):
     def data(self) -> np.ndarray:
         """ Only compute dask data array upon first use """
         with self.benchmark(f'data'):
+            # if self.sparse: raise Exception(f'\n\n{self._data[0].dask}\n\n')
             if isinstance(self._data, da.Array):
                 return self._data.compute()
             return np.concatenate(da.compute(*[d for d in self._data]), axis=-1)
 
-
+    @cached_property
+    def sparse_data(self):
+        return self.data
+        
     @cached_property
     def coords(self) -> np.ndarray:
         """ Only compute dask coords array upon first use """
+        if self.sparse and len(self.coord_vecs):
+            return np.stack([cv[w].compute() for cv,w in zip(self.coord_vecs, self.sparse_data[..., 0].coords)], axis=-1)
         with self.benchmark(f'coords {self._coords.shape}'):
             return self._coords.compute()
 
@@ -208,16 +220,19 @@ class Block(BaseAbstract):
         return {dim: 1+d.sum() for dim, d in self.window_depth.items()}
 
 
-    @cached_property
+    @property
     def valid_windows_sparse(self):
         """ Determine valid sample window indices for sparse data """
+        # If no window is requested, we can just use the sparse coords directly
+        if sum([np.sum(v) for v in self.window_depth.values()]+[0]) == 0:
+            return self.sparse_data.coords[:-1]
+
         # Note that the sparse API isn't fully solidified - there are a few
         # different ways to handle extracting the valid windows (e.g. using
         # the sparse vectors explicitly; or using the COO interface into the
         # sparse array, similar to the dense calculation). Need to perform
         # some timing tests to see if using an API equivalent to dense (as 
-        # is currently implemented) results in any slowdown / memory issues. 
-
+        # is currently implemented) results in any slowdown / memory issues.         
         def window_count(valid: np.ndarray, keys_pct: tuple) -> np.ndarray: 
             """ Calculate the number of elements in the N-d rolling window """
             keys, percent = keys_pct
@@ -240,14 +255,14 @@ class Block(BaseAbstract):
 
         # return idxs[ counts >= (percent * n_total) ]
         # Create a mask indicating valid elements, and extract indices 
-        data  = self.data.data 
-        valid = ~self.invalid(data)
+        data  = self.data 
+        valid = ~self.invalid(data.data)
         valid = reduce(window_count, self.valid_percent.items(), valid)
-
+        
         # Remove indices outside of coordinate bounds (except virtual)
-        inbound = np.isfinite(self.coords)
-        inbound|= np.isnan(self.coords).all(tuple(range(self.ndim)))
-        return self.data.coords[:, valid & inbound.all(-1).flatten()][:-1].T
+        # inbound = np.isfinite(self.coords)
+        # inbound|= np.isnan(self.coords).all(tuple(range(self.ndim)))
+        return data.coords[:, valid][:-1].T# & inbound.all(-1).flatten()][:-1].T
         # return valid & inbound.all(-1).flatten()
 
 
@@ -334,16 +349,17 @@ class Block(BaseAbstract):
     @property
     def valid_coords(self) -> np.ndarray:
         """ Coordinate values for the valid locations """
-        # if self.sparse:
-            # return self.coords.data.reshape(-1, self.coords.shape[-1])[self.valid_windows]
+        if self.sparse and sum([np.sum(v) for v in self.window_depth.values()]+[0]) == 0:
+            return self.coords
+        #     return self.coords[:-1].T#.reshape(-1, self.coords.shape[-1])#[self.valid_windows]
         return self.coords[tuple(self.valid_windows)]
 
 
     @property
     def valid_data(self) -> np.ndarray:
         """ Center data values for the valid locations """
-        # if self.sparse:
-        #     return self.data.data.reshape(-1, self.data.shape[-1])[self.valid_windows]
+        if self.sparse and sum([np.sum(v) for v in self.window_depth.values()]+[0]) == 0:
+            return self.sparse_data.data.reshape(-1, self.sparse_data.data.shape[-1])
         return self.data[tuple(self.valid_windows)]
 
 
@@ -352,7 +368,7 @@ class Block(BaseAbstract):
         """ Resolution for valid locations, parsing left/right if necessary """
         if self.is_uniform: 
             return np.array(self.resolution)
-
+        assert(not self.sparse)
         res = [r[v] for r,v in zip(self.resolution, self.valid_windows)]
         return np.stack(res, axis=1)
 
@@ -362,6 +378,11 @@ class Block(BaseAbstract):
         """ Quick verification: returns True if no valid data exists """
         # If a dimension can have 0% exist and still be valid, don't check
         if min(self.valid_percent.values()) > 0:
+            if self.sparse:
+                n = self.sparse_data.data.size
+                # if not n:
+                #     self.__dict__.pop('sparse_data', None)
+                return n == 0
             return not self.valid_mask.any()
             # return self.invalid( self._data[..., 0].compute() ).all()
         return False
@@ -560,13 +581,13 @@ class Block(BaseAbstract):
         samples = len(indices)
 
         # Calculate the lower and upper bounds for each window dimension
-        center = np.array(self.valid_windows)[:, indices, None]
-        center-= lower[:, None, None].astype(center.dtype)
-        bounds = [left + np.arange(size, dtype=center.dtype) for left, size in zip(center, total)]
-
-        # Expand the bounds so they can be broadcast over the full data/coords
-        windows = tuple(starmap(expand, enumerate(bounds, 1)))
-        assert(len(windows[0]) == samples), [len(windows), samples]
+        if not self.sparse:
+            center = np.array(self.valid_windows)[:, indices, None]
+            center-= lower[:, None, None].astype(center.dtype)
+            bounds = [left + np.arange(size, dtype=center.dtype) for left, size in zip(center, total)]
+            # Expand the bounds so they can be broadcast over the full data/coords
+            windows = tuple(starmap(expand, enumerate(bounds, 1)))
+            assert(len(windows[0]) == samples), [len(windows), samples]
 
         # Extract windows and drop virtual dimensions 
         # Note: SegFault/Access violation here is likely an issue with data
@@ -575,12 +596,15 @@ class Block(BaseAbstract):
         is_arr = isinstance(self._data, da.Array)
         n_feat = self._data.shape[-1] if is_arr else len(self._data)
         get_ix = lambda i: self._data[..., i] if is_arr else self._data[i]
-
-        data   = [get_ix(i).compute()[windows] for i in range(n_feat)]
-        data   =   np.stack(data, -1).reshape((samples,)+shape+(len(features),))
-        coords = self.coords[windows].reshape((samples,)+shape+(len(self.dims),))
+        if self.sparse:
+            data = np.stack([self.sparse_data[..., i].data[list(indices)] for i in range(len(features))], axis=-1).reshape((len(indices),1,1,1, len(features)))
+            coords = self.coords[list(indices)][:,None,None,None]
+        else:
+            data   = [get_ix(i).compute()[windows] for i in range(n_feat)]
+            data   =   np.stack(data, -1).reshape((samples,)+shape+(len(features),))
+            coords = self.coords[windows].reshape((samples,)+shape+(len(self.dims),))
         
-        for k in ['coords', 'valid_windows', 'valid_mask']:
+        for k in ['coords', 'valid_windows', 'valid_mask', 'sparse_data'][:-1]:
             self.__dict__.pop(k, None)
             
         # Remove virtual dimension from coordinate features

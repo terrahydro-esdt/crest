@@ -77,13 +77,13 @@ debug=False
         fx[:,:], 
         boolean[:,:],
         i32[:], boolean[:],
-        i32[:,:], i32[:], i32
+        i32[:,:], i32[:], i32, boolean
         )
     for fx in INPUT_TYPES
 ], 
 cache=True, nogil=True, parallel=False)
 def multiloop(matches, b1, a2, valid_cols, starts, flags, 
-    skip, steps, maxim):
+    skip, steps, maxim, shuffle):
     """ Core bruteforce loop """
 
     # Keep track of item counts
@@ -166,6 +166,8 @@ def multiloop(matches, b1, a2, valid_cols, starts, flags,
         # print('\t\t\tNew starts:', starts)
         # print('\t\t\t New flags:', flags)
     # print('\t\tdone')
+    if shuffle and n_match:
+        np.random.shuffle(matches[:n_match])
     return n_match, n_loops, broke_early
 
 
@@ -487,20 +489,20 @@ def multiset_single(coordinates: list[np.ndarray], resolutions: list[np.ndarray]
 
 
     if USE_PARALLEL: 
-        n_threads = int(min(3, max(1, NUMBA_NUM_THREADS//2)))
+        n_threads = nb.get_num_threads()#int(min(3, max(1, NUMBA_NUM_THREADS//2)))
         chunksize = 0
         if array_lens[0] > (n_threads*2):
             chunksize = 1+array_lens[0] // (n_threads * 8)
-        nb.set_num_threads(n_threads)
+        # nb.set_num_threads(n_threads)
         nb.set_parallel_chunksize(chunksize) 
     return multiset_single_numba(c, array_lens, array_idxs)[:, np.argsort(order)]#List(arrays))
 
 
 @nb.njit(
-    [i32[:,:](fx[:,::1], i32[:], i32[:,:])#ListType(fx[:,::1]))#, ListType(fx[:,:,:]), i32[:])
+    [i32[:,:](fx[:,::1], i32[:], i32[:,:], i32, boolean)#ListType(fx[:,::1]))#, ListType(fx[:,:,:]), i32[:])
     for fx in INPUT_TYPES], 
 cache=True, nogil=True, parallel=USE_PARALLEL, fastmath=True)
-def multiset_single_numba(arrays, array_lens, array_idxs):#, resolutions, steps):
+def multiset_single_numba(arrays, array_lens, array_idxs, num_samples, shuffle):#, resolutions, steps):
     # a = np.arange(10)
     # _nd_image.zoom_shift(a, None, np.array([2.]), a, 0, 4, 0., 0, False)
     # print('shifted:',a)
@@ -509,6 +511,10 @@ def multiset_single_numba(arrays, array_lens, array_idxs):#, resolutions, steps)
 
         t = get_system_clock()
     #     print('start')
+
+    # We can return early if we generate the requested number of samples
+    allow_early_stop = num_samples > 0
+    
     n_arrays = len(array_lens)
     n_rows = array_lens[0]
     n_cols = arrays.shape[1]
@@ -562,7 +568,10 @@ def multiset_single_numba(arrays, array_lens, array_idxs):#, resolutions, steps)
     partial_matches = np.empty((n_threads, max_len), dtype=np.int32)
     if debug: print('\t\t\t\tInitialize-bot:', as_seconds_double(get_system_clock()-t))
 
-    max_matches = np.zeros(n_threads, dtype=np.int32) + 1000
+    base_maximum = 1000
+    if allow_early_stop:
+        base_maximum = 2 * num_samples
+    max_matches = np.zeros(n_threads, dtype=np.int32) + base_maximum
     inner_matches = [np.empty((max_matches[0], n_arrays), dtype=np.int32) for _ in range(n_threads)]
 
 
@@ -571,7 +580,7 @@ def multiset_single_numba(arrays, array_lens, array_idxs):#, resolutions, steps)
     #   This should allow adaptively swapping the order of arrays as a thread
     #   processes more zero_indices (with the objective being to minimize n_tasks)
 
-    max_tasks = np.zeros(n_threads, dtype=np.int32) + 1000
+    max_tasks = np.zeros(n_threads, dtype=np.int32) + base_maximum
     tasks_queue = [np.empty((max_tasks[0], n_arrays), dtype=np.int32) for _ in range(n_threads)]
     tasks_order = [np.empty((max_tasks[0], n_arrays), dtype=np.int32) for _ in range(n_threads)]
     tasks_size = [np.empty((max_tasks[0],), dtype=np.int32) for _ in range(n_threads)]
@@ -652,8 +661,17 @@ def multiset_single_numba(arrays, array_lens, array_idxs):#, resolutions, steps)
         update = np.zeros((n_threads,), dtype=np.float32)
         print('initialize:', as_seconds_double(get_system_clock()-t))
 
+    
+    zero_indices = np.arange(n_rows)
+    if shuffle:
+        np.random.shuffle(zero_indices)
+    
     for zero_index in nb.prange(n_rows):
-
+        if allow_early_stop:
+            if n_match.sum() >= num_samples:
+                continue
+        zero_index = zero_indices[zero_index]
+        
         # print('zero_index', zero_index)
         if debug: t = get_system_clock()
         # if (zero_index % print_every) == 0:
@@ -1007,7 +1025,7 @@ def multiset_single_numba(arrays, array_lens, array_idxs):#, resolutions, steps)
                 finite_cols[task_order] & finite_cols[target], 
                 # arrays[target], finite_cols[:task_size] & finite_cols[target], 
                 start, flags, 
-                array_skips[target], steps[target], 10000 if first_pick[tid] else 0)#, col_orders[task_size])
+                array_skips[target], steps[target], 10000 if first_pick[tid] else 0, shuffle)#, col_orders[task_size])
             if debug: 
                 multi[tid] += as_seconds_double(get_system_clock()-_multi_t)  
                 t = get_system_clock()       
@@ -1084,7 +1102,7 @@ def multiset_single_numba(arrays, array_lens, array_idxs):#, resolutions, steps)
 
             if (task_size+1) < n_arrays:
                 if (tasks_left + n_match2) >= max_tasks[tid]:
-                    additional = 2 * ((tasks_left + n_match2) - max_tasks[tid])
+                    additional = 2 * ((tasks_left + n_match2) + max_tasks[tid])
                     tasks_queue[tid] = np.append(tasks_queue[tid], np.empty((additional, n_arrays), dtype=np.int32), axis=0)
                     tasks_order[tid] = np.append(tasks_order[tid], np.empty((additional, n_arrays), dtype=np.int32), axis=0)
                     tasks_size[tid] = np.append(tasks_size[tid], np.empty((additional,), dtype=np.int32), axis=0)
@@ -1094,21 +1112,27 @@ def multiset_single_numba(arrays, array_lens, array_idxs):#, resolutions, steps)
                 # if tid == 1:
                 #     print('first 5 tasks:', tasks_order[tid][:min(tasks_left, 5)])
                 #     print('sizes:', tasks_size[tid][:min(tasks_left, 5)])
-                curr_queue = tasks_queue[tid][tasks_left, :task_size].copy()
-                curr_order = tasks_order[tid][tasks_left, :task_size].copy()
-                # t = get_system_clock()
-                tasks_size[tid][n_match2:tasks_left+n_match2] = tasks_size[tid][:tasks_left].copy()
-                tasks_queue[tid][n_match2:tasks_left+n_match2] = tasks_queue[tid][:tasks_left].copy()
-                tasks_order[tid][n_match2:tasks_left+n_match2] = tasks_order[tid][:tasks_left].copy()
-                # copyt[tid] += get_system_clock()-t
 
-                # Store new tasks at beginning of array
-                tasks_size[tid][:n_match2] = task_size+1
-                tasks_queue[tid][:n_match2, :task_size] = curr_queue#tasks_queue[tid][tasks_left+n_match2, :task_size]
-                tasks_queue[tid][:n_match2, task_size] = partial_matches[tid, :n_match2][::-1]
-                tasks_order[tid][:n_match2, :task_size] = curr_order#tasks_queue[tid][tasks_left+n_match2, :task_size]
-                tasks_order[tid][:n_match2, task_size] = target
+                # # --- Store new tasks at beginning of array ---
+                # curr_queue = tasks_queue[tid][tasks_left, :task_size].copy()
+                # curr_order = tasks_order[tid][tasks_left, :task_size].copy()
+                # # t = get_system_clock()
+                # tasks_size[tid][n_match2:tasks_left+n_match2] = tasks_size[tid][:tasks_left].copy()
+                # tasks_queue[tid][n_match2:tasks_left+n_match2] = tasks_queue[tid][:tasks_left].copy()
+                # tasks_order[tid][n_match2:tasks_left+n_match2] = tasks_order[tid][:tasks_left].copy()
+                # # copyt[tid] += get_system_clock()-t
+                # tasks_size[tid][:n_match2] = task_size+1
+                # tasks_queue[tid][:n_match2, :task_size] = curr_queue#tasks_queue[tid][tasks_left+n_match2, :task_size]
+                # tasks_queue[tid][:n_match2, task_size] = partial_matches[tid, :n_match2][::-1]
+                # tasks_order[tid][:n_match2, :task_size] = curr_order#tasks_queue[tid][tasks_left+n_match2, :task_size]
+                # tasks_order[tid][:n_match2, task_size] = target
 
+                # --- Store new tasks at the end of the array ---
+                tasks_size[tid][tasks_left:tasks_left+n_match2] = task_size+1
+                tasks_order[tid][tasks_left:tasks_left+n_match2, :task_size] = tasks_order[tid][tasks_left, :task_size]
+                tasks_order[tid][tasks_left:tasks_left+n_match2, task_size] = target
+                tasks_queue[tid][tasks_left:tasks_left+n_match2, :task_size] = tasks_queue[tid][tasks_left, :task_size]
+                tasks_queue[tid][tasks_left:tasks_left+n_match2, task_size] = partial_matches[tid, :n_match2][::-1]
 
                 # tasks_size[tid][tasks_left:tasks_left+n_match2] = task_size+1
                 # tasks_order[tid][tasks_left:tasks_left+n_match2, :task_size] = tasks_order[tid][tasks_left, :task_size]
@@ -1132,10 +1156,12 @@ def multiset_single_numba(arrays, array_lens, array_idxs):#, resolutions, steps)
                 tasks_left += n_match2
                 # if (tasks_left > 10000) and ((tasks_left % 10000) == 0):
                 #     print(tasks_left, 'tasks_left')
-            # write directly to inner_matches
+
+            
+            # Complete match of all arrays; write directly to inner_matches
             else:
                 if (count + n_match2) >= max_matches[tid]:
-                    additional = 2 * ((count + n_match2) - max_matches[tid])
+                    additional = 2 * ((count + n_match2) + max_matches[tid])
                     inner_matches[tid] = np.append(inner_matches[tid], np.empty((additional, n_arrays), dtype=np.int32), axis=0)
                     max_matches[tid] += additional
                 # if debug:
@@ -1147,13 +1173,17 @@ def multiset_single_numba(arrays, array_lens, array_idxs):#, resolutions, steps)
                 inner_matches[tid][count:count+n_match2, task_order] = tasks_queue[tid][tasks_left, :task_size]
                 inner_matches[tid][count:count+n_match2, target] = partial_matches[tid, :n_match2]
                 count += n_match2
-
+                n_match[tid] += n_match2
             if debug: lower[tid] += as_seconds_double(get_system_clock()-t)
 
+            if allow_early_stop:
+                if n_match.sum() >= num_samples:
+                    tasks_left = 0
+                    
             # if tid == CHECK_TID: print('task end', tid)
         if count:
             match = inner_matches[tid][:count]
-            n_match[tid] += count
+            # n_match[tid] += count
             matches[tid].append(match.copy())
 
         # if debug: 
