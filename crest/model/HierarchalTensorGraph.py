@@ -102,7 +102,7 @@ class HierarchalTensorGraph(TensorGraph):
             raise ImproperTensorGraphError(message)
 
         # log the creation of the HTG
-        self.logger.info(f'Created HierarchalTensorGraph {self.name}')
+        self.logger.debug(f'Created HierarchalTensorGraph {self.name}')
 
         if (edges):
             self.add_edges_from(edges)
@@ -110,7 +110,7 @@ class HierarchalTensorGraph(TensorGraph):
     def __iter__(self):
         """ Iterate through all nodes within the HTG """
 
-        self.logger.info(f'Iterating through all nodes in HTG {self.name}')
+        self.logger.debug(f'Iterating through all nodes in HTG {self.name}')
 
         def traverse_nodes(graph, path):
             """ Recursive generator """
@@ -136,7 +136,7 @@ class HierarchalTensorGraph(TensorGraph):
     def get_inputs(self, node):
         """ Get the inputs of the given node """
 
-        self.logger.info(f'Getting inputs for node {node}')
+        self.logger.debug(f'Getting inputs for node {node}')
 
         if node in self:
             input_maps = self[node]._inputs_map
@@ -150,7 +150,7 @@ class HierarchalTensorGraph(TensorGraph):
     def get_outputs(self, node):
         """ Get the outputs of the given node """
 
-        self.logger.info(f'Getting outputs for node {node}')
+        self.logger.debug(f'Getting outputs for node {node}')
 
         if node in self:
             output_maps = self[node]._outputs_map
@@ -164,7 +164,7 @@ class HierarchalTensorGraph(TensorGraph):
     def equals(self, node: Callable) -> bool:
         """ Check if the given node is the same as this node """
 
-        self.logger.info(f'Checking if node {node} is equal to {self.node}')
+        self.logger.debug(f'Checking if node {node} is equal to {self.node}')
 
         if self.node and self.is_basenode:
             if node and node.is_basenode:
@@ -184,7 +184,7 @@ class HierarchalTensorGraph(TensorGraph):
         Enables the serialization of the HTG basenode as a JSON string.
         """
 
-        self.logger.info(f'Serializing basenode {self.name} to JSON')
+        self.logger.debug(f'Serializing basenode {self.name} to JSON')
 
         to_json = getattr(self.node, "to_json", None)
 
@@ -224,7 +224,7 @@ class HierarchalTensorGraph(TensorGraph):
         Enables the serialization of the HTG network graph as a JSON string. 
         """
 
-        self.logger.info(f'Serializing HTG {self.name} to JSON')
+        self.logger.debug(f'Serializing HTG {self.name} to JSON')
 
         graph_info = {}
 
@@ -404,7 +404,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Renaming inputs and outputs for node {node}')
+        self.logger.debug(f'Renaming inputs and outputs for node {node}')
 
         if inputs_map:
             if not isinstance(inputs_map, dict):
@@ -435,7 +435,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Searching for node {name} in HTG {self.name}')
+        self.logger.debug(f'Searching for node {name} in HTG {self.name}')
 
         # tuples must be exact matches.
         if isinstance(name, tuple):
@@ -449,7 +449,7 @@ class HierarchalTensorGraph(TensorGraph):
     def all_nodes(self) -> dict:
         """ Returns a dict of all child nodes within the parent """
 
-        self.logger.info(f'Getting all nodes in HTG {self.name}')
+        self.logger.debug(f'Getting all nodes in HTG {self.name}')
 
         return dict([i for i in self])
 
@@ -469,7 +469,7 @@ class HierarchalTensorGraph(TensorGraph):
     @property
     def edges(self):
 
-        self.logger.info(f'Getting all edges in HTG {self.name}')
+        self.logger.debug(f'Getting all edges in HTG {self.name}')
 
         return self.graph.edges
 
@@ -477,7 +477,7 @@ class HierarchalTensorGraph(TensorGraph):
     def nodes(self) -> dict:
         """ Returns a dict of nodes within the parent HTG """
 
-        self.logger.info(f'Getting all nodes in HTG {self.name}')
+        self.logger.debug(f'Getting all nodes in HTG {self.name}')
 
         return self.graph.get_node_attributes('htg')
 
@@ -485,7 +485,7 @@ class HierarchalTensorGraph(TensorGraph):
     def sources(self) -> list:
         """ Nodes with no incoming edges """
 
-        self.logger.info(f'Getting all sources in HTG {self.name}')
+        self.logger.debug(f'Getting all sources in HTG {self.name}')
 
         def is_source(node): return self.graph.in_degree(node) == 0
 
@@ -495,7 +495,7 @@ class HierarchalTensorGraph(TensorGraph):
     def sinks(self) -> list:
         """ Nodes with no outgoing edges """
 
-        self.logger.info(f'Getting all sinks in HTG {self.name}')
+        self.logger.debug(f'Getting all sinks in HTG {self.name}')
 
         def is_sink(node): return self.graph.out_degree(node) == 0
 
@@ -505,7 +505,7 @@ class HierarchalTensorGraph(TensorGraph):
     def is_empty(self) -> bool:
         """ Check if graph is empty """
 
-        self.logger.info(f'Checking if HTG {self.name} is empty')
+        self.logger.debug(f'Checking if HTG {self.name} is empty')
 
         return self.graph.is_empty
 
@@ -513,7 +513,7 @@ class HierarchalTensorGraph(TensorGraph):
     def is_basenode(self) -> bool:
         """ Check if graph is empty """
 
-        self.logger.info(f'Checking if HTG {self.name} is a basenode')
+        self.logger.debug(f'Checking if HTG {self.name} is a basenode')
 
         return self.graph.is_empty
 
@@ -556,7 +556,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Getting node {node} in HTG {self.name}')
+        self.logger.debug(f'Getting node {node} in HTG {self.name}')
 
         if not (isinstance(node, str) or isinstance(node, HierarchalTensorGraph) or callable(node)):
             message = f'node must be either callable, a string, or a HierarchalTensorGraph'
@@ -639,7 +639,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Adding node {node} to HTG {self.name}')
+        self.logger.debug(f'Adding node {node} to HTG {self.name}')
 
         if not (callable(node) or isinstance(node, HierarchalTensorGraph)):
             message = f'A node must be either callable or a HierarchalTensorGraph'
@@ -653,7 +653,7 @@ class HierarchalTensorGraph(TensorGraph):
     def add_io(self, node: Union[str, Callable]):
         """ Add input/output edges and (optionally) input/output specs to a node """
 
-        self.logger.info(f'Adding i/o to node {node} in HTG {self.name}')
+        self.logger.debug(f'Adding i/o to node {node} in HTG {self.name}')
 
         self.add_edge('input', node)
         self.add_edge(node, 'output')
@@ -668,7 +668,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Removing node {node} from HTG {self.name}')
+        self.logger.debug(f'Removing node {node} from HTG {self.name}')
 
         # remove node from string
         if isinstance(node, str):
@@ -775,7 +775,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(
+        self.logger.debug(
             f'Adding edge from {source} to {target} in HTG {self.name}')
 
         if isinstance(source, str):
@@ -815,7 +815,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Adding edges from {ebunch} in HTG {self.name}')
+        self.logger.debug(f'Adding edges from {ebunch} in HTG {self.name}')
 
         for i in ebunch:
             self.add_edge(*i)
@@ -823,7 +823,7 @@ class HierarchalTensorGraph(TensorGraph):
     def __repr__(self):
         """ Represent the HierarchalTensorGraph """
 
-        self.logger.info(f'Representing HTG {self.name}')
+        self.logger.debug(f'Representing HTG {self.name}')
 
         return f'HierarchalTensorGraph("{self.name}", id={id(self)})'
 
@@ -851,7 +851,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Getting node {path} in HTG {self.name}')
+        self.logger.debug(f'Getting node {path} in HTG {self.name}')
 
         if isinstance(path, HierarchalTensorGraph):
             htg = list(filter(lambda x: x == path, self.all_nodes.values()))
@@ -897,7 +897,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Checking if node {path} is in HTG {self.name}')
+        self.logger.debug(f'Checking if node {path} is in HTG {self.name}')
 
         # if given a string check if it is direct child of node
         if isinstance(path, str):
@@ -936,7 +936,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Applying feature map to {io} in HTG {self.name}')
+        self.logger.debug(f'Applying feature map to {io} in HTG {self.name}')
 
         # flatten nested dict of inputs
         def flatten_dict(d, key):
@@ -1079,7 +1079,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Calling HTG {self.name}')
+        self.logger.debug(f'Calling HTG {self.name}')
 
         # if not a basenode do some error checking
         if not self.is_basenode:
@@ -1197,7 +1197,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Expanding node {nodename} in HTG {self.name}')
+        self.logger.debug(f'Expanding node {nodename} in HTG {self.name}')
 
         if not g:
             graph = self.graph.copy()
@@ -1252,7 +1252,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Getting node {name} in HTG {self.name}')
+        self.logger.debug(f'Getting node {name} in HTG {self.name}')
         
         node = self if node is None else node
 
@@ -1277,7 +1277,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Getting parent of node {source} in HTG {self.name}')
+        self.logger.debug(f'Getting parent of node {source} in HTG {self.name}')
 
         node = self if node is None else node
 
@@ -1309,7 +1309,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Getting edge label from {source} to {target} in HTG {self.name}')
+        self.logger.debug(f'Getting edge label from {source} to {target} in HTG {self.name}')
 
         # get source and target nodes
         source_node = self._get_node(source)
@@ -1376,7 +1376,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Getting all edge labels in HTG {self.name}')
+        self.logger.debug(f'Getting all edge labels in HTG {self.name}')
 
         edge_labels = {}
         avial = {}
@@ -1451,7 +1451,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Printing all edge labels in HTG {self.name}')
+        self.logger.debug(f'Printing all edge labels in HTG {self.name}')
 
         # check if nodes are empty
         def is_not_all_empty(graph):
@@ -1511,7 +1511,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Drawing HTG {self.name}')
+        self.logger.debug(f'Drawing HTG {self.name}')
 
         # check if nodes are empty
         def is_not_all_empty(graph):
@@ -1679,7 +1679,7 @@ class HierarchalTensorGraph(TensorGraph):
         with open(html_file, "w", encoding="utf-8") as f:
             f.write(html_content)
 
-        logger.info(
+        logger.debug(
             f"Interactive graph saved as {html_file}. Open it in a browser.")
 
     def _vis_graph(self):
@@ -1687,7 +1687,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         nodes = self.all_nodes
 
-        logger.info('Iterating through all the nodes.')
+        logger.debug('Iterating through all the nodes.')
         net_nodes = {}
         for node in nodes.keys():
             parent_node = self
@@ -1715,7 +1715,7 @@ class HierarchalTensorGraph(TensorGraph):
                 "edges": from_edges
             }
 
-        logger.info(
+        logger.debug(
             f'Successfully collected node information and stored in dictionary.')
         net_edges = []
 
@@ -1726,7 +1726,7 @@ class HierarchalTensorGraph(TensorGraph):
             if ((n + ('input',)) in net_nodes.keys()):
                 net_edges.append((n, n + ('input',)))
 
-        logger.info(f'Creating dictionary of edge information.')
+        logger.debug(f'Creating dictionary of edge information.')
         net_edges = list(set(net_edges))
         net_edges = [{"from": str(e[0]), "to": str(e[1])} for e in net_edges]
 
@@ -1770,7 +1770,7 @@ class Recurrence():
         self.X = X
         self.rollout_axis = rollout_axis
 
-        self.logger.info(
+        self.logger.debug(
             f'Initializing Recurrence for node {name} in HTG {node.name}')
 
     def __iter__(self):
@@ -1788,7 +1788,7 @@ class Recurrence():
     # the future.
     def __getitem__(self, index):
 
-        self.logger.info(f'Getting item {index} in HTG {self.name}')
+        self.logger.debug(f'Getting item {index} in HTG {self.name}')
         if not self.node[self.name].is_recurrent:
             values = self.traverse(self.name)[
                 1] if self.name != 'input' else self.X

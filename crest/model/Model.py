@@ -40,7 +40,7 @@ class Model(BaseModel):
         self.model = None
         self.name = graph.name
 
-        logger.info(f'Initializing CREST Model')
+        logger.debug(f'Initializing CREST Model')
 
         if not graph.inputs or not graph.outputs:
             raise ImproperModelError(
@@ -63,7 +63,7 @@ class Model(BaseModel):
         self.outputs = self.graph(self.inputs)
         self.metric = Metrics()
 
-        logger.info(f'Completed Initializing CREST Model')
+        logger.debug(f'Completed Initializing CREST Model')
 
     def _make_batcher(self, dataset, **kwargs):
         """
@@ -79,7 +79,7 @@ class Model(BaseModel):
         kwargs: kwargs to pass to the Batcher
 
         """
-        logger.info(f'Called _make_batcher, making batcher from dataset')
+        logger.debug(f'Called _make_batcher, making batcher from dataset')
         
         if isinstance(dataset, Batcher):
             return dataset
@@ -98,7 +98,7 @@ class Model(BaseModel):
 
     def build(self, _internal=False, **kwargs):
         """ Builds Keras model """
-        logger.info(f'Building Keras Model')
+        logger.debug(f'Building Keras Model')
 
         if not _internal:
             warnings.warn('Use Model.compile instead of Model.build')
@@ -122,7 +122,7 @@ class Model(BaseModel):
             args passed as keras.Model.compile(kwargs)
 
         """
-        logger.info(f'Compiling Keras Model')
+        logger.debug(f'Compiling Keras Model')
 
         # Check kwargs for metrics locally defined
         # if 'metrics' in kwargs:
@@ -153,7 +153,7 @@ class Model(BaseModel):
         accepted by Keras.fit().
 
         """
-        logger.info(f'Training Keras Model')
+        logger.debug(f'Training Keras Model')
 
         # Add default options for kwargs if necessary
         defaults = {'steps_per_epoch': 1,
@@ -202,7 +202,7 @@ class Model(BaseModel):
         def generator(x):
             yield from x
 
-        logger.info(f'Fitting model with parameters: {kwargs.keys()}')
+        logger.debug(f'Fitting model with parameters: {kwargs.keys()}')
 
         with training_batcher as data, kwargs.get('validation_data', nullcontext()):
 
@@ -228,7 +228,7 @@ class Model(BaseModel):
         accepted by Keras.predict().
 
         """
-        logger.info(f'Predicting with Keras Model')
+        logger.debug(f'Predicting with Keras Model')
 
         # Set default options for kwargs
         defaults = {
@@ -336,7 +336,7 @@ class Model(BaseModel):
         accepted by Keras.predict().
 
         """
-        logger.info(f'Predicting exhaustive')
+        logger.debug(f'Predicting exhaustive')
 
         # Set default options for kwargs
         defaults = {
@@ -409,7 +409,7 @@ class Model(BaseModel):
 
         """
 
-        logger.info(f'Evaluating Keras Model')
+        logger.debug(f'Evaluating Keras Model')
 
         # Default options since we use generators
         defaults = {
@@ -440,7 +440,7 @@ class Model(BaseModel):
         Save the weights of the model
 
         """
-        logger.info(f'Save weights')
+        logger.debug(f'Save weights')
 
         os.makedirs('crest_cache', exist_ok=True)
         self.model.save_weights('crest_cache/htg.weights.h5')
@@ -450,7 +450,7 @@ class Model(BaseModel):
         Load the weights of the model
 
         """
-        logger.info(f'Load weights')
+        logger.debug(f'Load weights')
 
         self.model.load_weights(os.path.join(path, 'htg.weights.h5'))
 
@@ -459,17 +459,17 @@ class Model(BaseModel):
         Save model by registering the keras model
 
         """
-        logger.info(f'Save model as custom_model')
+        logger.debug(f'Save model as custom_model')
 
         if hasattr(self.model, 'save') and callable(self.model.save):
             from tensorflow.keras.utils import get_custom_objects
 
-            logger.info('Saving model with tensorflow keras.')
+            logger.debug('Saving model with tensorflow keras.')
 
             get_custom_objects()[model_path] = self.model
             self.model.save(model_path)
         else:
-            logger.info("Saving model using pickle.")
+            logger.debug("Saving model using pickle.")
 
             if (os.path.isdir(model_path)):
                 pickle_name = gen_filename(self.name, '.pkl')
@@ -477,7 +477,7 @@ class Model(BaseModel):
             
             write_pkl(self.model, pickle_name)
 
-            logger.info(f"Saved metadata to the same root path: {Path(model_path).parent}")
+            logger.debug(f"Saved metadata to the same root path: {Path(model_path).parent}")
             
 
     @staticmethod
@@ -488,11 +488,11 @@ class Model(BaseModel):
         """
         root_dir = Path(path).parent
 
-        logger.info(f'Load custom model from {root_dir}')
+        logger.debug(f'Load custom model from {root_dir}')
 
         try:
             if (model_type == 'keras'):
-                logger.info('Loading model using Tensorflow Keras library.')
+                logger.debug('Loading model using Tensorflow Keras library.')
 
                 if (custom_objects is None):
                     loaded = tf.keras.models.load_model(path)
@@ -501,11 +501,11 @@ class Model(BaseModel):
                 
                 return loaded
             else:
-                logger.info('Loading model using pickle.')
+                logger.debug('Loading model using pickle.')
 
                 model_obj = read_pkl(root_dir)
                 
-                logger.info(f'Model object loaded.')
+                logger.debug(f'Model object loaded.')
                 return model_obj
         except Exception as e:
             logger.error(f'Could not load model from CREST Model: {e}')
@@ -516,7 +516,7 @@ class Model(BaseModel):
         Converts the model to a json string
 
         """
-        logger.info(f'Save Keras Model')
+        logger.debug(f'Save Keras Model')
 
         os.makedirs(dir, exist_ok=True)
 
