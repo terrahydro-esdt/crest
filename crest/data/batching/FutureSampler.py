@@ -12,14 +12,15 @@ class FutureSampler(NonzeroSampler):
     def __next__(self):
         """ Yield the block most needed currently from blocks with samples """
         config = min(self.configs)
-        while len(config) > self.max_queue:
+        while (len(config) > self.max_queue) and not self.exit_flag():
             config = self.configs[np.argmin(list(map(len, self.configs)))]
             if len(config) <= self.max_queue:
                 break
             config = min(self.configs)
             time.sleep(0.1)
-        index = self.random.choice( config.nonzero )
-        return [[index, self.blocks[index]]]
+        if not self.exit_flag():
+            index = self.random.choice( config.nonzero )
+            return [[index, self.blocks[index]]]
 
     def get_block(self, config):
         index = self.random.choice( config.nonzero )

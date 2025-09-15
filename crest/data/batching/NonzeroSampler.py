@@ -1,8 +1,9 @@
 class NonzeroSampler:
-    def __init__(self, blocks: list, configs: list, random):
+    def __init__(self, blocks: list, configs: list, random, exit_flag):
         self.random = random
         self.blocks = blocks
         self.configs = configs
+        self.exit_flag = exit_flag
 
     def __iter__(self):
         return self

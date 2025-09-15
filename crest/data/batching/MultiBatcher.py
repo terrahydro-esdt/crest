@@ -126,7 +126,7 @@ class MultiBatcher(Batcher):
             c.set_n_blocks(len(blocks))
         if self.directed_sampling:
             # self._sampler = NonzeroSampler(blocks, self._block_configs, self.random)
-            self._sampler = FutureSampler(blocks, self._block_configs, self.random, batch_size=self.batch_size, max_queue=self.max_queue)
+            self._sampler = FutureSampler(blocks, self._block_configs, self.random, batch_size=self.batch_size, max_queue=self.max_queue, exit_flag=lambda: self._exit)
         yield from super()._generate_batches(blocks)
         
         # After completing an epoch, reduce block counts so that adapting to
@@ -156,7 +156,7 @@ class MultiBatcher(Batcher):
         # Enforce a soft-cap on the number of batches queued for each config
         config = min(self._block_configs)
         count = 0
-        while len(config) > self.max_queue:
+        while (len(config) > self.max_queue) and not self._exit:
             config = self._block_configs[np.argmin(list(map(len, self._block_configs)))]
             if len(config) <= self.max_queue:
                 break
@@ -166,11 +166,13 @@ class MultiBatcher(Batcher):
             count += 1
             time.sleep(0.1)
 
-        # Maximizing n_expected avoids all blocked workers choosing one config
-        config = min(self._block_configs)
-        block_idxs, blocks = zip(*self._sampler.get_block(config))
-        self.info(f'Selected {config} for {block_idxs=}')
-        return blocks, block_idxs, config.add_worker()
+        if not self._exit:
+            # Maximizing n_expected avoids all blocked workers choosing one config
+            config = min(self._block_configs)
+            block_idxs, blocks = zip(*self._sampler.get_block(config))
+            self.info(f'Selected {config} for {block_idxs=}')
+            return blocks, block_idxs, config.add_worker()
+        return blocks, block_idxs, None
 
     
     # def _blocker(self, blocks):
