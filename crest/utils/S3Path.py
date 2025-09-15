@@ -15,7 +15,10 @@ class S3Path(FSMap):
 
     def __repr__(self) -> str:
         return f'S3Path({self.as_posix()})'
-        
+    
+    def __str__(self) -> str:
+        return self.as_posix()
+    
     def __hash__(self) -> int:
         """ Equal paths map to the same hash """
         return hash(self.path)

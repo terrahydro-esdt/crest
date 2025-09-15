@@ -165,8 +165,14 @@ def test_extract():
 
 import sparse
 
+def from_numpy(x):
+    coords = np.where(np.isfinite(x))
+    data = x[coords]
+    coords = np.vstack(coords)
+    return sparse.COO(coords, data, shape=x.shape, fill_value=np.nan)
+    
 # 3 x, 3 y, 1 features
-example_data_sparse = sparse.COO.from_numpy( 
+example_data_sparse = from_numpy(
     np.rollaxis( np.array([
      [[nan, nan, nan],
       [10., 20., 30.],
@@ -174,7 +180,7 @@ example_data_sparse = sparse.COO.from_numpy(
 ]), 0, 3) )
 
 # 3 x, 3 y
-example_coords_sparse = sparse.COO.from_numpy( 
+example_coords_sparse = from_numpy(
     np.rollaxis( np.array([
      [[nan, nan, nan],
       [2.,  2.,  2. ],

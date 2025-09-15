@@ -25,9 +25,13 @@ def get_memory(priority: list[str] = ['uss', 'vms', 'rss']) -> int:
         https://psutil.readthedocs.io/en/latest/#psutil.Process.memory_full_info
 
     """
+
     process = Process()
-    try:    usage = process.memory_full_info()
-    except: usage = process.memory_info()
+
+    # While more informative, memory_full_info is considerably slower to call
+    # try:    usage = process.memory_full_info()
+    # except: 
+    usage = process.memory_info()
 
     for key in priority:
         if hasattr(usage, key):

@@ -6,10 +6,11 @@ from functools import cached_property, partial, cache
 from itertools import starmap, product
 from numbers import Number, Integral as Int
 from pathlib import Path
-import logging
+from logging import Logger
 from typing import Union 
 from tqdm import tqdm 
 
+import dask.dataframe as df
 import dask.array as da
 import xarray as xr
 import pandas as pd 
@@ -20,19 +21,23 @@ import typing
 import shutil
 import zarr
 import math
-import dask
-from s3path import S3Path
+import dask 
 
 from crest.base import BaseAbstract
-from crest.utils import S3Path
-from ..loading.RegionalMaskGenerator import RegionalMaskGenerator
+from crest.utils import S3Path, Stopwatch
 from .Block import Block
 from .Blockset import Blockset
+from .backend import get_backend
 
+# Allow libraries like gdal, rasterio, and opencv to be missing
+try:                
+    from .RegionalMaskGenerator import RegionalMaskGenerator
+except ImportError: 
+    RegionalMaskGenerator = None
+    
 # Bool type which allows numpy bools as well
 Bool = Union[bool, np.bool_]
 
-logger = logging.getLogger(__name__)
 
 class Datafile(BaseAbstract):
     """Class which handles loading data from a single source.
@@ -149,18 +154,18 @@ class Datafile(BaseAbstract):
                               -float('inf')]
 
     def __init__(self,
-        location      : Union[Path, str, FSMap, xr.Dataset],
-        features      : list[str]                        = [],
-        extent        : dict[str, Collection]            = {},
-        window_depth  : dict[str, Int | Collection[Int]] = {},
-        match_radius  : dict[str, str | Number]          = {},
-        valid_percent : dict[str | tuple[str], Number]   = {},
-        invalid_value : object                           = [],
-        preprocessors : list[Callable]                   = [],
-        sort_dims     : bool                             = True,
-        allow_repeats  : bool = False,
-        no_overlaps   : bool                             = False,
-        region        : list[str] | None                 = None,
+        location      : Union[Path, str, FSMap, S3Path, xr.Dataset],
+        features      : list[str] = [],
+        extent        : dict[str, Collection] = {},
+        window_depth  : dict[str, Union[int, Collection[int]]] = {},
+        match_radius  : dict[str, Union[str, Number]] = {},
+        valid_percent : dict[Union[str, tuple[str]], Number] = {},
+        invalid_value : object = [],
+        preprocessors : list[Callable] = [],
+        sort_dims     : bool = True,
+        allow_repeats : bool = False,
+        no_overlaps   : bool = False,
+        region        : list[str] | None = None,
         **kwargs
     ):
         if isinstance(location, FSMap):
@@ -178,12 +183,15 @@ class Datafile(BaseAbstract):
         self.sort_dims      = sort_dims
         self.allow_repeats  = allow_repeats
         self.no_overlaps    = no_overlaps
-        self.dataset_index  = 0  
+        self.dataset_index  = 0 
         self.region         = region
         self.rmg            = None
         self.mask           = None
 
-        if (not self.region is None): 
+        if (not self.region is None):
+            # Raise the original ImportError by attempting import again
+            if RegionalMaskGenerator is None:
+                from .RegionalMaskGenerator import RegionalMaskGenerator
             self.rmg = RegionalMaskGenerator(self.region)
 
         # Store initialization parameter names for pickling
@@ -246,15 +254,14 @@ class Datafile(BaseAbstract):
 
     @cached_property
     def _raw_data(self):
-        """ Only read the zarr once necessary """
+        """ Only read the data once necessary """
         if isinstance(self.location, xr.Dataset):
             raw = self.location
         else:
             # If the given location isn't already an xr.Dataset, open it
-            if not isinstance(self.location, (S3Path, FSMap)):
-                location = self.location
-            else: location = self.location
-            raw = xr.open_zarr(location, **self._kwargs)
+            if isinstance(self.location, FSMap) and not isinstance(self.location, S3Path):
+                self.location = S3Path(self.location)
+            raw = get_backend(self.location).open(**self._kwargs)
 
         # Keep the valid_mask only if it is still accurate for this Datafile
         if 'valid_mask' in raw:
@@ -275,11 +282,12 @@ class Datafile(BaseAbstract):
                 raw = raw.assign_coords(datetime=raw.datetime.astype('datetime64[m]'))
         return raw.chunk({})
 
+
     @cached_property
     def data(self) -> xr.DataArray:
         """ Loaded xarray object """
         data = self._raw_data
-
+        
         # generate mask based on region name
         if (self.region is not None):
             if (self.mask is None):
@@ -289,8 +297,9 @@ class Datafile(BaseAbstract):
             data = data.where(self.mask)
 
         # Apply any preprocessing functions
-        for func in self.preprocessors:
-            data = func(self, data)
+        with dask.config.set(**{'array.slicing.split_large_chunks': False}):
+            for func in self.preprocessors:
+                data = func(self, data)
 
         # Select only requested features
         keys = sorted(self.features or data.keys())
@@ -312,7 +321,8 @@ class Datafile(BaseAbstract):
 
         # Create a mask for valid data elements, to pre-compute when caching
         if 'valid_mask' not in data:
-            data['valid_mask'] = (~data.to_array('features').isnull()).all('features')
+            if not any(hasattr(type(data[f].data._meta), 'todense') for f in data):
+                data['valid_mask'] = (~data.to_array('features').isnull()).all('features')
         if 'valid_mask' in self.features:
             self.features.remove('valid_mask')
 
@@ -351,7 +361,8 @@ class Datafile(BaseAbstract):
         self._raw_data
         if 'summary' in self.__dict__:
             return self.__dict__['summary']
-        data = self.data.drop_sel(features='valid_mask').to_dataset('features')
+        data = self.data.drop_sel(features='valid_mask', errors='ignore')
+        data = data.to_dataset('features')
 
         # Splitting large chunks seems to sometimes result in KeyError in dask
         with dask.config.set(**{'array.slicing.split_large_chunks': False}):
@@ -360,32 +371,67 @@ class Datafile(BaseAbstract):
             for coord in data.coords:
                 if (coord in self.features) and (coord != 'datetime'):
                     coords = {c: data[c] for c in data.coords if c != coord}
-                    data[f'{coord}_f'] = data[coord]
+                    data[f'{coord}_f'] = data[coord].astype('float32')
                     data[f'{coord}_f'] = data[[f'{coord}_f']] \
                         .expand_dims(**coords)[f'{coord}_f'] \
                         .transpose(*list(data.dims)) \
                         .chunk(self.data.data.chunksize[:-1])
 
-            extra = dd(int, {'null' : lambda: data.isnull().sum(dtype='int64')})
-            stats = ['mean', 'std', 'min', 'max'] + list(extra)
-            coord = xr.Variable('statistics', stats) 
-            value = lambda k: getattr(data, k, extra[k])().to_array('features')
-            stats = xr.concat(map(value, stats), coord).to_dataset('statistics')
+            # Slightly different handling required for sparse data
+            if hasattr(type(self.data.data._meta), 'todense'):
+                def calc(values):
+                    # Explicitly apply functions per-block to avoid densifying
+                    blocks = values.data.to_delayed().ravel()
+                    
+                    # Ensure there's always at least one element to avoid errors
+                    delays = [dask.delayed(np.append)(b.data, [np.nan]) for b in blocks]
+                    series = [dask.delayed(pd.Series)(b) for b in delays]
+                    
+                    # Fake array sizes so dask doesn't complain
+                    length = [1] * len(series)
+                    arrays = df.from_delayed(series).to_dask_array(lengths=length)
+                    # Alternatively: values.data.map_blocks(lambda b: b.data[:,None,None])
 
-            # Compute percentiles as a group for efficiency
-            quantiles = list(range(1, 100))#[2, 10, 25, 50, 75, 90, 98]
-            key_names = [f'p{q}'.replace('p50', 'median') for q in quantiles]
-            stats[key_names] = xr.apply_ufunc(
-                lambda x: da.percentile(x.ravel(), quantiles, internal_method='tdigest'),
-                data, **{
-                    'dask'             : 'allowed',
-                    'input_core_dims'  : [list(data.dims)],
-                    'output_core_dims' : [['statistics']],
-                }).to_array('features').to_dataset('statistics')
-            stats = stats.to_array('statistics').to_dataset('features')
+                    # Similar to dense summary, but use dask operations directly
+                    extra = dd(int, {'null' : lambda x: values.size-da.sum(da.isfinite(x))})
+                    stats = ['mean', 'std', 'min', 'max'] + list(extra)
+                    coord = xr.Variable('statistics', stats) 
+                    value = lambda k: getattr(da, f'nan{k}', extra[k])(arrays).astype('float32')
+                    toset = lambda k: xr.DataArray(value(k))
+                    stats = xr.concat(map(toset, stats), coord).to_dataset('statistics')
+                    
+                    quantiles = list(range(1, 100))#[2, 10, 25, 50, 75, 90, 98]
+                    key_names = [f'p{q}'.replace('p50', 'median') for q in quantiles]
+                    stats[key_names] = da.percentile(arrays, quantiles, internal_method='tdigest')
+                    return stats.to_array('statistics')
+                stats = data.apply(calc)
+
+            # Dense summary computation relies mostly on xarray operations
+            else:
+                extra = dd(int, {'null' : lambda: data.isnull().sum(dtype='int64')})
+                stats = ['mean', 'std', 'min', 'max'] + list(extra)
+                coord = xr.Variable('statistics', stats) 
+                value = lambda k: getattr(data, k, extra[k])().to_array('features')
+                stats = xr.concat(map(value, stats), coord).to_dataset('statistics')
+    
+                # Compute percentiles as a group for efficiency
+                quantiles = list(range(1, 100))#[2, 10, 25, 50, 75, 90, 98]
+                key_names = [f'p{q}'.replace('p50', 'median') for q in quantiles]
+                stats[key_names] = xr.apply_ufunc(
+                    lambda x: da.percentile(x.ravel(), quantiles, internal_method='tdigest'),
+                    data, **{
+                        'dask'             : 'allowed',
+                        'input_core_dims'  : [list(data.dims)],
+                        'output_core_dims' : [['statistics']],
+                    }).to_array('features').to_dataset('statistics')
+                stats = stats.to_array('statistics').to_dataset('features')
+                
             stats = stats.rename({
                 f'{c}_f':c for c in data.coords if f'{c}_f' in stats})
-            return stats.to_array('features')
+            stats = stats.to_array('features')
+            stats['statistics'] = stats['statistics'].astype(str)
+            stats['features'] = stats['features'].astype(str)
+            return stats.chunk(-1)
 
 
     # def summary(self, compute: bool = True) -> xr.DataArray:
@@ -422,7 +468,7 @@ class Datafile(BaseAbstract):
     @property
     def _typed_data(self) -> xr.DataArray:
         """ Data/coords converted to float types """
-        data = self.data.drop_sel(features='valid_mask')
+        data = self.data.drop_sel(features='valid_mask', errors='ignore')
 
         # Cast int/uint/etc. to float in order to allow NaNs
         # for key in data.features:
@@ -459,16 +505,23 @@ class Datafile(BaseAbstract):
     @property
     def name(self) -> str:
         """ Return a name for this Datafile using the location if possible """
-        if isinstance(self.location, S3Path):
-            return self.location.stem
+        # Any locations that are Path-like 
         if isinstance(self.location, FSMap):
-            return Path(self.location.root).stem
-        if isinstance(self.location, (Path, str)):
-            loc = Path(self.location)
-            if len(loc.stem) == len(self.config_hash):
-                return f'{loc.parent.stem}_{loc.stem[:4]}'
-            return loc.stem
-        return f'{type(self.location).__name__}_{self.config_hash[:4]}'
+            path = Path(self.location.root)
+        elif isinstance(self.location, str):
+            path = Path(self.location)
+        elif isinstance(self.location, (Path, S3Path)):
+            path = self.location
+        
+        # Any other type (like directly passed xarray objects)
+        else:
+            return f'{type(self.location).__name__}_{self.config_hash[:4]}'
+
+        # Name is just the stem of the path, plus the parent if cached
+        name = path.stem
+        if len(name) == len(self.config_hash):
+            name = f'{path.parent.stem}_{name[:4]}'
+        return name
 
 
     @property
@@ -545,6 +598,8 @@ class Datafile(BaseAbstract):
 
     def is_sparse(self, compute=True, threshold=0.99):
         """ Datafile is deemed sparse if sparsity > 99% """
+        if hasattr(type(self.data.data._meta), 'todense'):
+            return True
         return self.sparsity(compute) > threshold
 
 
@@ -1152,30 +1207,40 @@ class Datafile(BaseAbstract):
         #         new_chunks.append(tuple(sizes[tuple(slices)]))
         #     block_grids = [da.map_blocks(unpad, xdata[n].data, block_sizes, chunks=tuple(new_chunks)+xdata[n].chunks[-1:]).blocks for n in names]
 
+        get_value = lambda i, d: d[i] if isinstance(d, dict) else d
+        to_blocks = lambda i, a: da.tile( dask_overlap(a, **{
+            'depth'         : {0: get_value(i, overlaps)}, 
+            'boundary'      : {0: get_value(i, boundary)},
+            'allow_rechunk' : False,
+        }), reps=[virtual[i]] + ([1]*(a.ndim-1)) ).blocks
+
+        def vectors_to_blocks(vectors, chunks):
+            """ From the given vectors create blocks that match data blocks """
+            # Create a BlockView object for each vector
+            to_arr = partial(da.from_array, name=False)
+            arrays = map(to_arr, vectors, chunks)
+            blocks = list(starmap(to_blocks, enumerate(arrays)))
+            counts = [b.size for b in blocks]
+            assert(is_equal(counts)), [counts, blocks]
+
+            # Wrap the vectors to be indexable as a cartesian product array
+            fetch = lambda _, idx: tuple(b[i] for b,i in zip(blocks, idx))
+            return type('product_array', (object,), {'__getitem__': fetch})()
+            
         # Non-uniform coordinate grids use different resolutions in each block
         if not self.is_uniform:
-            get_value = lambda i, d: d[i] if isinstance(d, dict) else d
-            to_blocks = lambda i, a: da.tile( dask_overlap(a, **{
-                'depth'         : {0: get_value(i, overlaps)}, 
-                'boundary'      : {0: get_value(i, boundary)},
-                'allow_rechunk' : False,
-            }), reps=[virtual[i], 1] ).blocks
-
-            # Create a BlockView object for each coordinate vector
             r_chunks = [[chunk, (2,)] for chunk in chunks] # 2 = left/right
-            to_d_arr = partial(da.from_array, name=False)
-            r_arrays = map(to_d_arr, self.resolution, r_chunks)
-            r_blocks = list(starmap(to_blocks, enumerate(r_arrays)))
-            r_counts = [r.size for r in r_blocks]
-            assert(is_equal(r_counts)), [r_counts, blocks]
-            
-            # Wrap the vectors to be indexable as a cartesian product array
-            fetch = lambda _, idx: tuple(r[i] for r,i in zip(r_blocks, idx))
-            Array = type('product_array', (object,), {'__getitem__': fetch})
-            block_grids.append(Array())
+            r_vector = self.resolution
+            r_blocks = vectors_to_blocks(r_vector, r_chunks)
+            block_grids.append(r_blocks)
 
         # Uniform resolution coordinates use the same resolution across blocks
         else: block_kwarg['resolution'] = self.resolution 
+         
+        # Create blocks for coordinate vectors
+        c_chunks = [[chunk] for chunk in chunks]
+        c_vector = [self._typed_data[d].values for d in self.dims]
+        c_blocks = vectors_to_blocks(c_vector, c_chunks)
 
         # Separate features into their own list
         num_feats = len(feat_array)
@@ -1186,7 +1251,7 @@ class Datafile(BaseAbstract):
 
         # Returns list of functions to allow lazy creation of the Block objects
         # gen_block = lambda i: (lambda: Block(*[g[i] for g in block_grids], **block_kwarg))
-        gen_block = lambda i: (lambda: Block(*sep_feats(i), **block_kwarg))
+        gen_block = lambda i: (lambda: Block(*sep_feats(i), **(block_kwarg|{'coord_vecs':c_blocks[i]})))
         lazy_func = gen_block#lambda i: cache(lambda: gen_block(i))
         return map(lazy_func, product(*map(range, blocks)))
 
@@ -1228,14 +1293,17 @@ class Datafile(BaseAbstract):
             cached in `./Cache`. 
 
         """
-
+        timer = Stopwatch(f'Cache exists for {self.name}', silent=True)
+        timer.__enter__()
         if isinstance(cache_dir, str):
             cache_dir = Path(cache_dir)
         elif isinstance(cache_dir, FSMap):
             cache_dir = S3Path(cache_dir)
-
+            
+        ext = '.tiledb' if '.tiledb' in str(self.location) else '.zarr'
         data = self.data.to_dataset('features')
-        dest = cache_dir.joinpath(self.name, f'{self.config_hash}.zarr')
+        dest = cache_dir.joinpath(self.name, f'{self.config_hash}{ext}')
+
         if isinstance(dest, Path):
             dest.parent.mkdir(exist_ok=True, parents=True)
 
@@ -1246,30 +1314,46 @@ class Datafile(BaseAbstract):
 
         # Include summary statistics
         data['summary'] = self.summary#(compute=False)
-        data['valid_mask'] = data['valid_mask'].astype(bool)
+        if 'valid_mask' in data:
+            data['valid_mask'] = data['valid_mask'].astype(bool)
+
+        # Include resolution features if available
+        if 'resolution_lat_max' in self._raw_data:
+            slices = lambda d: slice(d.min().item(), d.max().item())
+            extent = {k: slices(data[k]) for k in ['latitude', 'longitude']}
+            chunks = {k: data.chunks[k]  for k in ['latitude', 'longitude']}
+
+            for k in ['lat', 'lon']:
+                for m in ['min', 'max']:
+                    key = f'resolution_{k}_{m}'
+                    data[key] = self._raw_data[key].sel(extent).chunk(chunks)
 
         # Allow tracking the reason a datafile is re-cached
         reason = 'user passed overwrite=True to _cache'
-
+        backend = get_backend(dest)
+        
         # Verify cached data is equivalent
         if (not overwrite) and dest.exists():
             try: 
-                with xr.open_zarr(dest) as cache:
-                    attrs = ['dims', 'chunksizes']
-                    for a in attrs:
-                        curr = getattr(data,  a, None)
-                        prev = getattr(cache, a, None)
+                cache = backend.open()
+                attrs = ['dims', 'chunksizes']
+                for a in attrs:
+                    curr = getattr(data,  a, None)
+                    prev = getattr(cache, a, None)
 
+                    # Ignore xarray dims future warning
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", category=FutureWarning)
                         if curr != prev:
                             curr = f'{curr=}'[:80]
                             prev = f'{prev=}'[:80]
                             reason = f'differing {a}\n\t{curr}\n!=\n\t{prev}'
                             overwrite = True
                             break
-                    else:
-                        if not bool(xr.align(data, cache, join='exact', exclude='statistics')):
-                            reason = 'misaligned cache'
-                            overwrite = True
+                else:
+                    if not bool(xr.align(data, cache, join='exact', exclude='statistics')):
+                        reason = 'misaligned cache'
+                        overwrite = True
             except KeyboardInterrupt: raise
             except Exception as e: 
                 reason = f'exception {e}'
@@ -1306,7 +1390,7 @@ class Datafile(BaseAbstract):
                 try:
                     # Put coordinates into single chunk
                     encoding = {c: {'chunks': (-1,)} for c in data.coords}
-                    with ProgressBar(): data.to_zarr(dest, encoding=encoding, mode='w')
+                    backend.cache(dest, data, encoding=encoding, mode='w')
                 except: 
                     if dest.exists():
                         if isinstance(dest, Path):
@@ -1314,7 +1398,9 @@ class Datafile(BaseAbstract):
                         elif isinstance(dest, S3Path):
                             dest.delete()
                     raise
-        else: print(f'Cache exists for {self.name}')
+        else: 
+            timer.silent = False
+            timer.__exit__()
 
 
     def _validate_parameters(self) -> None:
