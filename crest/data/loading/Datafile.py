@@ -6,7 +6,7 @@ from functools import cached_property, partial, cache
 from itertools import starmap, product
 from numbers import Number, Integral as Int
 from pathlib import Path
-from logging import Logger
+import logging
 from typing import Union 
 from tqdm import tqdm 
 
@@ -20,16 +20,19 @@ import typing
 import shutil
 import zarr
 import math
-import dask 
+import dask
+from s3path import S3Path
 
 from crest.base import BaseAbstract
 from crest.utils import S3Path
+from ..loading.RegionalMaskGenerator import RegionalMaskGenerator
 from .Block import Block
 from .Blockset import Blockset
 
 # Bool type which allows numpy bools as well
 Bool = Union[bool, np.bool_]
 
+logger = logging.getLogger(__name__)
 
 class Datafile(BaseAbstract):
     """Class which handles loading data from a single source.
@@ -146,17 +149,18 @@ class Datafile(BaseAbstract):
                               -float('inf')]
 
     def __init__(self,
-        location      : Union[Path, str, FSMap, S3Path, xr.Dataset],
-        features      : list[str] = [],
-        extent        : dict[str, Collection] = {},
-        window_depth  : dict[str, Union[int, Collection[int]]] = {},
-        match_radius  : dict[str, Union[str, Number]] = {},
-        valid_percent : dict[Union[str, tuple[str]], Number] = {},
-        invalid_value : object = [],
-        preprocessors : list[Callable] = [],
-        sort_dims     : bool = True,
-        allow_repeats : bool = False,
-        no_overlaps   : bool = False,
+        location      : Union[Path, str, FSMap, xr.Dataset],
+        features      : list[str]                        = [],
+        extent        : dict[str, Collection]            = {},
+        window_depth  : dict[str, Int | Collection[Int]] = {},
+        match_radius  : dict[str, str | Number]          = {},
+        valid_percent : dict[str | tuple[str], Number]   = {},
+        invalid_value : object                           = [],
+        preprocessors : list[Callable]                   = [],
+        sort_dims     : bool                             = True,
+        allow_repeats  : bool = False,
+        no_overlaps   : bool                             = False,
+        region        : list[str] | None                 = None,
         **kwargs
     ):
         if isinstance(location, FSMap):
@@ -174,7 +178,13 @@ class Datafile(BaseAbstract):
         self.sort_dims      = sort_dims
         self.allow_repeats  = allow_repeats
         self.no_overlaps    = no_overlaps
-        self.dataset_index  = 0 
+        self.dataset_index  = 0  
+        self.region         = region
+        self.rmg            = None
+        self.mask           = None
+
+        if (not self.region is None): 
+            self.rmg = RegionalMaskGenerator(self.region)
 
         # Store initialization parameter names for pickling
         self._init_keys = list(self.__dict__) + ['_init_keys']
@@ -242,7 +252,7 @@ class Datafile(BaseAbstract):
         else:
             # If the given location isn't already an xr.Dataset, open it
             if not isinstance(self.location, (S3Path, FSMap)):
-                location = zarr.DirectoryStore(self.location)
+                location = self.location
             else: location = self.location
             raw = xr.open_zarr(location, **self._kwargs)
 
@@ -265,11 +275,18 @@ class Datafile(BaseAbstract):
                 raw = raw.assign_coords(datetime=raw.datetime.astype('datetime64[m]'))
         return raw.chunk({})
 
-
     @cached_property
     def data(self) -> xr.DataArray:
         """ Loaded xarray object """
         data = self._raw_data
+
+        # generate mask based on region name
+        if (self.region is not None):
+            if (self.mask is None):
+                self.mask = self.rmg.gen_mask(data)
+
+            # Apply mask
+            data = data.where(self.mask)
 
         # Apply any preprocessing functions
         for func in self.preprocessors:
@@ -1273,6 +1290,7 @@ class Datafile(BaseAbstract):
             # 'features'      : [],
             'extent'        : {},
             'preprocessors' : [],
+            'region'        : None,
         })
 
         # Write the data to the destination

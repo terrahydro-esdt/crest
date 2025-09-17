@@ -5,13 +5,9 @@ In-depth
 
    This section is very much work in progress!
 
-Describe CREST components in-depth
-
-Add link(s) to examples
-
 .. toctree::
    :maxdepth: 1
 
-   htg
-   batcher
-   archiver
+   models.rst
+   data_management.rst
+   engines.rst

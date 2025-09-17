@@ -2,16 +2,36 @@ from math import exp
 
 import pytest
 import cloudpickle as pickle
-import json
 import os
 from .helpers import *
-from crest import HierarchalTensorGraph, ROOT_PATH
+from crest import ROOT_PATH
+from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
 from crest.model.TensorGraph import ImproperTensorGraphError
 from crest.model import TensorSpec
 from crest.model.Node import Node
 
 root_path = os.path.join(ROOT_PATH.as_posix(),
                          os.path.join('..', 'tests', 'model'))
+
+def test_alias_long():
+    m = Node(
+        node=lambda X: {'output': X['scalar'] * X['input']},
+        name='mult',
+        inputs={},
+        outputs={}
+    )
+
+    assert m({'scalar': 2, 'input': 3}) == {'output': 6}
+
+def test_alias_short():
+    m = Node(
+        node=lambda X: {'output': X['scalar'] * X['input']},
+        name='mult',
+        inputs={},
+        outputs={}
+    )
+
+    assert m({'scalar': 2, 'input': 3}) == {'output': 6}
 
 
 def test_basenode():

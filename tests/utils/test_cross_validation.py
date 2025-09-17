@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 import dask.array as da
+import pytest
 
 from crest.data.loading.Datafile import Datafile
 from crest.utils.cross_validation import KfoldSplit
@@ -15,7 +16,7 @@ latitude = np.linspace(-90, 90, 90)
 longitude = np.linspace(-180, 180, 90)
 datetime = pd.date_range('2015-04-01 00:00:00',
                          '2015-08-31 23:00:00',
-                         freq='H').values
+                         freq='h').values
 
 coords = ['datetime', 'latitude', 'longitude']
 
@@ -152,7 +153,8 @@ def test_select_axis_and_ordered():
                                         'latitude': slice(24.396, 49.384),
                                         'longitude': slice(-124.848, -66.885)})['var1'].to_numpy(),
                                 equal_nan=True))
-            
+
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
 def test_invalid_pixel_includes_unequal_folds():
         
         var2 = var1.copy()

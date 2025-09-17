@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel", "setuptools_scm[toml]>=3.4.3"]
-build-backend = "setuptools.build_meta"
+requires = ["flit_core >=3.9,<4"]
+build-backend = "flit_core.buildapi"
 
 [project]
 name = "crest"
@@ -9,6 +9,26 @@ description = "AI-based python framework for coupling tensor network models."
 readme = "README.rst"
 requires-python = ">=3.7"
 
-[tool.setuptools.packages.find]
-include = ["crest*"]
-exclude = ["examples*", "docs*", "tests*"]
+[project.optional-dependencies]
+dev = [
+  "pip >=24.2.0",
+]
+docs = [
+  "furo >=2023.9.10",
+  "ipykernel",
+  "sphinx >=7.0.0",
+  "sphinx-autobuild >=2024.4.16",
+  "sphinx-autodoc-typehints",
+  "sphinx-design",
+  "sphinx-autodoc-typehints",
+  "sphinx_rtd_theme",
+]
+
+[tool.flit.sdist]
+include = [
+  "crest*",
+  "LICENSE",
+  "README.rst"
+]
+exclude = ["test*"]
+

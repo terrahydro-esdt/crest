@@ -198,27 +198,6 @@ def test_pearsonr():
     assert cmetrics == pytest.approx(1.0)
 
 
-def test_call_keras_metrics():
-    _, _, obs, pred = sample_simple_data()
-
-    mcrest = Metrics()
-    accuracy = mcrest.get_callbacks('accuracy')
-    func = accuracy[0]
-    cmetrics = func(obs, pred)
-
-    assert len(cmetrics.numpy()) > 1
-
-
-def test_call_keras_metrics_complex():
-    _, _, obs, pred = sample_complex_data()
-
-    mcrest = Metrics()
-    accuracy = mcrest.get_callbacks('accuracy')
-    func = accuracy[0]
-    cmetrics = func(obs, pred)
-
-    assert len(cmetrics.numpy()) > 1
-
 def test_save_load():
     observed, predicted, _, _ = sample_simple_data()
 
@@ -279,3 +258,125 @@ def test_save_load_complex_file():
 
     os.remove('test.json')
 
+# test subclasses of Metrics
+def test_relative_error_subclass():
+    observed, predicted, _, _ = sample_simple_data()
+
+    cmetrics = Metrics.RelativeError().update_state(observed, predicted)
+
+    assert cmetrics.numpy() == 0.0
+
+def test_relative_error_subclass_complex():
+    observed, predicted, _, _ = sample_complex_data()
+
+    cmetrics = Metrics.RelativeError().update_state(observed, predicted)
+
+    assert cmetrics.numpy() == pytest.approx(-0.8873224, 1e-5)
+
+def test_metric_entropy_subclass():
+    observed, predicted, _, _ = sample_simple_data()
+
+    results = Metrics.MetricEntropy().update_state(observed, predicted)
+
+    assert (results[0].numpy() == pytest.approx(0.0136986, 1e-5)
+            ) and (results[1].numpy() == pytest.approx(0.0136986, 1e-5))
+    
+def test_metric_entropy_subclass_complex():
+    observed, predicted, _, _ = sample_complex_data()
+
+    results = Metrics.MetricEntropy().update_state(observed, predicted)
+
+    result_0 = (tf.reduce_mean(results[0].numpy())).numpy()
+    result_1 = (tf.reduce_mean(results[1].numpy())).numpy()
+
+    assert (result_0 == 0.1 and result_1 == 0.1)
+
+def test_nse_subclass():
+    observed, predicted, _, _ = sample_simple_data()
+
+    cmetrics = Metrics.NSE().update_state(observed, predicted)
+    print(cmetrics)
+
+    assert cmetrics == 1.0
+
+def test_nse_subclass_complex():
+    observed, predicted, _, _ = sample_complex_data()
+
+    cmetrics = Metrics.NSE().update_state(observed, predicted)
+
+    assert cmetrics == pytest.approx(-2.432720, 5e-5)
+
+def test_mse_subclass():
+    observed, predicted, _, _ = sample_simple_data()
+
+    cmetrics = Metrics.MSE().update_state(observed, predicted)
+
+    assert cmetrics.numpy() == 0.0
+
+def test_mse_subclass_complex():
+    observed, predicted, _, _ = sample_complex_data()
+
+    cmetrics = Metrics.MSE().update_state(observed, predicted)
+
+    assert cmetrics.numpy() == pytest.approx(29.178125, 1e-5)
+
+def test_rmse_subclass():
+    observed, predicted, _, _ = sample_simple_data()
+
+    cmetrics = Metrics.UnbiasedRMSE().update_state(observed, predicted)
+
+    assert cmetrics == 0.0
+
+def test_rmse_subclass_complex():
+    observed, predicted, _, _ = sample_complex_data()
+
+    cmetrics = Metrics.UnbiasedRMSE().update_state(observed, predicted)
+
+    assert cmetrics == pytest.approx(5.401677, 1e-5)
+
+def test_alpha_nse_subclass():
+    observed, predicted, _, _ = sample_simple_data()
+
+    cmetrics = Metrics.AlphaNSE().update_state(observed, predicted)
+
+    assert cmetrics == 1.0
+
+def test_alpha_nse_subclass_complex():
+    observed, predicted, _, _ = sample_complex_data()
+
+    alphanse = Metrics.AlphaNSE()
+    cmetrics = alphanse.update_state(observed, predicted)
+
+    assert cmetrics == pytest.approx(0.0869203, 1e-5)
+
+def test_beta_nse_subclass():
+    observed, predicted, _, _ = sample_simple_data()
+
+    betanse = Metrics.BetaNSE()
+    cmetrics = betanse.update_state(observed, predicted)
+
+    assert cmetrics == 0.0
+
+def test_beta_nse_subclass_complex():
+    observed, predicted, _, _ = sample_complex_data()
+
+    betanse = Metrics.BetaNSE()
+    cmetrics = betanse.update_state(observed, predicted)
+
+    assert cmetrics == pytest.approx(-1.599224, 1e-5)
+
+def test_kge_subclass():
+    observed, predicted, _, _ = sample_simple_data()
+
+    kge = Metrics.KGE()
+    cmetrics = kge.update_state(observed, predicted)
+
+    assert cmetrics == 1.0
+
+def test_pearsonr_subclass():
+    _, _, obs, pred = sample_simple_data()
+
+    pearsonr = Metrics.Pearson()
+    cmetrics = pearsonr.update_state(obs, pred)
+
+    assert cmetrics == pytest.approx(1.0)

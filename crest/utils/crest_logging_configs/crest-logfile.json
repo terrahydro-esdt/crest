@@ -31,7 +31,7 @@
       "class": "logging.handlers.RotatingFileHandler",
       "level": "DEBUG",
       "formatter": "json",
-      "filename": "crest.log.jsonl",
+      "filename": "logs/crest.log.jsonl",
       "maxBytes": 1000000,
       "backupCount": 3
     }

@@ -3,9 +3,6 @@ from itertools import product
 import Grid
 import numpy as np 
 
-
-
-
 def anchor(grids: Collection[Grid]) -> (np.ndarray, np.ndarray):
     # Create trees and query against the reference (anchor) grid
     grids = product(grids[1:], grids[:1])

@@ -1,23 +1,14 @@
-FROM continuumio/miniconda3:latest
+FROM crest_cpu:latest
 
 SHELL ["/bin/bash", "-c"]
 
-RUN conda install -n base conda-libmamba-solver -q
-RUN conda config --set solver libmamba
+COPY docker/common/.id_git /app/
+RUN /bin/chmod 600 /app/.id_git
+COPY docker/common/.gitconfig /home/ubuntu/
+COPY docker/common/startup.sh /app/
 
-WORKDIR /crest/
-
-COPY cicd/ /crest/cicd/.
-COPY cicd/ /crest/docs/.
-COPY crest/ /crest/crest/.
-COPY tests/ /crest/tests/.
-COPY examples/ /crest/examples/.
-
-RUN conda install pytest
-RUN conda env create -f cicd/environment_cpu.yaml -q
-
-# Make RUN commands use the new environment:
-SHELL ["conda", "run", "--no-capture-output", "-n", "crest_cpu", "/bin/bash", "-c"]
-
-RUN source activate crest_cpu
-RUN pytest --color=yes tests
+ENV GIT_SSH_COMMAND "ssh -i /app/.id_git -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+WORKDIR /ASTG/sw/crest/
+RUN /usr/bin/git pull
+RUN /bin/rm -f /app/.id_git
+RUN /app/startup.sh

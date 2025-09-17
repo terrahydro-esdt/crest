@@ -243,7 +243,6 @@ class HierarchalTensorGraph(TensorGraph):
             return value or str(obj)
         return HierarchalTensorGraph.get_name(value)
 
-
     def search(self, name: str, partial: bool = False) -> dict:
         """
 
@@ -280,6 +279,19 @@ class HierarchalTensorGraph(TensorGraph):
         self.logger.info("Getting all nodes in HTG %s",self.name)
 
         return dict([i for i in self])
+
+    @property
+    def all_basenodes(self) -> dict:
+        """ Returns base nodes of this HTG. """
+
+        matches = []
+
+        def action(path, node):
+            if node.is_basenode:
+                matches.append((path, node))
+
+        self.traverse(action)
+        return matches
 
     @property
     def edges(self):
@@ -501,7 +513,8 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.info(f'Adding edge from {source} to {target} in HTG {self.name}')
+        self.logger.info(
+            f'Adding edge from {source} to {target} in HTG {self.name}')
 
         if isinstance(source, str):
             if source == "output":
@@ -1138,6 +1151,7 @@ class HierarchalTensorGraph(TensorGraph):
                 node_table(v)
 
 
+
     def expand_graph_node(self, nodename: str, g=None):
         """ expands the graph of nodename and returns a new graph with the expansion
 
@@ -1625,7 +1639,6 @@ class Recurrence:
 
         # otherwise, return original
         return d
-
 
 class Identity(HierarchalTensorGraph):
     """ Idenity node used for I/O """

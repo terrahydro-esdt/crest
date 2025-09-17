@@ -73,6 +73,9 @@ class TensorSpec(object):
         if isinstance(shape,keras.KerasTensor):
             return tuple(shape.shape)
 
+        if isinstance(shape,keras.KerasTensor):
+            return tuple(shape.shape)
+
         return shape
 
     @property

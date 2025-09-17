@@ -1,31 +1,32 @@
-image: continuumio/miniconda3:latest
+default:
+  image:
+    name: crest_cpu:v1.0
+    pull_policy: if-not-present
 
 before_script:
-    # Switch to using libmamba solver:
-    #   https://www.anaconda.com/blog/conda-is-fast-now
-    - conda install -n base conda-libmamba-solver -q
-    - conda config --set solver libmamba
+  # Activate conda
+  - source /ASTG/pyenvs/production/etc/profile.d/conda.sh
+  
+  # Load local conda env and update if needed
+  - conda activate crest_cpu
+  - conda env update -f cicd/environment.yaml
 
 test:
   script:
-    - conda env create -f cicd/environment_cpu.yaml -q
-    - source activate crest_cpu
-    - pytest --color=yes tests -m"not integtest"
-    - pytest --color=yes tests -m"integtest"
+    - pytest --color=yes tests
   allow_failure: false
 
 pages:
   stage: deploy
   script:
-    - conda env create -f cicd/environment_doc.yaml
-    - source activate crest_doc
-    - pip install --upgrade pip
-    - pip install sphinx_rtd_theme
+    # Update to add packages needed for doc generation
+    - conda env update -f cicd/environment_doc.yaml
     - sphinx-build -b html docs public
+
   artifacts:
     paths:
     - public
   only:
-    - read-the-docs
+    - Docking
     - develop
     - master

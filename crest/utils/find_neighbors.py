@@ -17,8 +17,8 @@ import logging
 # from ._bruteforce import *
 from .print_table import print_table
 from .Stopwatch import Stopwatch
-from .matchup.bruteforce.utils import entropy  
-from .matchup import brute
+from crest.utils.matchup.bruteforce.utils.entropy import entropy  
+from crest.utils.matchup.bruteforce import brute
 # from .lexsort import lexsort
 from .matchup.bruteforce.utils.bruteforce_numba import *
 from .matchup.bruteforce.utils.multiset_numba import multiset_single
@@ -210,7 +210,7 @@ def implode(table):#: np.ndarray | pl.DataFrame):
     # Exclude one name from the full list
     # Groupby all names except one, then concat into a comma-delimited string
     excl = lambda remove: list( set(names) - {remove} )
-    join = lambda tbl, n: tbl.groupby(excl(n)).agg(pl.col(n).str.concat(','))
+    join = lambda tbl, n: tbl.group_by(excl(n)).agg(pl.col(n).str.concat(','))
 
     if isinstance(table, (pl.DataFrame, pl.LazyFrame)):
         dtype = table.dtypes[0]

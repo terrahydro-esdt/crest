@@ -46,24 +46,27 @@ WAIT_TIME = 0.1
 
 
 class Batcher:
-    """Handles creating batches of data samples.
+    """
+    Handles creating batches of data samples.
 
     Parameters
     ----------
     dataset    : Dataset | StructuredDataset
         Crest Dataset or StructuredDataset object.
+
     batch_size : int
         Number of samples that each batch should contain.
+
     epoch_size : int | None
         Number of batches that each epoch should contain. See `block_size`.
+
     block_size : int | None
         Number of samples that each block should contain. Both `epoch_size` and
         `block_size` control the same logic, and so only one should be used at 
         a time. `block_size` determines how many samples should be pulled from 
         each block of the data (at most, since a block may not have enough 
         samples due to NaN values); `epoch_size` indirectly controls the number
-        of samples which are pulled from each block by computing 
-            `block_size = (epoch_size*batch_size) / n_blocks`
+        of samples which are pulled from each block by computing `block_size = (epoch_size*batch_size) / n_blocks`
         In this way, both parameters affect how many batches are required to 
         complete a full cycle through the spatiotemporal extent of the data 
         (i.e. an epoch); epoch_size takes care of the sample calculation
@@ -73,6 +76,7 @@ class Batcher:
         to ensure a full epoch is completed if the entire data extent needs to
         be sampled, as returning all samples can mean a very large number of
         batches are required to actually complete a full epoch. 
+
     features   : list
         List of features that should be extracted from batch Samples. By
         default, no features are extracted, and a batch will be a list of
@@ -100,20 +104,24 @@ class Batcher:
         this configuration is about 10% faster than using workers=1, but can
         cause difficulties with closing the threads since threads cannot be
         terminated independently of the main thread in python.
+
     threads    : int
         Number of threads to use to create batches in parallel. Note that twice
         this number of threads are actually used, as one set is used for
         loading dataset blocks and the other set is used for loading samples
         from the chunks within a block. Must be >= 1.
+
     shuffle    : bool
         Whether samples should be shuffled to generate batches, or returned in
         the original order of the sample array. If correctly ordered batches
         are desired with shuffle=False, multiple processes and threads should 
         not be used as completion progress cannot be consistently ordered.
+
     repeat     : bool
         Whether the Batcher should repeat iteration over the batches once all
         batches have been yielded. Note that this means the Batcher will yield
         batches indefinitely.
+
     duplicate  : bool
         Whether batch samples across processes can be duplicated. With this set
         to True, each sample will be encountered `worker` times in an epoch,
@@ -122,6 +130,7 @@ class Batcher:
         workers that can be active - as without duplication, the number of
         workers is limited to the number of blocks in the dataset (one block
         per worker).
+
     continuous : bool
         If True, dataset sampling is continuous rather than pausing once the
         queue is filled with samples. In other words, the batcher will simply
@@ -130,20 +139,24 @@ class Batcher:
         random sampling of the overall data space when there are far more 
         samples than the desired number of batches to be generated. Note that
         repeat must be also be True for this setting to be used. 
+
     block_bytes  : Number
         Number of bytes that should be allocated to each block and worked
         on in parallel (default=1e8; 100MB). Note that this is just a proxy
         for the amount memory that will be used when computing a block, as 
         the actual amount used is dependent upon the number of matches that
         are found in the block and thus can vary significantly. 
+
     numblocks  : int 
         Alternative to giving a block_bytes value. If numblocks > 0, the 
         requested number of blocks is the target block total. While the 
         exact number of blocks is not always possible to create, an attempt
         is made to get as close as possible to the requested value.
+
     max_queue  : int
         Number of batches to generate in advance when using multiprocessing.
         When `workers` <= 0, has no effect.
+
     task_bytes : float
         Maximum number of bytes that should comprise a _batcher task. This
         value controls the tradeoff between memory usage and batch throughput,
@@ -153,11 +166,14 @@ class Batcher:
         greater. In general, larger individual samples (those with large
         windows in multiple dimensions, for instance) will require larger
         bytes per task in order to achieve optimal throughput.
+
     log_file    : bool
         File that logs should be written to.
+
     log_level   : int
         Level that log file will display. Should be a level defined by the
         logging module, i.e. logging.INFO, logging.DEBUG, etc.
+
     log_delay   : float
         When multiple workers are used, `log_delay` controls the amount of time
         (in seconds) that will be used as a buffer for logging records. In this
@@ -167,6 +183,7 @@ class Batcher:
         records may be grouped such that writing them to the log file is 
         delayed by <= `log_delay` sec. To disable this functionality, set 
         log_delay=0 (or any value <= 0).
+
     block_sync : bool
         Controls block synchronization across workers: once a worker finishes
         computing samples for a block, it waits for all other workers to finish
@@ -177,8 +194,10 @@ class Batcher:
         this to be set to False since it will force workers to wait for other 
         workers before moving on with their workload (thus slowing overall
         batch generation to be proportional to the slowest workload).
+
     seed       : int | None
         Seed for reproducible randomness.
+
     valid_percents : list[dict[str, dict]]
         Note: in general, the `drop_datafiles` parameter should be preferred 
         over the use of `valid_percents`. With multiple sources of data, it may
@@ -188,8 +207,7 @@ class Batcher:
         other sparse data sources (e.g. SNOTEL); in order to generate samples 
         from both of these sources, we can rotate through allowing and 
         disallowing missing values for each of them with this parameter: 
-            ```valid_percents=[ {'FLUXNET' : {'datetime':0}},
-                                {'SNOTEL'  : {'datetime':0}}, ]```
+        ```valid_percents=[ {'FLUXNET' : {'datetime':0}}, {'SNOTEL'  : {'datetime':0}}, ]```
         This has two valid_percent configurations to rotate through, which will
         be used independently by each worker. In other words, when a worker is
         preparing to compute samples for a block, it will first randomly choose
@@ -197,6 +215,7 @@ class Batcher:
         use that chosen configuration to specify the appropriate Datafile 
         `valid_percent` values for that block computation. For detail on the
         format of `valid_percent`, see the docstring for Datafile. 
+
     drop_datafiles : list[list[str]]
         Similar to the `valid_percents` parameter, this keyword addresses the
         same goal of allowing a single Batcher to generate samples from
@@ -208,7 +227,7 @@ class Batcher:
         if those features are actually valid for a given sample location. The
         usage of this parameter follows the same format of `valid_percents`,
         but only requires the name of Datafiles to drop: 
-            `drop_datafiles = [['FLUXNET'], ['SNOTEL']]`
+        `drop_datafiles = [['FLUXNET'], ['SNOTEL']]`
         This list contains two configurations that will be rotated through: 
         one which drops the FLUXNET Datafile during block computation, and one
         which drops the SNOTEL Datafile. Multiple names can be specified for a
@@ -219,33 +238,33 @@ class Batcher:
         drop all Datafiles that are from the same source, as indices will only
         drop the specified Datafile rather than all which match a given label).
 
-
     """
 
-    def __init__(self,
-        dataset     : Union[Dataset, StructuredDataset, list[Dataset]],
-        batch_size  : int,
-        epoch_size  : int  | None = None,
-        block_size  : int  | None = None,
-        features    : list | None = None,
-        workers     : int    = 2,
-        threads     : int    = 1,
-        shuffle     : bool   = True,
-        repeat      : bool   = False,
-        duplicate   : bool   = False,
-        continuous  : bool   = False,
-        block_bytes : Number = 1e9,
-        numblocks   : int    = 0,
-        max_queue   : int    = 200,
-        task_bytes  : float  = 1e8,
-        log_file    : str    = 'Batcher.log',
-        log_level   : int    = logging.INFO,
-        log_delay   : float  = 3,
-        fast_path   : bool   = False,
-        block_sync  : bool   = False,
-        seed        : int | None = None,
-        valid_percents : list[dict[str, dict]] = [],
-        drop_datafiles : list[list[str]] = [],
+    def __init__(
+            self,
+            dataset     : Union[Dataset, StructuredDataset, list[Dataset]],
+            batch_size  : int,
+            epoch_size  : int  | None = None,
+            block_size  : int  | None = None,
+            features    : list | None = None,
+            workers     : int    = 2,
+            threads     : int    = 1,
+            shuffle     : bool   = True,
+            repeat      : bool   = False,
+            duplicate   : bool   = False,
+            continuous  : bool   = False,
+            block_bytes : Number = 1e9,
+            numblocks   : int    = 0,
+            max_queue   : int    = 200,
+            task_bytes  : float  = 1e8,
+            log_file    : str    = 'Batcher.log',
+            log_level   : int    = logging.INFO,
+            log_delay   : float  = 3,
+            fast_path   : bool   = False,
+            block_sync  : bool   = False,
+            seed        : int | None = None,
+            valid_percents : list[dict[str, dict]] = [],
+            drop_datafiles : list[list[str]] = [],
     ):
         self.dataset     = dataset
         self.batch_size  = batch_size
@@ -565,6 +584,14 @@ class Batcher:
                     # while not self._exit and self._queue.poll(timeout=0.2):
                     #     yield self._queue.recv()
                     jobs = list(filter(alive, jobs))
+
+                # If the exit flag hasn't actually been set, yield remaining
+                while not self._exit:
+                    try: 
+                        yield self._parse_batch( self._queue.get(timeout=0.1) )
+
+                    # Break once empty since no jobs are alive to add batches
+                    except Empty: break
 
                 # Exit code 3221225477 is STATUS_ACCESS_VIOLATION, which is
                 # commonly caused by an issue with data cached on disk. It can
@@ -1432,7 +1459,7 @@ class Batcher:
 
         # Wait a second for them to start, then ensure that they are running
         time.sleep(1)
-        if any(not job.is_alive() for job in jobs):
+        if any(not job.is_alive() and (job.exitcode != 0) for job in jobs):
             message = 'Batcher processes are stopping immediately. This is '
             message += 'possibly due to issues pickling the given Dataset, if '
             message += 'no other exceptions are logged.'
