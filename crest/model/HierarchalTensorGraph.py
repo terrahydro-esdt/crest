@@ -663,7 +663,9 @@ class HierarchalTensorGraph(TensorGraph):
         self.logger.info(f'Adding edges from {ebunch} in HTG {self.name}')
 
         for i in ebunch:
-            self.add_edge(*i)
+            if len(i) == 2:
+                self.add_edge(*i)
+            self.add_edge(*i[:2],**i[2])
 
     def __repr__(self):
         """ Represent the HierarchalTensorGraph """
