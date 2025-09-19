@@ -665,7 +665,8 @@ class HierarchalTensorGraph(TensorGraph):
         for i in ebunch:
             if len(i) == 2:
                 self.add_edge(*i)
-            self.add_edge(*i[:2],**i[2])
+            else:
+                self.add_edge(*i[:2],**i[2])
 
     def __repr__(self):
         """ Represent the HierarchalTensorGraph """
