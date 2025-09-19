@@ -2,6 +2,16 @@ import dill
 import tensorflow as tf
 from ...model import Node
 
+class InitialState(tf.keras.Layer):
+    def __init__(self,units):
+        super().__init__()
+        self.units = units
+
+    def call(self,x):
+            batch_size = tf.shape(x)[0]
+            return tf.zeros([batch_size,self.units])
+
+
 class LSTMCell(Node):
     """
     A Node implementing a Keras LSTMCell to be integrated
@@ -34,6 +44,7 @@ class LSTMCell(Node):
                 ):
 
         self.units = units
+        self.zeros = InitialState(self.units)
 
         # Add hiden and cell states to the inputs/outputs
         self.state_names = [name + '_' + i for i in ['h','c']]
@@ -61,21 +72,21 @@ class LSTMCell(Node):
 
     # Set the lstm cell
     def build(self):
-        self._lstmcell = tf.keras.layers.LSTMCell(self.units,**self.kwargs)
+        if not self._lstmcell:
+            self._lstmcell = tf.keras.layers.LSTMCell(self.units,**self.kwargs)
+
 
     # Initialize states to zero
     def initial_state(self,x : dict) -> dict:
         """ LSTM initializatoin """
         inp = x[list(x.keys())[0]]
-        batch_size = tf.shape(inp)[0]
-        s = [tf.zeros([batch_size,self.units]) for i in
-             self.state_names]
+        s = [ self.zeros(inp) for i in self.state_names ]
         return dict(zip(self.state_names,s))
 
     def call(self,x) -> dict:
         """ Node callable """
         features = {k : v for k,v in x.items() if k not in self.state_names}
-        inp = tf.concat(list(features.values()),axis=-1)
+        inp = tf.keras.layers.Concatenate(axis=-1)(list(features.values()))
         [h,c] = [x[k] for k in self.state_names]
         _,[h,c] = self._lstmcell(inp,(h,c))
 
@@ -92,8 +103,6 @@ class LSTMCell(Node):
         encode['_lstmcell'] = dill.dumps(self._lstmcell,**kwargs)
         return encode
     
-    @classmethod
-
     @classmethod
     def decode(cls,encode,type='dill',**kwargs) -> 'LSTMCell':
         """ decodes the result of encode """

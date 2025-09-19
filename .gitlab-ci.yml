@@ -6,6 +6,7 @@ default:
 before_script:
   # Activate conda
   - source /ASTG/pyenvs/production/etc/profile.d/conda.sh
+  - conda update conda
   
   # Load local conda env and update if needed
   - conda activate crest_cpu
@@ -26,6 +27,5 @@ pages:
     paths:
     - public
   only:
-    - moredock
     - develop
     - master

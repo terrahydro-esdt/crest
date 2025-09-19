@@ -7,7 +7,8 @@ def test_LSTMCell():
     units = 3
     batch_size = 2
 
-    tf.keras.utils.set_random_seed(812)
+    seed = 812
+    tf.keras.utils.set_random_seed(seed)
     sm = LSTMCell('sm',inputs={'era5' : (features,), 'smap' :
                                    (features,)},units=units)
 
@@ -23,15 +24,15 @@ def test_LSTMCell():
 
     res = sm(X)
 
-    tf.keras.utils.set_random_seed(812)
+    tf.keras.utils.set_random_seed(seed)
     _,[h,c] = tf.keras.layers.LSTMCell(units)(tf.concat([X['era5'],X['smap']],axis=-1),(h,c))
 
     assert(np.any(list(map(lambda x,y: x == y,
                           list(res.values()),[h,c]))))
-
+   
     # Test save/load
-    tf.keras.utils.set_random_seed(812)
     save_load = LSTMCell.decode(sm.encode())
+    tf.keras.utils.set_random_seed(seed)
     res = save_load(X)
     assert(np.any(list(map(lambda x,y: x == y,
                           list(res.values()),[h,c]))))

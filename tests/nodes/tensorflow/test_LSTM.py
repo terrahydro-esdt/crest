@@ -25,8 +25,8 @@ def test_LSTM():
                           list(res.values()),ans))))
 
     # Test save/load
-    tf.keras.utils.set_random_seed(812)
     save_load = LSTM.decode(sm.encode())
+    tf.keras.utils.set_random_seed(812)
     res = save_load(X)
     assert(np.any(list(map(lambda x,y: x == y,
                           list(res.values()),ans))))
