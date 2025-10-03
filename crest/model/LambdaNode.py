@@ -4,6 +4,9 @@ import types
 import json
 import crest.model.HierarchalTensorGraph as HierarchalTensorGraph
 from crest.utils.save_node_class import get_class_module_path
+import logging
+
+logger = logging.getLogger(__name__)
 
 class LambdaNode(HierarchalTensorGraph):
     """
@@ -22,6 +25,10 @@ class LambdaNode(HierarchalTensorGraph):
     def __init__(self, node, name: None | str = None, inputs: dict = {}, outputs: dict = {}):
         super().__init__(node=node, name=name,
                          inputs=inputs, outputs=outputs)
+
+    @property
+    def logger(self) -> logging.Logger:
+        return logging.getLogger(__name__)
 
     def to_json(self):
         """
@@ -49,7 +56,7 @@ class LambdaNode(HierarchalTensorGraph):
         lambda_json['node_module'] = self.__module__
         lambda_json['node_path'] = get_class_module_path(self)
 
-        print(f'LambdaNode.to_json: {lambda_json}')
+        self.logger.debug(f'LambdaNode.to_json: {lambda_json}')
         
         return json.dumps(lambda_json)
 
