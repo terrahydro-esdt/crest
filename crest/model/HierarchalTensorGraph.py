@@ -1541,9 +1541,9 @@ class HierarchalTensorGraph(TensorGraph):
 
         # Draw the final graph
         if layout == 'kamada_kawai_layout':
-            pos = nx.kamada_kawai_layout(g)
+            pos = nx.kamada_kawai_layout(g.graph)
         elif layout == 'spetral_layout':
-            pos = nx.kamada_kawai_layout(g)
+            pos = nx.kamada_kawai_layout(g.graph)
         else:
             pos = None
 
@@ -1553,7 +1553,7 @@ class HierarchalTensorGraph(TensorGraph):
         edge_colors = [v['source-color'] for k, v in edge_attributes.items()]
 
         # draw
-        nx.draw(g, pos, edge_color=edge_colors, style=edge_styles, with_labels=True, alpha=1, font_size=10, node_size=1000,
+        nx.draw(g.graph, pos, edge_color=edge_colors, style=edge_styles, with_labels=True, alpha=1, font_size=10, node_size=1000,
                 node_color='white', font_color='darkblue', font_family='Impact')
 
     def _generate_color(self, number):
