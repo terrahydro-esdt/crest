@@ -29,8 +29,8 @@ extensions = [
       "myst_parser",
       "sphinxcontrib.mermaid",
       #"sphinx_autodoc_typehints",  # Disabled due to conflicts with mocked modules
-      #"nbsphinx",  # for direct embedding of jupyter notebooks into sphinx docs
-      #"nbsphinx_link",  # to be able to include notebooks from outside of the docs folder
+      "nbsphinx",  # for direct embedding of jupyter notebooks into sphinx docs
+      "nbsphinx_link",  # to be able to include notebooks from outside of the docs folder
   ]
     
 autodoc_typehints = "description"
