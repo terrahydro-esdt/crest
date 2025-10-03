@@ -10,8 +10,6 @@ and predictions are saved (**Archiver**), all orchestrated by a
 **Configuration** and a high-level **Digital Replica Engine** for workflow execution.
 
 
-**Source Repository:** [ASTG CREST](git@ssh.gitlab.smce.nasa.gov:astg/terrahydro/development/crest.git)
-
 ```{mermaid}
 flowchart TD
     A0["Configuration
