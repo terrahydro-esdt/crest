@@ -28,13 +28,16 @@ extensions = [
       "sphinx.ext.mathjax",  # latex rendering of equations using MathJax
       "myst_parser",
       "sphinxcontrib.mermaid",
-      "sphinx_autodoc_typehints",
+      #"sphinx_autodoc_typehints",  # Disabled due to conflicts with mocked modules
       #"nbsphinx",  # for direct embedding of jupyter notebooks into sphinx docs
       #"nbsphinx_link",  # to be able to include notebooks from outside of the docs folder
   ]
     
-autodoc_typehints_format = "fully-qualified"
-autodoc_typehints_use_annotate = True 
+autodoc_typehints = "description"
+autodoc_typehints_format = "short"
+typehints_use_signature = False
+typehints_use_signature_return = False
+always_use_bars_union = True
 #    "sphinx.ext.viewcode",
 
 templates_path = ["_templates"]
@@ -70,6 +73,7 @@ autodoc_mock_imports = [
     "polars",
     "scipy",
     "zarr",
+    "tiledb",
     "psutil",
     "seaborn",
     "tlz",

@@ -1,21 +1,8 @@
-crest.data\_server package
-==========================
-
-Submodules
-----------
-
-crest.data\_server.DataServer module
-------------------------------------
-
-.. automodule:: crest.data_server.DataServer
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Module contents
----------------
+crest.data_server package
+=========================
 
 .. automodule:: crest.data_server
    :members:
    :undoc-members:
    :show-inheritance:
+   :imported-members:
