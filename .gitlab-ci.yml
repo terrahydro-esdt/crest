@@ -4,12 +4,11 @@ default:
     pull_policy: if-not-present
 
 before_script:
-  # Activate conda
-  - source /ASTG/pyenvs/production/etc/profile.d/conda.sh
+  # Activate conda & load crest_cpu env
+  - source cicd/loadEnv.sh cpu
   
-  # Load local conda env and update if needed
-  - conda activate crest_cpu
-  - conda env update -f cicd/environment.yaml
+  # update if needed.  Static cpu_x86_64 for now(ever?)
+  - conda env update -f cicd/environment_cpu_x86_64.yaml
 
 test:
   script:
