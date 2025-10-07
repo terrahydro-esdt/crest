@@ -49,11 +49,12 @@ dependencies:
   
   # for docs
   - flit
+  - furo
+  - myst-nb
+  - nbsphinx
+  - pandoc
   - sphinx
   - sphinx-autodoc-typehints
-  - pandoc
-  - furo
   - sphinx_rtd_theme
-  - myst-nb
   - sphinxcontrib-mermaid
 

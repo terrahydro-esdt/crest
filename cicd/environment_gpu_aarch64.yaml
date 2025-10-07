@@ -87,7 +87,9 @@ dependencies:
   - flit
   - furo
   - myst-nb
+  - nbsphinx
   - pandoc
+  - sphinx
   - sphinx-autodoc-typehints
   - sphinx_rtd_theme
   - sphinxcontrib-mermaid
