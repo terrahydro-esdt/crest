@@ -15,8 +15,8 @@ import json
 import os
 import importlib
 
-from ..utils import classproperty, plot_to_array
-from . import BaseAbstract
+from crest.utils import classproperty, plot_to_array
+from crest.base import BaseAbstract
 
 
 # BaseNode.inputs/outputs type annotation. These two dictionaries should
@@ -120,17 +120,22 @@ class BaseNode(BaseAbstract):
             as input a dictionary of {feature name: Input Tensor}, and
             returns a dictionary of {output feature: Output Tensor}. """
         raise NotImplementedError(f'{self}.call() must be implemented')
-
+    
     @cached_property
-    def graph(self) -> 'HierarchalTensorGraph':
-        """ Create the default base node graph object """
-        from crest.model import HierarchalTensorGraph as HTG
-        return HTG(**{
+    def node(self) -> 'Node':
+        from crest.model import Node
+        return Node(**{
             'node': _NodeWrap(self, f'{self}-call'),
             'name': f'{self}',
             'inputs': self.input_spec,
             'outputs': self.output_spec,
         })
+
+    @cached_property
+    def graph(self) -> 'HierarchalTensorGraph':
+        from crest.model import HierarchalTensorGraph as HTG
+        """ Create the default base node graph object """
+        return HTG(f'{self}')
 
     @property
     def losses(self) -> dict[str, Callable]:
@@ -186,6 +191,7 @@ class BaseNode(BaseAbstract):
                 for feature,  coord_shapes in feature_shapes.items()}
 
     def _add_data_transform(self):
+        from crest.model import Node
         """ Add pre-/post-processing functions to the graph """
         assert (getattr(self, 'preprocess', None) is None), \
             f'Should only call {self}._add_data_transform once'
@@ -210,16 +216,10 @@ class BaseNode(BaseAbstract):
         o_spec = self.output_spec
 
         # Instantiate graphs for each node to define input/output specs
-        from crest.model import HierarchalTensorGraph as HTG
-        preprocess = HTG(preprocess,  'preprocess',   i_spec, i_spec)
-        model = HTG(call_output, f'{self}.call', preprocess.outputs, o_spec)
-        postprocess = HTG(postprocess, 'postprocess',
-                          model.outputs, model.outputs)
-
-        # Reset graph so that it isn't a base node
-        self.graph.node = self.graph
-        self.graph.inputs = preprocess.inputs
-        self.graph.outputs = postprocess.outputs
+        preprocess = Node(preprocess, i_spec, i_spec, 'preprocess')
+        model = Node(call_output, preprocess.outputs, o_spec, f'{self}.call')
+        postprocess = Node(postprocess,model.outputs, 
+                           model.outputs, 'postprocess')
 
         # Add new edges for pre-/post-processing
         self.graph.add_edges_from([
@@ -334,6 +334,12 @@ class BaseNode(BaseAbstract):
 
                 # Otherwise just print a warning
                 print(f'WARNING: {error} some outputs: {unable}\n{solve}')
+
+        # Add I/O nodes if no transform was used
+        if len(self.graph.edges) == 0:
+            self.graph.add_edge('input',self.node)
+            self.graph.add_edge(self.node,'output')
+
 
     def convert_onehot(self, X: dict, onehot_classes: dict) -> dict:
         """ One-hot encode the given class features. 
@@ -520,6 +526,9 @@ class _NodeWrap(tf.keras.layers.Layer):
 
     def __repr__(self):
         return repr(self.obj)
+    
+    def build(self, input_shape):
+        super().build(input_shape)
 
     @property
     def __name__(self):
