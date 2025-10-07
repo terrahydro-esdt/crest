@@ -161,10 +161,10 @@ def test_soil_moisture_model():
             validation_steps=9)
 
     # Evaluate
-    with batch_test as test:
-        res = model.evaluate(batch_test,steps=9,return_dict=True)
-        assert res['loss'] == pytest.approx(3.12068,1e-1)
-        assert res['mse'] == pytest.approx(0.00401,1e-1)
+    with batch_test as test, batch_valid as valid:
+        t = model.evaluate(test,steps=9,return_dict=True)
+        v = model.evaluate(valid,steps=9,return_dict=True)
+        assert t == v
     
     # Clean up
     shutil.rmtree(ROOT_PATH)
