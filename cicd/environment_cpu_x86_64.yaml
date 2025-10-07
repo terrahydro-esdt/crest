@@ -1,0 +1,62 @@
+# Hard requirements for running documentation generator (sphinx)
+# WARNING: Keep this up-to-date!
+name: crest_cpu
+channels:
+ - conda-forge
+
+dependencies:
+  - boto3
+  - bottleneck
+  - cloudpickle
+  - crick
+  - cython
+  - dask=2025.5.0
+  - dill
+  - fsspec
+  - geopandas
+  - hdf5
+  - ipykernel
+  - ipywidgets
+  - jsonpickle
+  - matplotlib
+  - nbconvert
+  - nbformat
+  - netCDF4
+  - networkx
+  - numpy=2.2.6
+  - opencv
+  - osmnx
+  - pandas
+  - pip
+  - polars
+  - prettytable
+  - pyarrow
+  - pytest
+  - python=3.12.11
+  - pyvis
+  - rasterio
+  - s3fs
+  - s3path
+  - scikit-learn
+  - seaborn
+  - setuptools
+  - sparse
+  - tensorflow=2.18.0=cpu_py312h69ecde4_52
+  - tiledb-py=0.34.0
+  - tqdm
+  - xarray
+  - zarr=2.18.7
+  
+  # for docs
+  - docutils=0.20.1
+  - flit
+  - furo
+  - myst-nb
+  - nbsphinx
+  - nbsphinx-link
+  - pandoc
+  - sphinx
+  - sphinx-autodoc-typehints
+  - sphinx_rtd_theme
+  - sphinxcontrib-mermaid
+

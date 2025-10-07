@@ -1,0 +1,101 @@
+# Hard requirements for running documentation generator (sphinx)
+# WARNING: Keep this up-to-date!
+name: crest_gpu
+channels:
+ - conda-forge
+
+dependencies:
+  - absl-py
+  - astunparse
+  - bazel=7.4.1
+  - boto3
+  - bottleneck
+  - cuda-compiler
+  - cuda-cudart
+  - cuda-cupti
+  - cuda-libraries
+  - cuda-toolkit=12.8.1
+  - cuda-tools
+  - cudnn=9.8.0.87
+  - clang=18.1.1
+  - cloudpickle
+  - cython
+  - dask=2025.5.0
+  - dill
+  - flatbuffers
+  - fsspec
+  - gast
+  - geopandas
+  - google-pasta
+  - grpcio
+  - h5py
+  - hdf5=1.14.3=mpi_openmpi_hed3b578_5
+  - ipykernel
+  - ipywidgets
+  - jsonpickle
+  - keras=3.11.2
+  - libclang=18.1.1
+  - lld
+  - markdown
+  - markdown-it-py
+  - matplotlib
+  - mdurl
+  - namex
+  - nbconvert
+  - nbformat
+  - nccl
+  - netCDF4
+  - networkx
+  - numpy=2.2.6
+  - opencv
+  - openjdk=24.0.2
+  - openmpi=5.0.8
+  - opt-einsum
+  - optree
+  - osmnx
+  - pandas
+  - pillow
+  - protobuf=5.28.3
+  - pip
+  - polars
+  - prettytable
+  - pyarrow
+  - pygments
+  - pytest
+  - python=3.12.11
+  - pyvis
+  - rasterio
+  - rich
+  - s3fs
+  - s3path
+  - scikit-learn
+  - seaborn
+  - setuptools
+  - six
+  - sparse
+  - termcolor
+  - tiledb
+  - tiledb-py=0.34.0
+  - tqdm
+  - typing-extensions
+  - werkzeug
+  - wrapt
+  - xarray
+  - zarr=2.18.7
+
+  # for docs
+  - docutils=0.20.1
+  - flit
+  - furo
+  - myst-nb
+  - nbsphinx
+  - nbsphinx-link
+  - pandoc
+  - sphinx
+  - sphinx-autodoc-typehints
+  - sphinx_rtd_theme
+  - sphinxcontrib-mermaid
+
+  - pip:
+      - crick==0.0.8
+
