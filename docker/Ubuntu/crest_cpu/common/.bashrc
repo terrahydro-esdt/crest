@@ -116,8 +116,12 @@ if ! shopt -oq posix; then
   fi
 fi
 
-if [ -e /ASTG/pyenvs/production/etc/profile.d/conda.sh ]; then
-   source /ASTG/pyenvs/production/etc/profile.d/conda.sh
+ASTG='/ASTG'
+distro=$(egrep "^(VERSION_)*ID=" /etc/os-release | awk -F '=' '{print $2}' | sed -e 's/"//g' |  sed -e :a -e '/$/N; s/\n/-/; ta')
+PYBASE=$ASTG/pyenvs/$distro/production
+
+if [ -e $PYBASE/etc/profile.d/conda.sh ]; then
+   source $PYBASE/etc/profile.d/conda.sh
    conda activate crest_cpu
 fi
 

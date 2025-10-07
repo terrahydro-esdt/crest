@@ -20,5 +20,4 @@ soil_moisture/
 *.log.jsonl*
 shapefiles*/
 interactive_graph.html
-*.yaml
 soil_moisture*
