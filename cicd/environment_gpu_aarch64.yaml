@@ -84,10 +84,12 @@ dependencies:
   - zarr=2.18.7
 
   # for docs
+  - docutils=0.20.1
   - flit
   - furo
   - myst-nb
   - nbsphinx
+  - nbsphinx-link
   - pandoc
   - sphinx
   - sphinx-autodoc-typehints

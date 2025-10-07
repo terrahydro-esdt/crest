@@ -25,6 +25,6 @@ pages:
     paths:
     - public
   only:
-    - moredock
+    - env_dev
     - develop
     - master
