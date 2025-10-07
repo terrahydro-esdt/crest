@@ -5,6 +5,7 @@ import numpy as np
 import xarray as xr
 from pathlib import Path
 
+import tensorflow as tf
 from tensorflow.keras.layers import Dense,Dropout,Layer,LSTM,Lambda
 from tensorflow.keras import Sequential
 from tensorflow import TensorSpec,cast,stack,squeeze,concat
@@ -24,7 +25,11 @@ from crest.data.transform import Transform
 def test_soil_moisture_model():
 
     # Set seed for reproducibility
-    set_random_seed(812)
+    seed = 812
+    os.environ['PYTHONHASHSEED'] = str(812)
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
+    set_random_seed(seed)
 
     # Copy data to local directory from data server
     ROOT_PATH = Path(DataServer.load('soil_moisture',os.getcwd()))
