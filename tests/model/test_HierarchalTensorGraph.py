@@ -73,51 +73,17 @@ def test_contains():
     with pytest.raises(ImproperTensorGraphError):
         ['multiplier'] in m
 
-# TODO: removing a node will be more sophisticated now as
-# things that are auto populated must be removed
-@pytest.mark.skip
-def test_remove_nodes():
-    def a(X):
-        return {'a': 'a'}
+def test_remove_node():
+    m = AddMultExp()
+    m.remove_node('add_mult')
+    assert 'add_mult' not in m.nodes 
+    for i in m.edges:
+        assert 'add_mult' not in i
 
-    def b(X):
-        return {'b': 'b'}
-
-    m = HierarchalTensorGraph(
-        name='test',
-        inputs={'a': None, 'b': None},
-        outputs={'a': None, 'b': None}
-    )
-    edges = [('input', a), ('input', b), (a, 'output'), (b, 'output')]
-    m.add_edges_from(edges)
-    assert m({'a': 'a', 'b': 'b'}) == {'a': 'a', 'b': 'b'}
-
-    m.remove_node(b)
-    m.outputs = {'a': None}
-    assert m({'a': 'a', 'b': 'b'}) == {'a': 'a'}
-
-    m = HierarchalTensorGraph(
-        name='test',
-        inputs={'a': None, 'b': None},
-        outputs={'a': None, 'b': None}
-    )
-    edges = [('input', a), ('input', b), (a, 'output'), (b, 'output')]
-    m.add_edges_from(edges)
-
-    m.remove_node('b')
-    m.outputs = {'a': None}
-    assert m({'a': 'a', 'b': 'b'}) == {'a': 'a'}
-
-    ha = HierarchalTensorGraph(a)
-    hb = HierarchalTensorGraph(b)
-
-    m = HierarchalTensorGraph(name='test')
-    edges = [('input', ha), ('input', hb), (ha, 'output'), (hb, 'output')]
-    m.add_edges_from(edges)
-
-    m.remove_node(hb)
-    m.outputs = {'a': None}
-    assert m({'a': 'a', 'b': 'b'}) == {'a': 'a'}
+def test_remove_edge():
+    m = AddMultExp()
+    m.remove_edge('input','add_mult')
+    assert ('input','add_mult') not in m.edges 
 
 def test_simple_coupled_model():
     m = AddMult()

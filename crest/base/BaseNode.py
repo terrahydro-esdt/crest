@@ -126,7 +126,7 @@ class BaseNode(BaseAbstract):
         from crest.model import Node
         return Node(**{
             'node': _NodeWrap(self, f'{self}-call'),
-            'name': f'{self}',
+            'name': f'{self}-Node',
             'inputs': self.input_spec,
             'outputs': self.output_spec,
         })
@@ -135,7 +135,10 @@ class BaseNode(BaseAbstract):
     def graph(self) -> 'HierarchalTensorGraph':
         from crest.model import HierarchalTensorGraph as HTG
         """ Create the default base node graph object """
-        return HTG(f'{self}')
+        htg = HTG(f'{self}')
+        htg.add_edge('input',self.node)
+        htg.add_edge(self.node,'output')
+        return htg
 
     @property
     def losses(self) -> dict[str, Callable]:
@@ -209,23 +212,19 @@ class BaseNode(BaseAbstract):
             self.loss_transformer, self.postprocess = self.transform_loss
 
         preprocess = _NodeWrap(self.preprocess,  f'{self}-preprocess')
-        call_output = _NodeWrap(self,             f'{self}-call')
         postprocess = _NodeWrap(self.postprocess, f'{self}-postprocess')
 
-        i_spec = self.input_spec
-        o_spec = self.output_spec
-
         # Instantiate graphs for each node to define input/output specs
-        preprocess = Node(preprocess, i_spec, i_spec, 'preprocess')
-        model = Node(call_output, preprocess.outputs, o_spec, f'{self}.call')
-        postprocess = Node(postprocess,model.outputs, 
-                           model.outputs, 'postprocess')
+        preprocess = Node(preprocess, self.node.inputs, self.node.inputs, 'preprocess')
+        postprocess = Node(postprocess,self.node.outputs,self.node.outputs, 'postprocess')
 
         # Add new edges for pre-/post-processing
+        self.graph.remove_edge('input',self.node)
+        self.graph.remove_edge(self.node,'output')
         self.graph.add_edges_from([
             ('input', preprocess),
-            (preprocess, model),
-            (model, postprocess),
+            (preprocess, self.node),
+            (self.node, postprocess),
             (postprocess, 'output'),
         ])
 

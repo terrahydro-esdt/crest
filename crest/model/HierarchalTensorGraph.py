@@ -455,6 +455,47 @@ class HierarchalTensorGraph(TensorGraph):
             self.get_node(node).inputs = node.input_spec
         if hasattr(node, 'output_spec'):
             self.get_node(node).outputs = node.output_spec
+    
+    def remove_edge(self,source, target):
+        """
+        Removes an edge from the HierarchalTensorGraph
+
+        """
+        if self.is_basenode:
+            raise ImproperTensorGraphError('Cannot remove an edge from class Node')
+
+        s,t = [i if isinstance(i,str) else i.name for i in (source,target)]
+        
+        if not (s,t) in self.edges:
+            message = f'Edge={(t,s)} does not exist in the graph'
+            raise ValueError(message)
+
+        edge = self.graph.edges[s,t] 
+        # Remove features from input
+        if s == 'input':
+
+            # If features were selected across edge
+            if edge['features']:
+                for i in edge['features']:
+                    self.inputs.pop(i)
+            else:
+                for i in self[t].inputs.keys():
+                    self.inputs.pop(i)
+
+        # Remove features from output
+        if t == 'output':
+
+            # If features were selected across edge
+            if edge['features']:
+                for i in edge['features']:
+                    self.outputs.pop(i)
+            else:
+                for i in self[s].outputs.keys():
+                    self.outputs.pop(i)
+
+        # Remove edge
+        self.graph.remove_edge(s,t)    
+        
 
     def remove_node(self, node):
         """
@@ -462,8 +503,15 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
+        if self.is_basenode:
+            raise ImproperTensorGraphError('Cannot remove a node from class Node')
+        
         # Get name
         name = node if isinstance(node,str) else node.name
+
+        if name in ['input','output']:
+            raise ImproperTensorGraphError('Cannot remove I/O nodes')
+
 
         # Check if it's in the graph
         if name not in self.nodes:
@@ -475,9 +523,16 @@ class HierarchalTensorGraph(TensorGraph):
             if not self[node.name] is node:
                 message = f'Node with the name {node.name} exist but does match the one passed'
                 raise ImproperTensorGraphError(message)
+        
+        # Get all edges and remove them first
+        edges = [i for i in self.edges if name in i]
+        for i in edges:
+            self.remove_edge(*i)
 
+        # Remove node 
         self.graph.remove_node(name)
         return
+
 
     def add_edge(
                  self, source: Union[str, Callable], 
@@ -1530,7 +1585,7 @@ class HierarchalTensorGraph(TensorGraph):
         # draw
         # nx.draw(g, pos, edge_color=edge_colors, style=edge_styles, with_labels=True, alpha=1, font_size=10, node_size=1000,
         #         node_color='white', font_color='darkblue', font_family='Impact')
-        nx.draw(g, pos, with_labels=True, alpha=1, font_size=10, node_size=1000,
+        nx.draw(g.graph, pos, with_labels=False, alpha=1, font_size=10, node_size=1000,
                 node_color='white', font_color='darkblue', font_family='Impact')
 
 class Recurrence:
