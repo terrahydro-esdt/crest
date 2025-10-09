@@ -11,6 +11,7 @@ else
    else
       sw_proj="crest_$1"
    fi
+   myArch=$(uname -m)
    rootFS=$(cat /proc/mounts | awk '$2 == "/" { print $1 }')
 	if [ "$rootFS" = 'overlay' ]; then #we're on Docker
       export ASTG='/ASTG'
@@ -27,7 +28,11 @@ else
    echo "Loading $sw_proj environment for $distro"
    export PATH=$ASTG/ast_utils/bin:$PATH
    export PYROOT=$ASTG/pyenvs
-   export PYBASE=$PYROOT/$distro/production
+   if [ -e $PYROOT/$myArch ]; then
+      export PYBASE=$PYROOT/$myArch/$distro/production
+   else
+      export PYBASE=$PYROOT/$distro/production
+   fi
    source $PYBASE/etc/profile.d/conda.sh
    conda activate $sw_proj
    export PYDIR=$PYBASE/envs/$sw_proj
