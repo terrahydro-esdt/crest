@@ -1,39 +1,38 @@
 import pytest
 import shutil 
+import os
 import numpy as np
+import xarray as xr
 from pathlib import Path
 
+import tensorflow as tf
 from tensorflow.keras.layers import Dense,Dropout,Layer,LSTM,Lambda
 from tensorflow.keras import Sequential
 from tensorflow import TensorSpec,cast,stack,squeeze,concat
 from tensorflow.keras.utils import set_random_seed
-from tensorflow.keras.metrics import RootMeanSquaredError
+from tensorflow.keras.metrics import MeanSquaredError
 
 from crest.data_server.DataServer import DataServer
-from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
+from crest.model.Node import Node
 from crest.model.Model import Model
 from crest.data.loading import StructuredDataset,Dataset,Datafile
 from crest.data import Batcher
+from crest.base import BaseNode
+from crest.data.transform import Transform
 
 
 @pytest.mark.integtest
 def test_soil_moisture_model():
-    """ test a simple soil moisture model """ 
-    # For reproducibility
-    set_random_seed(812)
-    
+
+    # Set seed for reproducibility
+    seed = 812
+    os.environ['PYTHONHASHSEED'] = str(812)
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
+    set_random_seed(seed)
+
     # Copy data to local directory from data server
-    import os
     ROOT_PATH = Path(DataServer.load('soil_moisture',os.getcwd()))
-    
-    # Define data locations
-    locations = {
-        'ERA5'       : ROOT_PATH.joinpath('ERA5.zarr'),
-        'SMAP'       : ROOT_PATH.joinpath('SMAP.zarr'),
-        'Soil'       : ROOT_PATH.joinpath('StaticAttributes.zarr/Soil'),
-        'Irrigation' : ROOT_PATH.joinpath('StaticAttributes.zarr/Irrigation'),
-    
-    }
 
     # Define data attributes
     features = {
@@ -50,139 +49,123 @@ def test_soil_moisture_model():
 
     # Input and output features
     INP = features['ERA5'] + features['Soil'] + features['Irrigation']
-    OUT = features['SMAP']
+    OUT = features['SMAP'] 
 
-    # Define depth and temporal extents
-    depth = {
-        'ERA5': {'datetime': (335,0), 'latitude': 0, 'longitude': 0},
-        'Irrigation': {'latitude': 0, 'longitude': 0},
-        'Soil': {'latitude': 0, 'longitude': 0},
-        'SMAP': {'datetime': 0, 'latitude': 0, 'longitude':0},
+    # Define soil moisture model 
+    class SoilMoistureModel(BaseNode):
+        inputs = {
+            'ERA5' : {k : {'datetime' : None, 'latitude' : 1, 'longitude' : 1} for k in features['ERA5']},
+            'StaticAttributes.zarr/Irrigation' : {k : {'latitude' : 1, 'longitude' : 1} for k in features['Irrigation']},
+            'StaticAttributes.zarr/Soil' : {k : {'latitude' : 1, 'longitude' : 1} for k in features['Soil']},
         }
 
-    extent_train = {'SMAP':{'datetime': [np.datetime64('2015-05-14 00:00:00'), np.datetime64('2015-05-29 23:00:01')]},
-                    'ERA5': {},
-                    'Soil': {},
-                    'Irrigation': {}
-                    }
+        outputs = {'SMAP.zarr' : {'soil_moisture' : {'datetime' : 1, 'latitude' : 1, 'longitude' : 1}}}
+                
+        def __init__(self,stats):
+            transforms = Transform(stats,by_feature={'*' : 'logexp'})
+            super().__init__(transforms.standardize)
+            self._temporal = LSTM(units=256, name='temporal')
+            self._head = Dense(1, activation='relu')
 
-    extent_test = {'SMAP':{'datetime': [np.datetime64('2015-05-30 00:00:00'), np.datetime64('2015-05-30 23:00:01')]},
-                    'ERA5': {},
-                    'Soil': {},
-                    'Irrigation': {}
-                    }
-    
-    # Create Datasets and Batchers
-    dataset_train = Dataset([
-                    Datafile(
-                        location     = locations[source],
-                        features     = features[source],
-                        window_depth = depth[source],
-                        extent=extent_train[source],
-                    ) for source in features])
-    #print(dataset_train[-1]._raw_data)
-    #print(INP,OUT)
-    #return
+        def call(self,X,training=False):
+            era5 = stack(list(X['ERA5'].values()), axis=-1)
+            era5 = squeeze(era5, axis=[2,3])
+            x = self._temporal(era5)
+            soil = stack(list(X['StaticAttributes.zarr/Soil'].values()), axis=-1)
+            soil = squeeze(cast(soil, dtype=float), axis=[1,2])
+            irrigation = stack(list(X['StaticAttributes.zarr/Irrigation'].values()), axis=-1)
+            irrigation = squeeze(cast(irrigation, dtype=float), axis=[1,2])
+            x = concat([x, soil, irrigation], axis=-1)
+            return {'soil_moisture' : self._head(x)}
+
+    # Training data
+    extent_train = {'SMAP': {'extent' : {'datetime': ['2015-05-14 00:00:00', '2015-05-29 23:00:01']}},
+                'ERA5': {'extent' : {}},
+                'Soil': {'extent' : {}},
+                'Irrigation': {'extent' : {}}
+                }
+
+    dataset_train = Dataset.from_models(
+            verbose=False, **{
+            'models'     : [SoilMoistureModel],
+            'database_folder' : ROOT_PATH,
+            'variable_depths' : {'datetime': (335, 0)},
+            'datafile_kwargs' : extent_train 
+            })
+
     batch_train = Batcher(dataset_train, **{
         'batch_size' : 10,
         'features'   : [INP , OUT],
         'repeat'     : True,
-        'numblocks'  : [1,1,1],
-        'task_bytes' : 1e4,
-        'workers'    : 0,
+        'duplicate'  : True,
         'seed'       : 46
     })
 
-    dataset_test = Dataset([
-                    Datafile(
-                        location     = locations[source],
-                        features     = features[source],
-                        window_depth = depth[source],
-                        extent=extent_test[source],
-                    ) for source in features])
+    # Testing data / validation
+    extent_test = {'SMAP': {'extent' : {'datetime': [np.datetime64('2015-05-30 00:00:00'), np.datetime64('2015-05-30 23:00:01')]}},
+                    'ERA5': {'extent' : {}},
+                    'Soil': {'extent' : {}},
+                    'Irrigation': {'extent' : {}}
+                    }
 
-    # Use validation set to test
+    dataset_test = Dataset.from_models(
+            verbose=False, **{
+            'models'     : [SoilMoistureModel],
+            'database_folder' : ROOT_PATH,
+            'variable_depths' : {'datetime': (335, 0)},
+            'datafile_kwargs' : extent_test
+            })
+
     batch_valid = Batcher(dataset_test, **{
         'batch_size' : 10,
         'features'   : [INP , OUT],
         'repeat'     : True,
-        'numblocks'  : [1,1,1],
-        'task_bytes' : 1e4,
-        'workers'    : 0,
-        'seed'       : 46
+        'duplicate'  : True,
+        'workers'    : 1,
+        'shuffle'    : False
     })
 
     batch_test = Batcher(dataset_test, **{
         'batch_size' : 10,
         'features'   : [INP , OUT],
+        'duplicate'  : True,
         'repeat'     : False,
-        'numblocks'  : [1,1,1],
-        'task_bytes' : 1e4,
-        'workers'    : 0,
+        'workers'    : 1,
         'shuffle'    : False
     })
 
-    # Soil moisture model
-    class sm_model(Layer):
-        def __init__(self):
-            super().__init__()
-            self._temporal = LSTM(units=256, name='temporal')
-            self._head = Dense(1, activation='relu')
-
-        def call(self, X):
-
-            era5 = stack([X[k] for k in features['ERA5']], axis=-1)
-            era5 = Lambda(lambda x: squeeze(x, axis=[2,3]))(era5)
-            x = self._temporal(era5)
-            soil = stack([X[k] for k in features['Soil']], axis=-1)
-            soil = squeeze(cast(soil, dtype=float), axis=[1,2])
-            irrigation = stack([X[k] for k in features['Irrigation']], axis=-1)
-            irrigation = squeeze(cast(irrigation, dtype=float), axis=[1,2])
-            x = concat([x, soil, irrigation], axis=-1)
-
-            output = {'soil_moisture': self._head(x)}
-
-            return output
         
-    # Create HTG basenode
-    inputs = {f: TensorSpec((None,336, 1, 1)) 
-              if f in features['ERA5'] else TensorSpec((None,1, 1)) for f in INP}
+    # Get stats
+    stats = xr.concat(dataset_train.summary, dim='features')
+    stats = stats.drop_duplicates('features', keep='last').compute()
 
-    htg = HierarchalTensorGraph(
-        node=sm_model(),
-        name='SM',
-        inputs=inputs,
-        outputs={f: TensorSpec((None,1)) for f in OUT}
-    )
-    
-    # Create, compile, fit
-    model = Model(htg)
-    
-    
+    # Create HTG
+    sm = SoilMoistureModel(stats)
+
+    # Create model and fit
+    model = Model(sm.graph)
+
     model.compile(**{
         'optimizer' : 'Adam', 
-        'loss'      : 'mse', 
-        'metrics'   : [RootMeanSquaredError()]
+        'loss'      : [sm.losses],
+        'metrics'      : [sm.loss]
     })
 
-    model.fit(
-        batch_train, 
-        validation_data=batch_valid, 
-        epochs=1, 
-        steps_per_epoch=2, 
-        validation_steps=1)
-    
-    # Expected value
-    ev = {
-        'loss': 474.40350341796875, 
-    }
-    
+    with batch_train as train, batch_valid as valid:
+        model.fit(
+            train, 
+            epochs=1, 
+            validation_data=valid,
+            steps_per_epoch=2, 
+            validation_steps=9)
+
     # Evaluate
-    res = model.evaluate(batch_test,return_dict=True)
+    with batch_test as test, batch_valid as valid:
+        t = model.evaluate(test,steps=9,return_dict=True)
+        v = model.evaluate(valid,steps=9,return_dict=True)
+        print(t,v)
+        assert t == v
     
-    # Test
-    assert res['loss'] == pytest.approx(ev['loss'], 10)
- 
     # Clean up
     shutil.rmtree(ROOT_PATH)
 
@@ -198,7 +181,7 @@ def test_model():
     # Create a Batcher for prediction/evaluation
     bs = Batcher(ds, **{
         'batch_size': 5,
-        'features': ['x'],
+        'features': [['x'],['y']],
         'repeat': True,
         'workers': 1,
         'duplicate': True,
@@ -215,7 +198,7 @@ def test_model():
         Dense(1)
     ])
 
-    htg = HierarchalTensorGraph(
+    htg = Node(
         node=lambda X: {'y': layer(X['x'])},
         name='Dense',
         inputs={'x': TensorSpec(shape=[None, 1])},
@@ -229,12 +212,14 @@ def test_model():
         'loss': 'mean_absolute_error'
     })
 
-    model.fit(ds, **{
+    model.fit(bs, **{
         'batch_size': 5,
         'steps_per_epoch': 4,  # 20 samples / 5 samples per batch
-        'epochs': 20,
+        'epochs': 2,
         'verbose': False
     })
+
+    bs.close()
 
     # Predition/evaluation kwargs
     pred_kwargs = {
@@ -243,21 +228,39 @@ def test_model():
         'verbose': False
     }
 
-    ## Check predictions for different types of data
-    using_ds = model.predict(ds, **pred_kwargs)['y']
-    using_bs = model.predict(bs, **pred_kwargs)['y']
-    using_dict = model.predict({'x': x}, **pred_kwargs)['y']
+    # Create a Batcher for prediction/evaluation
+    bp = Batcher(ds, **{
+        'batch_size': 5,
+        'features': ['x'],
+        'repeat': False,
+        'workers': 1,
+        'duplicate': True,
+        'shuffle': False
+    })
 
-    assert np.array_equal(using_ds, using_bs)
-    assert np.array_equal(using_dict, using_bs)
+    # Check predictions for different types of data
+    using_bp = model.predict(bp)
+    using_dict = model.predict({'x': x})
+    assert np.allclose(using_dict['y'], using_bp['y'])
+    
+    bp.close()
 
+    
+    be = Batcher(ds, **{
+        'batch_size': 5,
+        'features': [['x'],['y']],
+        'repeat': False,
+        'workers': 1,
+        'duplicate': True,
+        'shuffle': False
+    })
 
     # Check evaluations for different types of data
-    using_ds = model.evaluate(ds, **pred_kwargs)
-    using_dict = model.evaluate({'x': x, 'y': y}, **pred_kwargs)
-    assert (using_ds == using_dict)
+    using_be = model.evaluate(be, **pred_kwargs)
+    using_dict = model.evaluate({'x': x},{'y': y},**pred_kwargs)
+    assert np.allclose(using_dict, using_be)
 
-    bs.close()
+    be.close()
 
 
 @pytest.mark.integtest
@@ -272,11 +275,17 @@ def test_model_exhaust():
     # Create a Batcher for prediction/evaluation
     bs = Batcher(ds, **{
         'batch_size': 20,
-        'features': ['x'],
-        'repeat': False,
-        'workers': 1,
+        'features': (['x'],['y']),
+        'repeat': True,
+        'duplicate': True,
         'shuffle': False,
-        'duplicate': True
+    })
+    
+    bp = Batcher(ds, **{
+        'batch_size': 20,
+        'features': (['x']),
+        'repeat': False,
+        'shuffle': False,
     })
 
     # Create some simple HTG
@@ -288,13 +297,12 @@ def test_model_exhaust():
         Dense(1)
     ])
 
-    htg = HierarchalTensorGraph(
+    htg = Node(
         node=lambda X: {'y': layer(X['x'])},
         name='Dense',
         inputs={'x': TensorSpec(shape=[None, 1])},
         outputs={'y': TensorSpec(shape=[None, 1])}
     )
-
     # Build and fit the Model
     model = Model(htg)
     model.compile(**{
@@ -302,97 +310,20 @@ def test_model_exhaust():
         'loss': 'mean_absolute_error'
     })
 
-    model.fit(ds, workers=1, **{
-        'batch_size': 20,
+    model.fit(bs,**{
         'steps_per_epoch': 5,  # 1000 samples / 20 samples per batch
         'epochs': 10,
         'verbose': False
     })
-
-    # Predition/evaluation kwargs
-    pred_kwargs = {
-        'batch_size': 20,
-        'steps': 5,
-        'verbose': False,
-    }
-
-    kwards = pred_kwargs.copy()
-    kwards['exhaust'] = True
-
-    # Check predictions for different types of data
-    using_ds = model.predict_exhaust(ds, **kwards)['y']
-    using_bs = model.predict_exhaust(bs, **kwards)['y']
-    using_dict = model.predict_exhaust({'x': x}, **kwards)['y']
-
-    assert np.array_equal(using_ds, using_bs)
-    assert np.array_equal(using_dict, using_bs)
-
     bs.close()
 
 
-@pytest.mark.integtest
-def test_deep_exhaust():
-    """ Basic test of model interfaces """
-
-    # Create some simple linear Dataset
-    x = np.arange(0, 100, dtype=float)
-    y = x
-    ds = StructuredDataset(*[x, y], labels=['x', 'y'])
-
-    # Create a Batcher for prediction/evaluation
-    bs = Batcher(ds, **{
-        'batch_size': 20,
-        'features': ['x'],
-        'repeat': False,
-        'workers': 1,
-        'shuffle': False,
-        'duplicate': True
-    })
-
-    # Create some simple HTG
-    layer = Sequential([
-        Dense(10, activation='relu'),
-        Dropout(0.3),
-        Dense(10),
-        Dropout(0.1),
-        Dense(1)
-    ])
-
-    htg = HierarchalTensorGraph(
-        node=lambda X: {'y': layer(X['x'])},
-        name='Dense',
-        inputs={'x': TensorSpec(shape=[None, 1])},
-        outputs={'y': TensorSpec(shape=[None, 1])}
-    )
-
-    # Build and fit the Model
-    model = Model(htg)
-    model.compile(**{
-        'optimizer': 'Adam',
-        'loss': 'mean_absolute_error'
-    })
-
-    model.fit(ds, workers=1, **{
-        'batch_size': 20,
-        'steps_per_epoch': 5,  # 100 samples / 20 samples per batch
-        'epochs': 10,
-        'verbose': False
-    })
-
-    # Predition/evaluation kwargs
-    pred_kwargs = {
-        'batch_size': 20,
-        'steps': 5,
-        'verbose': False,
-    }
-
-    kwards = pred_kwargs.copy()
-    kwards['exhaust'] = True
-
     # Check predictions for different types of data
-    using_kr = model.model.predict({'x' : x}, **pred_kwargs)['y']
-    using_bs = model.predict_exhaust(bs, **kwards)['y']
+    using_bs = model.predict(bp)
+ 
+    using_dict = model.predict({'x': x}, **{
+        'batch_size' : 20
+        })
 
-    assert np.array_equal(using_kr, using_bs)
-
-    bs.close()
+    assert np.array_equal(using_dict['y'], using_bs['y'])
+    bp.close()

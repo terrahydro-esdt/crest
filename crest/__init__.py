@@ -1,4 +1,10 @@
 from pathlib import Path
+import warnings
+from dill import PicklingWarning,settings
+from .model import HierarchalTensorGraph, Model, NetworkXGraph, Node, TensorSpec
+from .data_server import DataServer
+from .nodes import CrossStitchLSTM,LSTM,LSTMCell
+
 ROOT_PATH = Path(__file__).parent
 
 # Ensure crest can be imported by spawned processed
@@ -12,10 +18,10 @@ env_vars = {
         'reason' : ' to fix a memory leak in dask: ' +
                    'https://github.com/dask/dask/issues/3530',
     },
-    'NUMBA_NUM_THREADS': {
-        'value'  : '2',
-        'reason' : ' to avoid over-saturating available resources',
-    },
+    #'NUMBA_NUM_THREADS': {
+    #    'value'  : '2',
+    #    'reason' : ' to avoid over-saturating available resources',
+    #},
 }
 for key, var in env_vars.items():
     if key not in os.environ:
@@ -42,6 +48,9 @@ except ImportError: pass
 # from ._dask_monkeypatch import *
 from .model import HierarchalTensorGraph, Model, NetworkXGraph
 from .data_server import DataServer
+
+warnings.filterwarnings('ignore',category=PicklingWarning)
+settings['byref'] = True
 
 # from .utils.setup_logging import logger_setup
 # logger_setup('crest-logfile')

@@ -1,14 +1,13 @@
 import logging
 from contextlib import nullcontext
-
-import tensorflow as tf
 import numpy as np
 import warnings
+import itertools
 import os
 import json
-import inspect
-from pathlib import Path
-
+from keras import Input
+from keras import Model as KerasModel
+from keras.models import load_model
 from crest.utils import Metrics
 from crest.data.loading import Dataset, StructuredDataset
 from crest.data import Batcher
@@ -37,14 +36,9 @@ class Model(BaseModel):
 
     def __init__(self, graph: TensorGraph, **kwargs):
         self.graph = graph
-        self.model = None
         self.name = graph.name
 
-        logger.debug(f'Initializing CREST Model')
-
-        if not graph.inputs or not graph.outputs:
-            raise ImproperModelError(
-                'Inputs and outputs must be specified for HierarchalTensorGraph')
+        self.graph.build()
 
         # Allow for TensorSpec to be converted to Keras Input
         self.inputs = {}
@@ -54,57 +48,16 @@ class Model(BaseModel):
                     v = v.tf
                 # Compatibility with future TF versions
                 try:
-                    self.inputs[k] = tf.keras.Input(type_spec=v, name=k)
-                except: 
-                    self.inputs[k] = tf.keras.Input(shape=v.shape[1:], dtype=v.dtype, name=k)
+                    self.inputs[k] = Input(type_spec=v, name=k)
+                except:
+                    self.inputs[k] = Input(shape=v.shape[1:], dtype=v.dtype, name=k)
             else:
                 self.inputs[k] = None
 
         self.outputs = self.graph(self.inputs)
         self.metric = Metrics()
-
-        logger.debug(f'Completed Initializing CREST Model')
-
-    def _make_batcher(self, dataset, **kwargs):
-        """
-        Makes a Batcher
-
-        Parameters
-        ----------
-
-        dataset : The data to make into a Batcher. Dataset
-        can be either a Dataset, StructuredDataset, Batcher, or dict.
-        If Batcher is passed, it is returned.
-
-        kwargs: kwargs to pass to the Batcher
-
-        """
-        logger.debug(f'Called _make_batcher, making batcher from dataset')
-        
-        if isinstance(dataset, Batcher):
-            return dataset
-
-        if isinstance(dataset, dict):
-            ds = StructuredDataset(
-                *list(dataset.values()), labels=list(dataset.keys()))
-            return Batcher(ds, **kwargs)
-
-        if isinstance(dataset, (Dataset, StructuredDataset)):
-            return Batcher(dataset, **kwargs)
-
-        message = f'Cannot make a Batcher from {type(dataset)}: it must be either a Dataset, StructuredDataset, '
-        message += 'Batcher, or dictionary.'
-        raise ImproperModelError(message)
-
-    def build(self, _internal=False, **kwargs):
-        """ Builds Keras model """
-        logger.debug(f'Building Keras Model')
-
-        if not _internal:
-            warnings.warn('Use Model.compile instead of Model.build')
-            return self.compile(**kwargs)
-        self.model = tf.keras.Model(inputs=self.inputs, outputs=self.outputs)
-
+        self.model = KerasModel(inputs=self.inputs,outputs=self.outputs)
+         
         # Explicitly set model output_names for correct logging labels
         if isinstance(self.outputs, dict):
             self.model.output_names = sorted(self.outputs)
@@ -129,7 +82,6 @@ class Model(BaseModel):
         #     metrics = self.metric.get_callbacks(kwargs['metrics'])
         #     kwargs['metrics'] = metrics
 
-        self.build(_internal=True)
         self.model.compile(**kwargs)
 
         # Verify there are trainable weights in this model
@@ -139,7 +91,7 @@ class Model(BaseModel):
         if no_trainable:
             self.logger.warning('\nNo trainable parameters in model\n')
 
-    def fit(self, dataset: Dataset | Batcher | StructuredDataset, **kwargs):
+    def fit(self, data, **kwargs):
         """
         Fit the Model.
 
@@ -147,71 +99,23 @@ class Model(BaseModel):
         ----------
 
         dataset : The training data containing both inputs and targets. Dataset
-        can be either a Dataset, StructuredDataset, Batcher, or dict.
+        can be either a crest.batcher or anything keras.model.fit takes.
 
         kwargs : Keyword args for the fitter. Currently, can be any keyword args
-        accepted by Keras.fit().
+        accepted by keras.fit().
 
         """
         logger.debug(f'Training Keras Model')
 
-        # Add default options for kwargs if necessary
-        defaults = {'steps_per_epoch': 1,
-                    'epochs': 1,
-                    'batch_size': 1,
-                    'shuffle': True
-                    }
-        
-        # get callbacks if any are specified
-        callbacks = kwargs.get('callbacks', [])
+        if isinstance(data,Batcher):
+            with data as batcher, kwargs.get('validation_data', nullcontext()):
+                if 'validation_data' in kwargs:
+                    kwargs['validation_data'] = iter(kwargs['validation_data'])
+                self.model.fit(iter(batcher), **kwargs)
+        else:
+            self.model.fit(data, **kwargs)
 
-        for k, v in defaults.items():
-            if k not in kwargs:
-                kwargs[k] = v
-
-        # Training Batcher
-        train_kwargs = {
-            'batch_size': kwargs['batch_size'],
-            'features': [list(self.inputs), list(self.outputs)],
-            'repeat': True,
-            'shuffle': kwargs['shuffle'],
-            'workers': 0
-        }
-        
-        training_batcher = self._make_batcher(dataset, **train_kwargs)
-
-        # Validation Batcher
-        if 'validation_data' in kwargs:
-
-            if 'validation_steps' not in kwargs:
-                kwargs['validation_steps'] = 1
-
-            valid_kwargs = {
-                'batch_size': kwargs['batch_size'],
-                'features': [list(self.inputs), list(self.outputs)],
-                'shuffle': False,
-                'workers': 0
-            }
-
-            kwargs['validation_data'] = self._make_batcher(
-                kwargs['validation_data'], **valid_kwargs)
-
-        if 'workers' in kwargs:
-            kwargs.pop('workers')
-
-        def generator(x):
-            yield from x
-
-        logger.debug(f'Fitting model with parameters: {kwargs.keys()}')
-
-        with training_batcher as data, kwargs.get('validation_data', nullcontext()):
-
-            if 'validation_data' in kwargs:
-                kwargs['validation_data'] = generator(kwargs['validation_data'])
-
-            self.model.fit(generator(data), **kwargs)
-
-    def predict(self, dataset: Dataset | StructuredDataset | Batcher | dict, coords=[], **kwargs) -> dict:
+    def predict(self, dataset, coords: str | list =[], **kwargs) -> dict:
         """
         Make predictions with the model.
 
@@ -219,10 +123,13 @@ class Model(BaseModel):
         ----------
 
         dataset : The inputs to make predictions on. Dataset
-        can be either a Dataset, StructuredDataset, Batcher, or dict.
+        can be either a crest.Batcher or anyting Keras.fit takes.
+        If using a crest.Batcher, setting steps == 'all' will
+        exhaust the batcher (repeat must be false).
 
         coords: The names/keys of additional features to include in the output.
-        The keys must be contained in dataset along with the input.
+        The keys must be contained in batcher along with the input. Used
+        only with a crest.Batcher.
 
         kwargs : Keyword args for prediciton. Currently, can be any keyword args
         accepted by Keras.predict().
@@ -230,52 +137,51 @@ class Model(BaseModel):
         """
         logger.debug(f'Predicting with Keras Model')
 
-        # Set default options for kwargs
-        defaults = {
-            'batch_size': 1,
-            'steps': 1
-        }
-
-        for k, v in defaults.items():
-            if k not in kwargs:
-                kwargs[k] = v
+        # Check if exhaust is possible
+        steps = None
 
         # Make sure coords is a list
         if isinstance(coords, str):
             coords = [coords]
 
-        # Prediction Batcher
-        batch_kwargs = {
-            'batch_size': kwargs['batch_size'],
-            'features': coords + list(self.inputs),
-            'shuffle': False
-        }
-
-        batcher = self._make_batcher(dataset, **batch_kwargs)
-
+        if(coords and not isinstance(dataset,Batcher)):
+            message = 'The arg coords can only be used when'\
+                      ' dataset is a crest.Batcher'
+            raise ValueError(message)
+        
         # Make prediction using Keras.predict()
-        pred = []
-        lbls = []
-        with batcher as data:
-            steps = kwargs.pop('steps')
-            for i in range(steps):
-                batch = next(data)
-                # Pop out auxillary outputs
-                if coords:
-                    lbls = {i: batch.pop(i) for i in coords}
-                pred_batch = self.model.predict(batch, **kwargs)
-                # Add additional coords
-                if coords:
-                    for k, v in lbls.items():
-                        pred_batch[k] = v
+        if isinstance(dataset,Batcher):
+            pred = []
+            lbls = []
+            steps = None
 
-                if pred:
-                    for key in pred_batch.keys():
-                        pred[key] = np.concatenate(
-                            [pred[key], pred_batch[key]])
-                if not pred:
-                    pred = pred_batch
-        return pred
+            # Get steps
+            if 'steps' in kwargs:
+                steps = kwargs.pop('steps')
+            
+            with dataset as data:
+                
+                if not steps:
+                    steps = data
+                    if dataset.repeat:
+                        raise ImproperModelError(
+                                'When using a crest.Batcher you must. '\
+                                'specify steps if repeat == False'
+                                )
+                else:
+                    steps = itertools.islice(data,steps)
+
+
+                for batch in steps:
+                    pred_batch = self.predict_on_batch(batch,coords,**kwargs)
+                    if pred:
+                        for key in pred_batch.keys():
+                            pred[key] = np.concatenate([pred[key], pred_batch[key]])
+                    if not pred:
+                        pred = pred_batch
+            return pred
+
+        return self.model.predict(dataset,**kwargs)
 
     def predict_on_batch(self, batch: dict, coords=[], **kwargs) -> dict:
         """
@@ -319,121 +225,22 @@ class Model(BaseModel):
 
         return pred
 
-    def predict_exhaust(self, dataset: Dataset | StructuredDataset | Batcher | dict, coords=[], **kwargs) -> dict:
-        """
-        Make predictions with the model.
-
-        Parameters
-        ----------
-
-        dataset : The inputs to make predictions on. Dataset
-        can be either a Dataset, StructuredDataset, Batcher, or dict.
-
-        coords: The names/keys of additional features to include in the output.
-        The keys must be contained in dataset along with the input.
-
-        kwargs : Keyword args for prediciton. Currently, can be any keyword args
-        accepted by Keras.predict().
-
-        """
-        logger.debug(f'Predicting exhaustive')
-
-        # Set default options for kwargs
-        defaults = {
-            'batch_size': 1,
-            'steps': 1,
-            'exhaust': False
-        }
-
-        for k, v in defaults.items():
-            if k not in kwargs:
-                kwargs[k] = v
-
-        # Make sure coords is a list
-        if isinstance(coords, str):
-            coords = [coords]
-
-        # Prediction Batcher
-        batch_kwargs = {
-            'batch_size': kwargs['batch_size'],
-            'features': coords + list(self.inputs),
-            'shuffle': False
-        }
-
-        batcher = self._make_batcher(dataset, **batch_kwargs)
-
-        if kwargs.get('exhaust') and batcher.repeat:
-            raise ImproperModelError(
-                'Cannot exhaust batcher when batcher is set to repeat.')
-
-        # Make prediction using Keras.predict()
-        with batcher as data:
-            steps = kwargs.pop('steps')
-            exhaust = kwargs.pop('exhaust')
-
-            # collect all batches if exhaust else collect number of batches specified by steps
-            batches = list(data) if exhaust else [
-                batch for _, batch in zip(range(steps), data)]
-
-            # concatenate all batches based on keys
-            batch = {}
-            for k in batches[0].keys():
-                batch[k] = np.concatenate([b[k] for b in batches])
-
-            # for each prediction of each batch
-            # Pop out auxillary outputs
-            lbls = None
-            if coords:
-                lbls = {i: batch.pop(i) for i in coords}
-
-            pred_batches = self.model.predict(batch, **kwargs)
-
-            if coords:
-                for k, v in lbls.items():
-                    pred_batches[k] = v
-
-        return pred_batches
-
-    def evaluate(self, dataset: Dataset | Batcher | StructuredDataset | dict, **kwargs):
+    def evaluate(self, x=None, y=None, **kwargs):
         """
         Evaluate the performance of the fitter
 
         Parameters
         ----------
-
-        dataset : The dataset containing inputs and outputs. Dataset
-        can be either a Dataset, StructuredDataset, Batcher, or dict.
-
-        kwargs : Keyword args for evaluation. Currently, can be any keyword args
-        accepted by Keras.evaluate().
+      
+        Evaulate wraps keras.evaluate(). See, Keras docs.
 
         """
 
-        logger.debug(f'Evaluating Keras Model')
+        if isinstance(x,Batcher):
+            x = iter(x)
+            y = None
 
-        # Default options since we use generators
-        defaults = {
-            'batch_size': 1,
-            'steps': 1
-        }
-
-        for k, v in defaults.items():
-            if k not in kwargs:
-                kwargs[k] = v
-
-        # Evaluation Batcher
-        batch_kwargs = {
-            'batch_size': kwargs['batch_size'],
-            'features': [list(self.inputs), list(self.outputs)],
-            'shuffle': False
-        }
-        
-        def generator(x):
-            yield from x
-
-        batcher = self._make_batcher(dataset, **batch_kwargs)
-        with batcher as data:
-            return self.model.evaluate(generator(data), **kwargs)
+        return self.model.evaluate(x,y, **kwargs)
 
     def save_weights(self):
         """
@@ -573,5 +380,8 @@ class Model(BaseModel):
             model.model = Model.load_model(model_type, path, custom_metrics)
         else:
             model.model = Model.load_model(model_type, path)
+
+        # convert model from json
+        model.model = load_model(os.path.join(path, 'htg.model.h5'), custom_objects=custom_metrics)
 
         return model

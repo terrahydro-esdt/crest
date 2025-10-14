@@ -2,9 +2,5 @@ from .HierarchalTensorGraph import HierarchalTensorGraph
 from .graphs import NetworkXGraph
 from .BaseModel import BaseModel
 from .Model import Model
-from .GriddedModel import GriddedModel
+from .Node import Node
 from .TensorSpec import TensorSpec
-from .TensorGraph import TensorGraph
-from .KerasNode import KerasNode
-from .LambdaNode import LambdaNode
-from .ExtentStrategy import ExtentStrategy

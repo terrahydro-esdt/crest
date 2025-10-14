@@ -21,6 +21,9 @@ class NetworkXGraph(BaseGraph):
     def get_node_attributes(self,name):
         return nx.get_node_attributes(self.graph,name)
 
+    def get_edge_attributes(self,name):
+        return nx.get_edge_attributes(self.graph,name)
+
     def in_degree(self,node):
         return self.graph.in_degree(node)
 
@@ -52,10 +55,10 @@ class NetworkXGraph(BaseGraph):
         return self.graph.has_edge(source,target)
     
     def in_edges(self, nbunch=None, data=False, default=None):
-        return self.graph.in_edges(nbunch,data,default=default)
+        return self.graph.in_edges(nbunch,data=data,default=default)
     
     def out_edges(self, nbunch=None, data=False, default=None):
-        return self.graph.out_edges(nbunch,data,default=default)
+        return self.graph.out_edges(nbunch,data=data,default=default)
     
     def set_edge_attributes(self, attr: dict):
         nx.set_edge_attributes(self.graph, attr)

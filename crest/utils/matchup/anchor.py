@@ -1,10 +1,7 @@
 from collections.abc import Collection
 from itertools import product
-from .bruteforce import Grid
+import Grid
 import numpy as np 
-
-
-
 
 def anchor(grids: Collection[Grid]) -> (np.ndarray, np.ndarray):
     # Create trees and query against the reference (anchor) grid

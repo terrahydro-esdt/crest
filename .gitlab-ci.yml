@@ -6,10 +6,11 @@ default:
 before_script:
   # Activate conda & load crest_cpu env
   - source cicd/loadEnv.sh cpu
-  
   # update if needed.  Static cpu_x86_64 for now(ever?)
   - conda env update -f cicd/environment_cpu_x86_64.yaml
 
+  # update if needed.  Static cpu_x86_64 for now(ever?)
+  - conda env update -f cicd/environment_cpu_x86_64.yaml
 test:
   script:
     - pytest --color=yes tests
@@ -20,7 +21,6 @@ pages:
   script:
     # Update to add packages needed for doc generation
     - sphinx-build -b html docs public
-
   artifacts:
     paths:
     - public

@@ -1,23 +1,19 @@
 import json
-import traceback
 import tensorflow as tf
 from tensorflow import keras
 
-# is parallel to keras.TensorSpec
-
-
 class TensorSpec(object):
+    """ Specifies the shape of tensors withing crest """
+
     def __init__(self, *specs):
 
         self.spec_dict = {}
-        print(f'{specs=}')
-
         if len(specs) == 1 and isinstance(specs[0], TensorSpec):
             self.spec_dict['shape'] = self._modify_shape(specs[0].shape)
             self.spec_dict['dtype'] = specs[0].dtype
             self.spec_dict['name'] = specs[0].name
-
-        elif len(specs) == 1 and hasattr(specs[0], 'type_spec') and isinstance(specs[0].type_spec, tf.TensorSpec):
+        elif (len(specs) == 1 and hasattr(specs[0], 'type_spec')
+              and isinstance(specs[0].type_spec, tf.TensorSpec)):
             self.spec_dict['shape'] = self._modify_shape(
                 specs[0].type_spec.shape)
             self.spec_dict['dtype'] = specs[0].type_spec.dtype.name
@@ -64,9 +60,18 @@ class TensorSpec(object):
             raise Exception(
                 'TensorSpec must be initialized with a tuple or dict')
 
+        # Set shape type
+        self.shape_type = str(type(self.spec_dict['shape']))
+
+    def __repr__(self):
+        return f'TensorSpec{tuple(self.spec_dict.values())}'
+
     def _modify_shape(self, shape):
         if isinstance(shape, tf.TensorShape):
-            return tuple(shape.as_list())
+            return tuple(shape.as_list())\
+
+        if isinstance(shape,keras.KerasTensor):
+            return tuple(shape.shape)
 
         if isinstance(shape,keras.KerasTensor):
             return tuple(shape.shape)
@@ -74,23 +79,32 @@ class TensorSpec(object):
         return shape
 
     @property
-    def specs(self):
+    def specs(self) -> dict:
+        """ specs dict"""
         return self.spec_dict
 
     @property
     def shape(self):
-        return tuple(self.spec_dict['shape'])
+        """ shpae of tensor"""
+        shape = self.spec_dict['shape']
+        if hasattr(shape, '__iter__'):
+            return shape
+        else:
+            return tuple([shape])
 
     @property
     def dtype(self):
+        """ dtype of tensor """
         return self.spec_dict['dtype']
 
     @property
     def name(self):
+        """ Name of tensor """
         return self.spec_dict['name']
 
     @property
     def tf(self):
+        """ TensorFlow TensorSpec"""
         return tf.TensorSpec(
             shape=self.shape,
             dtype=tf.dtypes.as_dtype(self.dtype),
@@ -98,6 +112,7 @@ class TensorSpec(object):
 
     @property
     def keras(self):
+        """ Keras input tensor """
         return keras.Input(
             shape=self.shape,
             dtype=self.dtype,
@@ -105,31 +120,30 @@ class TensorSpec(object):
 
     @staticmethod
     def dict_to_json(htg_dict: dict):
+        """ Converts htg inputs to json string """
 
         str_json = {}
         for k, v in htg_dict.items():
-            if v:
-                str_json[k] = TensorSpec(v).spec_dict
-            else:
-                str_json[k] = None
+            ts = TensorSpec(v)
+            str_json[k] = [ts.spec_dict, str(ts.shape_type)]
 
         return json.dumps(str_json)
 
     @staticmethod
     def json_to_dict(str_json: dict):
+        """ Converts json string to input dictionary """
 
         str_dict = json.loads(str_json)
         htg_dict = {}
-
         for k, v in str_dict.items():
-            if v:
-                htg_dict[k] = TensorSpec(v)
-            else:
-                htg_dict[k] = None
+            t, s = v
+            t['shape'] = t['shape'] if s != str(tuple) else tuple(t['shape'])
+            htg_dict[k] = TensorSpec(t)
 
         return htg_dict
 
     def __eq__(self, other):
+        """ is equal """
         same_keys = (self.specs.keys() == other.specs.keys())
 
         if same_keys:
@@ -145,24 +159,5 @@ class TensorSpec(object):
             return False
 
     def __str__(self):
+        """ print string for specs """
         return str(self.specs)
-
-    def save(self, path):
-        try:
-            with open(path, 'w') as f:
-                json.dump(self.specs, f)
-
-            return True
-        except:
-            print(traceback.format_exc())
-            return False
-
-    @staticmethod
-    def load(path):
-        try:
-            with open(path, 'r') as f:
-                data = json.load(f)
-                return TensorSpec(data)
-        except:
-            print(traceback.format_exc())
-            return None

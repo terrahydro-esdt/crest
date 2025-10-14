@@ -1,6 +1,9 @@
 from importlib.util import spec_from_file_location, module_from_spec
 from pathlib import Path
 import sys
+import os
+
+os.environ['NUMBA_NUM_THREADS'] = '2'
 
 # Allow imports directly from inner crest module; e.g. rather than requiring
 #   `from crest.crest.data import *`, allow `from crest.data import *`

@@ -1,46 +1,25 @@
-from collections.abc import Callable
+import logging
+import warnings
+from functools import cached_property,wraps
 from functools import cache
 from typing import Union
-import importlib
-import json
-import pandas as pd
-import copy
-import random
-import logging
-from pyvis.network import Network
-from ..utils.save_node_class import *
+from collections.abc import Callable
+import inspect
+import numpy as np
+from prettytable.colortable import ColorTable, Themes
+import tensorflow as tf
 import networkx as nx
-import matplotlib.colors as mcolors
-import random as rand
-
-from pathlib import Path
-
-# networkx breaks numpy if it's not also loaded, due to nx.lazy_import modifying sys modules
-from .TensorSpec import TensorSpec
-
+import dill
 from .TensorGraph import TensorGraph, ImproperTensorGraphError
 from .graphs.NetworkXGraph import NetworkXGraph
+from .Registry import Registry
 
 logger = logging.getLogger(__name__)
 
-
 class HierarchalTensorGraph(TensorGraph):
     """
-    HierarchalTensorGraph (HTG): The HTG is the core object where the Earth System Model (ESM)
-    is encoded and specified. The HTG provides the information needed to build a CREST
-    model using the Tensor Network backend. As the name suggest, HTG is a hierarchal graph object,
-    and as such, nodes within a HTG are HTGs themselves.
-
-    It has 2 modes:
-
-    1.	A single node graph, referred to as a basenode, that represents a fundamental physical
-    process in an ESM. The basenode is the main object intended for specifying an actual model
-    of a physical process. As such, you must supply a callable function when instantiating a basenode.
-
-    2.	A multi-node graph (nodes>1) used to represent ESM sub-systems. In this mode, HTG is not
-    instantiated with callable function. Instead, nodes and edges are added to create a sub-system.
-    Nodes can either be fundamental processes (basenode) or sub-systems (multi-node HTGs).
-
+    HierarchalTensorGraph (HTG): The HTG is used to build hierarchal graphs
+    of Nodes (or other HTGs).
 
     Parameters
     ----------
@@ -50,121 +29,124 @@ class HierarchalTensorGraph(TensorGraph):
        in the graph. If name is None, it will default to
        ['name', '__name__', '__qualname__'].
 
-    node : Callable, optional
-       A callable function to initalize a HTG. If set, a
-       single node (basenode) HTG is created.
-
-    inputs : dict, optional
-        A dictionary with the name (keys) and tensor specifications (values) for the
-        input expected input tensors and produced output produced tensors. Note:
-        these parameters are optional, however if not specified, in certain cases
-        building the Model will fail. It's best practice to specify them!
+    **attr: dict
+        The attributes of the HTG. Defaults:
+        'recurrent' : False,
+        'return_seq' : False,
+        'initialization' : None,
+        'roll_out' : None,
 
     """
 
+    # Register of all HTG subclasses
+    registry = Registry()
+
+    # Optional name for registry
+    registry_name = 'HierarchalTensorGraph'
+
+    # Subclass bool
+    is_subclass = False
+
     @property
     def logger(self) -> logging.Logger:
+        """ logger """
         return logging.getLogger(__name__)
 
-    def __init__(self,
-                 node: None | Callable = None,
-                 name: None | str = None,
-                 inputs: dict = {},
-                 outputs: dict = {},
-                 edges: list = []
-                 ):
+    def __new__(cls,*args,**kwargs):
+        obj = super().__new__(cls)
 
-        self.name = name or HierarchalTensorGraph.get_name(node)
-        self.node = node or self
+        # Wrap build function
+        og_build = obj.build
+
+        @wraps(og_build)
+        def build_wrapper(*args,**kwargs):
+
+            # If not subclass do nothing
+            if not obj.is_subclass:
+                return
+
+            # If already built, return
+            if obj.attributes['built']:
+                return
+
+            og_build(*args,**kwargs)
+            obj.attributes['built'] = True
+
+        # Set new build function 
+        obj.build = build_wrapper
+
+        return obj
+
+    def __init__(self,name: str,**attr):
+        super().__init__()
+        self.name = name
+        self.node = self
         self.graph = NetworkXGraph()
         self.output = []
-        self.inputs = inputs
-        self.outputs = outputs
-        self._inputs_map = {}  # dictionary specifying input feature renaming
-        self._outputs_map = {}  # dictionary specifying input feature renaming
-        self.is_recurrent = False
+        self.inputs = {}
+        self.outputs ={}
 
-        # check that the HTG has a name
-        if self.name == 'None':
-            message = f'A HierarchalTensorGraph name must be given, but a {self.name} was found'
-            raise ImproperTensorGraphError(message)
+        # Default attributes for nodes
+        self.attributes = {
+            'recurrent' : False,
+            'return_seq' : False,
+            'roll_out' : None,
+            'built' : None
+        }
 
-        # check that if node is passed it is callable
-        if (self.node is not self) and (not callable(self.node)):
-            message = f'node must be callable'
-            raise ImproperTensorGraphError(message)
+        if self.is_subclass:
+            self.attributes['built'] = False
 
-        # check that node is not an HTG
-        if isinstance(node, HierarchalTensorGraph):
-            message = "A HierarchalTensorGraph can not be used to"
-            message += "create a basenode (i.e., node cannot be a"
-            message += "HierarchalTensorGraph)"
-            raise ImproperTensorGraphError(message)
+        # Overwrite default attributes
+        for k,v in attr.items():
+            self.attributes[k] = v
 
         # log the creation of the HTG
-        self.logger.debug(f'Created HierarchalTensorGraph {self.name}')
+        self.logger.info("Created HierarchalTensorGraph %s",self.name)
 
-        if (edges):
-            self.add_edges_from(edges)
+    # Automatically register all subclasses
+    # Runs once per subclass creation
+    def __init_subclass__(cls,*args,**kwargs):
+
+        # Set subclass to true
+        cls.is_subclass = True
+
+        # Set default registry name to class name
+        basename = inspect.getmro(cls)[1].__name__
+        if cls.registry_name == basename:
+            cls.registry_name = cls.__name__
+
+        cls.registry.register(cls)
+
+    def initial_state(self,X):
+        message = f'HierarchalTensorGraph  = {self.name} must implement '
+        message += 'a initial_state function since it is recurrent'
+        raise NotImplementedError(message)
+
+    def build(self):
+        """ Build functions for subclasses of HTG """
 
     def __iter__(self):
         """ Iterate through all nodes within the HTG """
 
-        self.logger.debug(f'Iterating through all nodes in HTG {self.name}')
+        self.logger.info("Iterating through all nodes in HTG %s", self.name)
 
         def traverse_nodes(graph, path):
             """ Recursive generator """
             for node in graph:
                 yield [path + (graph.nodes[node]['htg'].name,), graph.nodes[node]['htg']]
                 if not graph.nodes[node]['htg'].is_basenode:
-                    yield from traverse_nodes(graph.nodes[node]['htg'].graph, path + (graph.nodes[node]['htg'].name,))
+                    yield from traverse_nodes(graph.nodes[node]['htg'].graph, 
+                                              path + (graph.nodes[node]['htg'].name,))
 
         yield from traverse_nodes(self.graph, ())
-
-    def __getstate__(self):
-        return self.__dict__
-
-    def __setstate__(self, d):
-        self.__dict__ = d
-
-    def traverse(self, action: Callable[[tuple[str], object], None]):
-        """Apply `action(path, node)` to every node in the HTG."""
-
-        for path, node in self:
-            action(path, node)
-
-    def get_inputs(self, node):
-        """ Get the inputs of the given node """
-
-        self.logger.debug(f'Getting inputs for node {node}')
-
-        if node in self:
-            input_maps = self[node]._inputs_map
-            inputs = self[node].inputs
-
-            inputs = [input_maps[x] if x in input_maps.keys()
-                      else x for x in inputs]
-            return inputs
-        return None
-
-    def get_outputs(self, node):
-        """ Get the outputs of the given node """
-
-        self.logger.debug(f'Getting outputs for node {node}')
-
-        if node in self:
-            output_maps = self[node]._outputs_map
-            outputs = self[node].outputs
-
-            outputs = [output_maps[x] if x in output_maps.keys()
-                       else x for x in outputs]
-            return outputs
-        return None
 
     def equals(self, node: Callable) -> bool:
         """ Check if the given node is the same as this node """
 
-        self.logger.debug(f'Checking if node {node} is equal to {self.node}')
+        self.build()
+
+        self.logger.info(f'Checking if node {node} is equal to {self.node}')
 
         if self.node and self.is_basenode:
             if node and node.is_basenode:
@@ -179,185 +161,66 @@ class HierarchalTensorGraph(TensorGraph):
 
         return False
 
-    def basenode_to_json(self):
-        """
-        Enables the serialization of the HTG basenode as a JSON string.
-        """
+    def encode(self,type='dill',**kwargs):
+        """ Serialization """
+        self.build()
 
-        self.logger.debug(f'Serializing basenode {self.name} to JSON')
+        encode = {
+            'name' : dill.dumps(self.name,**kwargs),
+            'edges' : dill.dumps(list(self.edges(data=True)),**kwargs)
+        }
 
-        to_json = getattr(self.node, "to_json", None)
+        attributes = {}
+        for k,v in self.attributes.items():
+            attributes[k] = dill.dumps(v,**kwargs)
+        encode['attr'] = attributes
 
-        if to_json:
-            node_json = self.__dict__.copy()
-
-            node_json.pop('graph')
-            node_json.pop('output')
-
-            if 'parent' in node_json:
-                node_json.pop('parent')
-
-            node_json['is_basenode'] = True
-
-            node_json['node'] = self.node.to_json()
-
-            node_json['inputs'] = TensorSpec.dict_to_json(self.inputs)
-            node_json['outputs'] = TensorSpec.dict_to_json(self.outputs)
-
-            node_json['node_class'] = self.node.__class__.__name__
-            node_json['node_module'] = self.node.__module__
-
-            try:
-                node_path = get_class_module_path(self.node)
-            except:
-                node_path = ''
-            
-            node_json['node_path'] = node_path
-
-            return json.dumps(node_json)
-        else:
-            raise Exception(
-                'Base node <%s> does not have a to_json method' % self.name)
-
-    def to_json(self):
-        """
-        Enables the serialization of the HTG network graph as a JSON string. 
-        """
-
-        self.logger.debug(f'Serializing HTG {self.name} to JSON')
-
-        graph_info = {}
-
-        if self.is_basenode:
-            if not type(self) == HierarchalTensorGraph:
-                raise Exception(
-                    'Base node <%s> is not of type HierarchalTensorGraph' % self.name)
-
-            return self.basenode_to_json()
-
-        # name
-        graph_info['name'] = self.name
-
-        # node
-        graph_info['node'] = None
-
-        # input and output map
-        graph_info['inputs_map'] = self._inputs_map
-        graph_info['outputs_map'] = self._outputs_map
-
-        # input and output
-        graph_info['inputs'] = TensorSpec.dict_to_json(self.inputs)
-        graph_info['outputs'] = TensorSpec.dict_to_json(self.outputs)
-
-        # edges
-        graph_info['edges'] = list(self.edges)
-
-        # nodes
-        graph_info['nodes'] = []
+        # Collect the json dicts of nodes
+        encode['nodes'] = []
         for name, node in self.nodes.items():
             if not name in ['input', 'output']:
-                try:
-                    graph_info['nodes'].append(node.to_json())
-                except:
-                    raise Exception(
-                        f'Could not serialize node {name} in graph {self.name}')
+                encode['nodes'].append({
+                    'crest_registry_name' : node.registry_name,
+                    **node.encode(type,**kwargs)
+                    })
 
-        graph_info['node_class'] = self.node.__class__.__name__
-        graph_info['node_module'] = self.node.__module__
-        graph_info['node_path'] = get_class_module_path(self.node)
+        return encode
 
-        return json.dumps(graph_info)
+    @classmethod
+    def decode(cls,encode,type='dill',**kwargs):
+        """ recursive deserializer """
 
-    @staticmethod
-    def basenode_from_json(graph_json: str):
-        """
+        # Get nodes
+        nodes = []
+        for node in encode.pop('nodes'):
+            obj = cls.registry[node.pop('crest_registry_name')]
+            nodes.append(obj.decode(node,type,**kwargs))
 
-        Enables the deserialization of the HTG basenode represented as a JSON string.
+        edges = dill.loads(encode.pop('edges'),**kwargs)
 
-        Parameters:
-        -----------
-        data : str
-             The JSON string to deserialize.
+        attributes = {}
+        for k,v in encode.pop('attr').items():
+            attributes[k] = dill.loads(v,**kwargs)
 
-        """
+        decode = {k : dill.loads(v,**kwargs) for k,v in encode.items()} 
 
-        graph_dict = graph_json
-        if isinstance(graph_json, str):
-            graph_dict = json.loads(graph_json)
+        htg = cls(**decode)
 
-        class_name = graph_dict['node_class']
+        # Set attributes
+        htg.attributes = attributes
 
-        if (len(graph_dict['node_path']) == 0):
-            module_name = graph_dict['node_module']
-            module = importlib.import_module(module_name)
-        else:
-            module_path = graph_dict['node_path']
-            module = (import_module_from_path(module_path))[class_name][1]
-        
-        class_ = getattr(module, class_name)
-
-        from_json = getattr(class_, "from_json", None)
-
-        if from_json:
-
-            # the graph_json contains a sub dictionary to process
-            if issubclass(class_, HierarchalTensorGraph):
-                node = class_.from_json(graph_dict)
-                return node
-
-            loaded_node = class_.from_json(graph_dict['node'])
-            htg = HierarchalTensorGraph(
-                name=graph_dict['name'], node=loaded_node)
-
-            htg.inputs = TensorSpec.json_to_dict(graph_dict['inputs'])
-            htg.outputs = TensorSpec.json_to_dict(graph_dict['outputs'])
-
-            htg._inputs_map = graph_dict['_inputs_map']
-            htg._outputs_map = graph_dict['_outputs_map']
-
+        if not htg.graph.is_empty:
             return htg
-        else:
-            raise Exception(
-                f'from_json was not defined for class {class_name}')
 
-    @staticmethod
-    def from_json(graph_json):
-        """
+        # Build graph 
+        for i in nodes: 
+            htg.add_node(i)
 
-        Enables the deserialization of the HTG network graph represented in a JSON structure. 
+        for e in edges:
+            s, t, a = e
+            htg.add_edge(s, t, **a)
 
-        Parameters:
-        -----------
-        data : dict
-             The JSON string to deserialize.
-
-        """
-
-        graph_dict = json.loads(graph_json)
-
-        # basenode
-        if not graph_dict['node'] is None:
-            return HierarchalTensorGraph.basenode_from_json(graph_dict)
-
-        # graph
-        graph = HierarchalTensorGraph(name=graph_dict['name'])
-
-        # input and output
-        graph.inputs = TensorSpec.json_to_dict(graph_dict['inputs'])
-        graph.outputs = TensorSpec.json_to_dict(graph_dict['outputs'])
-
-        # nodes
-        for node_json in graph_dict['nodes']:
-            graph.add_node(HierarchalTensorGraph.from_json(node_json))
-
-        # edges
-        graph.add_edges_from(graph_dict['edges'])
-
-        # input and output map
-        graph._inputs_map = graph_dict['inputs_map']
-        graph._outputs_map = graph_dict['outputs_map']
-
-        return graph
+        return htg
 
     @staticmethod
     def get_name(obj) -> str:
@@ -380,42 +243,6 @@ class HierarchalTensorGraph(TensorGraph):
             return value or str(obj)
         return HierarchalTensorGraph.get_name(value)
 
-    def rename_io(self,
-                  inputs_map: None | dict = None,
-                  outputs_map: None | dict = None,
-                  node: None | str | tuple | TensorGraph = None,
-                  ):
-        """
-            Sets any renaming of input/output tensors needed.
-
-            Parameters
-            ----------
-            node : specifies which node to apply the renaming. If None,
-                    it applies it to itself.
-
-            inputs_map : dict a dictionary of key-value pairs = (from name, to name).
-            If str is used for keys, it will attempt a search for a unique match.
-            If a tuple is used for keys, it will look for an exact match.
-
-            outputs_map : dict a dictionary of key-value pairs = (from name, to name).
-            If str is used for keys, it will attempt a search for a unique match.
-            If a tuple is used for keys, it will look for an exact match.
-
-
-        """
-
-        self.logger.debug(f'Renaming inputs and outputs for node {node}')
-
-        if inputs_map:
-            if not isinstance(inputs_map, dict):
-                raise ImproperTensorGraphError('inputs_map must be a dict')
-            self[node]._inputs_map = inputs_map
-
-        if outputs_map:
-            if not isinstance(outputs_map, dict):
-                raise ImproperTensorGraphError('outputs_map must be a dict')
-            self[node]._outputs_map = outputs_map
-
     def search(self, name: str, partial: bool = False) -> dict:
         """
 
@@ -435,7 +262,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.debug(f'Searching for node {name} in HTG {self.name}')
+        self.logger.info("Searching for node %s in HTG", self.name)
 
         # tuples must be exact matches.
         if isinstance(name, tuple):
@@ -449,7 +276,7 @@ class HierarchalTensorGraph(TensorGraph):
     def all_nodes(self) -> dict:
         """ Returns a dict of all child nodes within the parent """
 
-        self.logger.debug(f'Getting all nodes in HTG {self.name}')
+        self.logger.info("Getting all nodes in HTG %s",self.name)
 
         return dict([i for i in self])
 
@@ -468,16 +295,17 @@ class HierarchalTensorGraph(TensorGraph):
 
     @property
     def edges(self):
-
-        self.logger.debug(f'Getting all edges in HTG {self.name}')
-
+        """ returns edges in the graph """
+        self.logger.info("Getting all edges in HTG %s",self.name)
         return self.graph.edges
 
     @property
     def nodes(self) -> dict:
         """ Returns a dict of nodes within the parent HTG """
 
-        self.logger.debug(f'Getting all nodes in HTG {self.name}')
+        self.build()
+
+        self.logger.info("Getting all nodes in HTG %s",self.name)
 
         return self.graph.get_node_attributes('htg')
 
@@ -487,7 +315,8 @@ class HierarchalTensorGraph(TensorGraph):
 
         self.logger.debug(f'Getting all sources in HTG {self.name}')
 
-        def is_source(node): return self.graph.in_degree(node) == 0
+        def is_source(node): 
+            return self.graph.in_degree(node) == 0
 
         return list(filter(is_source, self.graph.nodes))
 
@@ -495,50 +324,32 @@ class HierarchalTensorGraph(TensorGraph):
     def sinks(self) -> list:
         """ Nodes with no outgoing edges """
 
-        self.logger.debug(f'Getting all sinks in HTG {self.name}')
+        self.logger.info("Getting all sinks in HTG %s",self.name)
 
-        def is_sink(node): return self.graph.out_degree(node) == 0
+        def is_sink(node): 
+            return self.graph.out_degree(node) == 0
 
         return list(filter(is_sink, self.graph.nodes))
 
     @property
-    def is_empty(self) -> bool:
-        """ Check if graph is empty """
-
-        self.logger.debug(f'Checking if HTG {self.name} is empty')
-
-        return self.graph.is_empty
-
-    @property
     def is_basenode(self) -> bool:
-        """ Check if graph is empty """
+        """ Check if graph is a basenode """
+        self.logger.info("Checking if HTG %s is a basenode",self.name)
+        return False
 
-        self.logger.debug(f'Checking if HTG {self.name} is a basenode')
-
-        return self.graph.is_empty
-
-    @staticmethod
-    def identity(name: str) -> 'HierarchalTensorGraph':
-        """
-        Create an the identity HTG.
-
-        name : string
-             The name of the HTG
-
-        """
-        return HierarchalTensorGraph(lambda x: x, name)
-
-    # TODO: Type hinting of HierarchicalTensorGraph is not working
-
-    def get_node(self, node: Union[str, Callable, TensorGraph]):
-        """Wrap the given node in a HTG and add to its graph if necessary.
+    def get_node(self, node: Union[str, TensorGraph]):
+        """ 
+        Adds a node to the graph if it doesn't exist and
+        does a variety of error checking before adding.
+        Also adds io nodes on the first use.
+        
+        ""
 
         Parameters
         ----------
-        node : str, callable, or HTG
-            If a callable is passed, it is wrapped into a HTG and added to
-            the graph if it doesn't yet exist. If a string is passed, the HTG
-            (which must already exist in the graph) is returned. If a HTG is passed,
+        node : str or HTG
+            If a string is passed, the HTG (which must already exist in the graph) 
+            is returned. If a HTG is passed,
             it is added to the graph if it doesn't yet exist.
 
         Returns
@@ -551,60 +362,49 @@ class HierarchalTensorGraph(TensorGraph):
         ImproperTensorGraphError
             - If a node with the same name already exists in the graph, but is
             not the same HTG object.
-            - If a the same referenced HTG passed already exists in the HTG.
-            - If node is not callable, a string, or a HierarchalTensorGraph
-
+            - If the same referenced HTG passed already exists in the HTG.
+            - a string or a HierarchalTensorGraph
+            
         """
 
         self.logger.debug(f'Getting node {node} in HTG {self.name}')
 
-        if not (isinstance(node, str) or isinstance(node, HierarchalTensorGraph) or callable(node)):
-            message = f'node must be either callable, a string, or a HierarchalTensorGraph'
+        if not (isinstance(node, str) or isinstance(node, HierarchalTensorGraph)):
+            message = 'node must be either a string, or a HierarchalTensorGraph'
             raise ImproperTensorGraphError(message)
 
         # fetch node by its name
         if isinstance(node, str):
             # add io node if first time called
             if (node in ['input', 'output']) and (node not in self):
-                io = HierarchalTensorGraph.identity(node)
-                io.parent = self
-                self.graph.add_node(io.name, htg=io)
+                io = Identity(node)
+                self.graph.add_node(io.name,htg=io,**io.attributes)
                 return io
 
             # otherwise if using a str() it must already be in the graph
             assert (node in self), f'Unknown name "{node}"'
             return self[node]
 
-        # if not a name (str) and not of type(HierarchalTensorGraph)
-        if not isinstance(node, HierarchalTensorGraph):
-
-            # check if basenode with this name exist and if it has the same node value.
-            # if it has the same node value then this refers to that basenode.
-            name = HierarchalTensorGraph.get_name(node)
-            if (name in self.graph) and (node is self[name].node):
-                return self[name]
-
-            # if it doesn't exist we need to create a basenode
-            node = HierarchalTensorGraph(node)
-
         # check if you passed a different HTG with the same name
-        if (node.name in self.graph) and (node is not self.nodes[node.name]):
+        nodes = self.graph.get_node_attributes('htg')
+        if (node.name in self.graph) and (node is not nodes[node.name]):
             message = f'node ({node.name} = {node}) has the same name'
-            message += f'(and path) as existing node {self.nodes[node.name]}'
+            message += f'(and path) as existing node {nodes[node.name]}'
             raise ImproperTensorGraphError(message)
 
         # if node is not in the graph add it
         if not node.name in self.graph:
 
-            # nodes before adding
+            # Nodes before adding
             before = self.all_nodes
+            
+            # Add node to graph
+            self.graph.add_node(node.name, 
+                                htg=node,
+                                **node.attributes
+                               )
 
-            node.parent = self
-
-            # add node to graph
-            self.graph.add_node(node.name, htg=node)
-
-            # check we didn't duplicate a node (same id) that exist deeper in the graph
+            # Check we didn't duplicate a node (same id) that exist deeper in the graph
             seen = set()
             dupes = []
             for path, n in self.all_nodes.items():
@@ -621,33 +421,27 @@ class HierarchalTensorGraph(TensorGraph):
 
         return node
 
-    def add_node(self, node: Union[Callable, TensorGraph]):
+    def add_node(self, node: TensorGraph):
         """
         Add a node to the HierarchalTensorGraph.
 
         Parameters
         ----------
-        node : Callable, or HierarchalTensorGraph
-            If a callable is passed, it is wrapped into an HTG and added to
-            the graph if it doesn't yet exist. Otherwise, if an HTG is passed,
-            it is added to the graph if it doesn't yet exist.
+        node :  HierarchalTensorGraph or Node(HTG)
 
         Raises
         -------
         ImproperTensorGraphError
-            If not callable or a HierarchalTensorGraph.
+             HierarchalTensorGraph.
 
         """
 
         self.logger.debug(f'Adding node {node} to HTG {self.name}')
 
-        if not (callable(node) or isinstance(node, HierarchalTensorGraph)):
-            message = f'A node must be either callable or a HierarchalTensorGraph'
+        if not isinstance(node, HierarchalTensorGraph):
+            message = 'A node must be a HierarchalTensorGraph'
             raise ImproperTensorGraphError(message)
 
-        # we'll use get_node to add it to the graph. get_node will check if exist
-        # and only add it if does not. It also checks node meets various criteria before
-        # adding it to the graph.
         self.get_node(node)
 
     def add_io(self, node: Union[str, Callable]):
@@ -661,6 +455,47 @@ class HierarchalTensorGraph(TensorGraph):
             self.get_node(node).inputs = node.input_spec
         if hasattr(node, 'output_spec'):
             self.get_node(node).outputs = node.output_spec
+    
+    def remove_edge(self,source, target):
+        """
+        Removes an edge from the HierarchalTensorGraph
+
+        """
+        if self.is_basenode:
+            raise ImproperTensorGraphError('Cannot remove an edge from class Node')
+
+        s,t = [i if isinstance(i,str) else i.name for i in (source,target)]
+        
+        if not (s,t) in self.edges:
+            message = f'Edge={(t,s)} does not exist in the graph'
+            raise ValueError(message)
+
+        edge = self.graph.edges[s,t] 
+        # Remove features from input
+        if s == 'input':
+
+            # If features were selected across edge
+            if edge['features']:
+                for i in edge['features']:
+                    self.inputs.pop(i)
+            else:
+                for i in self[t].inputs.keys():
+                    self.inputs.pop(i)
+
+        # Remove features from output
+        if t == 'output':
+
+            # If features were selected across edge
+            if edge['features']:
+                for i in edge['features']:
+                    self.outputs.pop(i)
+            else:
+                for i in self[s].outputs.keys():
+                    self.outputs.pop(i)
+
+        # Remove edge
+        self.graph.remove_edge(s,t)    
+        
 
     def remove_node(self, node):
         """
@@ -668,90 +503,45 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.debug(f'Removing node {node} from HTG {self.name}')
+        if self.is_basenode:
+            raise ImproperTensorGraphError('Cannot remove a node from class Node')
+        
+        # Get name
+        name = node if isinstance(node,str) else node.name
 
-        # remove node from string
-        if isinstance(node, str):
-            if node in self.nodes:
-                self.graph.remove_node(node)
-                return
-            else:
-                message = f'Node with name {node} not found'
-                raise ImproperTensorGraphError(message)
+        if name in ['input','output']:
+            raise ImproperTensorGraphError('Cannot remove I/O nodes')
 
-        # remove node from HierarchalTensorGraph
-        if isinstance(node, HierarchalTensorGraph):
-            if not node.name in self.nodes:
-                message = f'Node with name {node} not found'
-                raise ImproperTensorGraphError(message)
 
-            if not self[node.name] is node:
-                message = f'Node with the name {node.name} exist but does match the one passed'
-                raise ImproperTensorGraphError(message)
-
-            self.graph.remove_node(node.name)
-            return
-
-        # remove node from basenode function
-        # check if basenode with this name exist and if it has the same node value.
-        # if it has the same node value then this refers to that basenode.
-        if callable(node):
-            name = HierarchalTensorGraph.get_name(node)
-            if not name in self.graph:
-                message = f'Node with name {node} not found'
-                raise ImproperTensorGraphError(message)
-
-            if not node is self[name].node:
-                message = f'Node with the name {node.name} exist but does match the one passed'
-                raise ImproperTensorGraphError(message)
-
-            self.graph.remove_node(name)
-            return
-
-        # if not one of the above, throw an exception
-        message = f'Unrecognized node type. Must be of type str, callable, or HierarchalTensorGraph'
-        raise ImproperTensorGraphError(message)
-
-    def replace_node(self, node: Union[str, Callable], new_node: Union[str, Callable]):
-        pass
-
-    def make_recurrent(self, node: Union[str, Callable], recurrence: int = 1):
-        """
-        Replaces a node with a new node in the HierarchalTensorGraph
-
-        """
-
-        if isinstance(node, str):
-            node = self.get_node(node)
-        elif (not node in self):
+        # Check if it's in the graph
+        if name not in self.nodes:
             message = f'Node with name {node} not found'
             raise ImproperTensorGraphError(message)
 
-        if (recurrence <= 0):
-            message = f'Recurrence must be a greater than 0'
-            raise ImproperTensorGraphError(message)
+        # Check it's the right node not some other with the same name
+        if isinstance(node, HierarchalTensorGraph):
+            if not self[node.name] is node:
+                message = f'Node with the name {node.name} exist but does match the one passed'
+                raise ImproperTensorGraphError(message)
+        
+        # Get all edges and remove them first
+        edges = [i for i in self.edges if name in i]
+        for i in edges:
+            self.remove_edge(*i)
 
-        node_names = [node.name + '_' + str(index)
-                      for index in range(recurrence)]
+        # Remove node 
+        self.graph.remove_node(name)
+        return
 
-        # create duplicate nodes
-        nodes = []
-        for recurr_node in node_names:
-            htg_copy = copy.deepcopy(node)
-            htg_copy.name = recurr_node
-            nodes.append(htg_copy)
 
-        node.node = node
-        node.add_edge('input', nodes[0])
-        node.add_edges_from([(nodes[i], nodes[i+1])
-                            for i in range(recurrence - 1)])
-        node.add_edge(nodes[-1], 'output')
-
-        node.is_recurrent = True
-
-        return node
-
-    def add_edge(self, source: Union[str, Callable], target: Union[str, Callable], rollout_axis: Union[int, None] = None, **attr):
+    def add_edge(
+                 self, source: Union[str, Callable], 
+                 target: Union[str, Callable], 
+                 rollout_axis: Union[int, None] = None,
+                 rename: dict[str,str] = {},
+                 features: list[str] | str = [],
+                 **attr
+                 ):
         """
 
         Add an edge between the source and target nodes.
@@ -764,6 +554,9 @@ class HierarchalTensorGraph(TensorGraph):
 
         target : str, Callable, HierarchalTensorGraph
              The sink from which to end the edge
+
+        rename : dict[str,str]
+            Dictionary to rename incoming keys with items = name : new_name
 
         Raises
         ------
@@ -779,31 +572,138 @@ class HierarchalTensorGraph(TensorGraph):
             f'Adding edge from {source} to {target} in HTG {self.name}')
 
         if isinstance(source, str):
-            if source == 'output':
-                message = f'Output cannot be used as a source'
+            if source == "output":
+                message = 'Output cannot be used as a source'
                 raise ImproperTensorGraphError(message)
 
         if isinstance(target, str) & (self.node is self):
-            if target == 'input':
-                message = f'Input cannot be used as a target'
+            if target == "input":
+                message = 'Input cannot be used as a target'
                 raise ImproperTensorGraphError(message)
 
         if self.node is not self:
-            message = f'It is not permitted to add edges to a basenode,'
+            message = 'It is not permitted to add edges to a basenode,'
             message += 'i.e. an HTG initialized with a callable node'
             raise ImproperTensorGraphError(message)
+
+        # Default edge attributes
+        default_attributes = {
+            'rollout_axis': rollout_axis,
+            'rename' : rename,
+            'features' : features if isinstance(features,list) else [features],
+        }
 
         source = self.get_node(source)
         target = self.get_node(target)
 
+        # Why are we checking it's not None? 
         if (source is not None) and (target is not None):
-            self.graph.add_edge(source.name, target.name, **attr)
 
-            self.graph.set_edge_attributes(
-                {(source.name, target.name): {'rollout_axis': rollout_axis}})
+            # Add or overwrite to default arguments 
+            for k,v in attr.items(): default_attributes[k] = v
 
-            if (source == target):
-                source.is_recurrent = True
+            # If target is a recurrent node and not set
+            # add rollout_axis = 1
+            if self.graph.get_node_attributes('recurrent')[target.name]:
+                if default_attributes['rollout_axis'] is None:
+                    default_attributes['rollout_axis'] = 1
+
+            # Add edge
+            self.graph.add_edge(source.name, target.name, **default_attributes)
+
+            # Get all incoming inputs
+            incoming = {}
+            for e in list(self.graph.in_edges(target.name)):
+                s = self.get_node(e[0])
+                t = self.get_node(e[1])
+                X = s.outputs
+
+                if s.name == 'input':
+                    X = t.inputs.copy()
+                    if t.attributes['recurrent']:
+                        for i in t.outputs:
+                            if i in t.inputs:
+                                X.pop(i)
+
+                Y = self._edge_mapping(X,s.name,target.name)
+                incoming[s.name] = Y
+
+            # Keep track of incoming keys for non I/O nodes
+            if(source.name != 'input' and target.name != 'output'):
+                X = self._edge_mapping(source.outputs,source.name,target.name)
+                for key in X:
+                    for k,v in incoming.items():
+                        if(key in v and k != source.name):
+                            message = f'Cannot add_edge{(source.name,target.name)} becasue the'
+                            message += f' key "{key}" is already being passed into'
+                            message += f' node "{target.name}" through edge "{k}". You need to'
+                            message += ' rename a feature or select which features'
+                            message += ' to be passed in along these edges.'
+                            raise ImproperTensorGraphError(message)
+
+                # Check there's matching input/output keys
+                subset = {k : v for k,v in X.items() if k in self[target.name].inputs}
+                if not subset:
+                    message = f'Cannot add_edge{(source.name,target.name)} becasue'
+                    message += ' their are no matching output keys of'
+                    message += f' node {source.name} in {target.name}.'
+                    raise ImproperTensorGraphError(message)
+
+                # Check tensor specs are consistent
+                Y = self[target.name].inputs
+                for k,v in subset.items():
+                    consistent = True
+
+                    # Check length of dims
+                    consistent = len(v.shape) == len(Y[k].shape)
+                    if not consistent:
+                        message = 'Inconsistent tensor specs.'
+                        message += f' From {source.name} found {k} = {v} '
+                        message += f' and from {target.name} found {k} = {Y[k]}.'
+                        raise ImproperTensorGraphError(message)
+
+                    # Check dtype
+                    consistent = v.dtype == Y[k].dtype
+                    if not consistent:
+                        message = 'Inconsistent tensor specs.'
+                        message += f' From {source.name} found {k} = {v} '
+                        message += f' and from {target.name} found {k} = {Y[k]}.'
+                        raise ImproperTensorGraphError(message)
+
+                    # Check dims
+                    for d in zip(v.shape,Y[k].shape):
+                        if d[1] is None:
+                            continue
+                        if d[0] == d[1]:
+                            continue
+
+                        message = 'Inconsistent tensor specs.'
+                        message += f' From {source.name} found {k} = {v} '
+                        message += f' and from {target.name} found {k} = {Y[k]}.'
+                        raise ImproperTensorGraphError(message)
+
+
+            # Build input spec
+            if source.name == 'input':
+                X = self._edge_mapping(target.inputs,source.name,target.name)
+
+                # Remove recurrent inputs
+                if self.graph.get_node_attributes('recurrent')[target.name]:
+                    for k in target.outputs:
+                        if k in X:
+                            X.pop(k)
+
+                for k,v in X.items():
+                    self.inputs[k] = v
+
+            # Build output spec
+            if target.name == 'output': 
+                # Check for duplicate keys in outpupt and use tuples if found
+                X = self._edge_mapping(source.outputs,source.name,target.name)
+
+                # Add keys to outputs
+                for k,v in X.items():     
+                    self.outputs[k] = v
 
     def add_edges_from(self, ebunch: list):
         """
@@ -818,7 +718,10 @@ class HierarchalTensorGraph(TensorGraph):
         self.logger.debug(f'Adding edges from {ebunch} in HTG {self.name}')
 
         for i in ebunch:
-            self.add_edge(*i)
+            if len(i) == 2:
+                self.add_edge(*i)
+            else:
+                self.add_edge(*i[:2],**i[2])
 
     def __repr__(self):
         """ Represent the HierarchalTensorGraph """
@@ -912,11 +815,42 @@ class HierarchalTensorGraph(TensorGraph):
         raise ImproperTensorGraphError(
             'must pass either a str, tuple, or HierarchalTensorGraph')
 
-    def feature_map(self, X: dict, io: str) -> dict:
+
+    # find keys and replace them
+    def find_and_replace(self,namelist: dict, X: dict) -> dict:
+        """Tries to find keys specified in namelist and replace them with the values in namelist"""
+        _X = X.copy()
+        for k, v in namelist.items():
+
+            # ignore identical replacements
+            if k == v:
+                continue
+
+            # if the name to be replaced already exists you cannot make the replacement
+            if v in _X.keys():
+                message = f'Cannot rename {k} as {v} because the name {v} already exists in {X}'
+                raise ImproperTensorGraphError(message)
+
+            # exact match
+            if k in _X.keys():
+                _X[v] = _X.pop(k)
+                continue
+
+            # look for partial matches in long names
+            partials = [i for i in _X.keys() if k in (i[-1],)]
+
+            if not partials:
+                message = f'Could not find key = {k} to rename'
+                raise ImproperTensorGraphError(message)
+
+            _X[v] = _X.pop(partials[0])
+
+        return _X
+
+    def find_and_select(self, X: dict, io: str | None = None) -> dict:
         """
-        Applies a map on the incoming and outgoing dictionaries.
-        according to the specified HTG paramerters inputs/outputs
-        and inputs/outputs_map.
+        Flattens input/output and finds and selects the inputs/outputs
+        specified in self.inputs/outputs.
 
         Parameters
         ----------
@@ -948,43 +882,8 @@ class HierarchalTensorGraph(TensorGraph):
                 else:
                     yield [key + k, v]
 
-        # find keys and replace them
-        def find_and_replace(namelist: dict, X: dict) -> dict:
-            """Tries to find keys specified in namelist and replace them with the values in namelist"""
-            for k, v in namelist.items():
-
-                # ignore identical replacements
-                if k == v:
-                    continue
-
-                # if the name to be replaced already exists you cannot make the replacement
-                if v in X.keys():
-                    message = f'Cannot rename {k} as {v} because the name {v} already exists in {X}'
-                    raise ImproperTensorGraphError(message)
-
-                # exact match
-                if k in X.keys():
-                    X[v] = X.pop(k)
-                    continue
-
-                # look for partial matches in long names
-                partials = [i for i in X.keys() if k in (i[-1],)]
-
-                if not partials:
-                    message = f'Could not find key = {k} to rename'
-                    raise ImproperTensorGraphError(message)
-
-                if len(partials) > 1:
-                    message = f'Found multiple keys = {partials} for {k}. '
-                    message += f'You need to use one of these tuples to specifiy it uniquely and rename it.'
-                    raise ImproperTensorGraphError(message)
-
-                X[v] = X.pop(partials[0])
-            return X
-
-        def find_and_select(namelist: list, X: dict) -> dict:
+        def _find_and_select(namelist: list, X: dict) -> dict:
             """tries to find and select the subset of X with keys = namelist """
-
             x = {}
             for name in namelist:
                 # exact matches
@@ -997,7 +896,9 @@ class HierarchalTensorGraph(TensorGraph):
                     continue
 
                 # if not exact, look for a match in the last name in tuple keys
-                partials = [i for i in X.keys() if name in (i[-1], 1)]
+                nm = name
+                if isinstance(name, str): nm = (name,)
+                partials = [i for i in X.keys() if nm == i[-len(nm):]]
 
                 if not partials:
                     message = f'In HierarchalTensorGraph[{self.name}] could not find key = {name}. '
@@ -1021,40 +922,74 @@ class HierarchalTensorGraph(TensorGraph):
 
         # Renaming and selecting inputs
         if io == 'input':
-            if not (self._inputs_map or self.inputs):
+            if not self.inputs:
                 return X
+
             # flatten/convert to tuples
             x = dict([i for i in flatten_dict(X, ())])
-            # rename
-            if self._inputs_map:
-                x = find_and_replace(self._inputs_map, x)
-            # select
+
             if self.inputs:
-                x = find_and_select(self.inputs, x)
+                x = _find_and_select(self.inputs, x)
 
         # Renaming and selecting outputs
         if io == 'output':
             self.output = None  # Clear cached output
-            if not (self._outputs_map or self.outputs):
+            if not self.outputs:
                 self.output = X.copy()  # Set node output
                 return X
 
             # flatten/convert to tuples
             x = dict([i for i in flatten_dict(X, ())])
+
             # select
             if self.outputs:
-                x = find_and_select(self.outputs, x)
+                x = _find_and_select(self.outputs, x)
                 self.output = x.copy()
 
-            # If no selection occured set output before renaming.
-            if not self.outputs:
-                self.output = X.copy()
-
-            # rename
-            if self._outputs_map:
-                x = find_and_replace(self._outputs_map, x)
-
         return x
+
+    def _edge_mapping(self,
+                      X : dict, 
+                      source : str,
+                      target : str
+                     ):
+        """
+          Applies a mapping to the output of node across
+          a particular outgoing edge.
+
+          X : dict
+            Output dict coming from the node
+
+          source : str
+              Name of the source node
+              
+          target : str
+              Name of the source node
+
+          build : bool
+            Whether executing during graph building vs. execution
+              
+        """
+
+        edge = self.graph.edges[source,target]
+        _X = X.copy()
+
+        # Select from incoming features
+        if edge['features']:
+            for i in edge['features']:
+                if not i in _X:
+                    message = f'Cannot select feature = {i} on edge {(source,target)}. '
+                    message += f'Available keys are: {list(_X.keys())}'
+                    raise ImproperTensorGraphError(message)
+
+            _X = { k : v for k,v in _X.items() if k in edge['features']}
+
+        # Rename features after selection if needed
+        if edge['rename']:
+            _X = self.find_and_replace(edge['rename'], _X)
+
+        return _X
+
 
     def __call__(self, X: dict) -> dict:
         """Propagate the given input through the graph.
@@ -1078,6 +1013,8 @@ class HierarchalTensorGraph(TensorGraph):
             - If input and output nodes do not exists
 
         """
+        # Check lazy build for subclassing
+        self.build()
 
         self.logger.debug(f'Calling HTG {self.name}')
 
@@ -1086,23 +1023,23 @@ class HierarchalTensorGraph(TensorGraph):
 
             # check that i/o exist
             if not all([b in self.graph for b in ['input', 'output']]):
-                message = f'A HierarchalTensorGraph name must contain i/o nodes'
+                message = f'HierarchalTensorGraph {self.name} must contain i/o nodes'
                 raise ImproperTensorGraphError(message)
 
             # check that only i/o is a source/sink
             sources = list(filter(lambda x: x != 'input', self.sources))
             if sources:
-                message = f'Only input can be a source node in the graph. '
+                message = 'Only input can be a source node in the graph. '
                 message += f'Found sources {[self[i] for i in sources]}'
                 raise ImproperTensorGraphError(message)
 
             sinks = list(filter(lambda x: x != 'output', self.sinks))
             if sinks:
-                message = f'Only output can be a sink in the graph. '
+                message = 'Only output can be a sink in the graph. '
                 message += f'Found sinks {[self[i] for i in sinks]}'
                 raise ImproperTensorGraphError(message)
 
-        _X = self.feature_map(X, 'input')
+        _X = self.find_and_select(X, 'input')
 
         # Removes 'input' or 'output' nesting of keys
         def flatten(d):
@@ -1111,7 +1048,7 @@ class HierarchalTensorGraph(TensorGraph):
                     if k in d and isinstance(d[k], dict)]
 
             # If found, flatten
-            if (keys):
+            if keys:
                 return [d.update(d.pop(k, {})) for k in ['input', 'output']] and d
 
             # otherwise, return original
@@ -1119,12 +1056,11 @@ class HierarchalTensorGraph(TensorGraph):
 
         # Basenode call
         if self.is_basenode:
-            return self.feature_map(self.node(flatten(_X)), 'output')
+            return self.find_and_select(self.node(flatten(_X)), 'output')
 
         # Recursive case: traverse graph in reverse, from output to input
         def nodes(name):
-            return dict(
-                self.graph.in_edges(name))  # All input nodes
+            return dict( self.graph.in_edges(name))  # All input nodes
 
         def search(name, depth):
             output_dict = {}
@@ -1136,33 +1072,61 @@ class HierarchalTensorGraph(TensorGraph):
             # the cache logic would have to live in the respective function for caching.
             for input_node in nodes(name):
                 if self.graph.edges[input_node, name]['rollout_axis'] is not None:
-                    rollout_dict[input_node] = self[input_node].roll_out
+                    rollout_dict[input_node] = self[input_node].attributes['roll_out']
                 else:
                     tmp_depth = depth + (input_node == name)
                     input_name, output_value = traverse(
                         input_node, tmp_depth)
-                    output_dict[input_name] = output_value
+                    output_dict[input_name] = self._edge_mapping(output_value,input_node,name)
 
-            if (len(rollout_dict)):
+            if len(rollout_dict):
 
                 outputs = []
                 names, rollouts = zip(*rollout_dict.items())
                 for values in zip(*rollouts):
                     rollout_values = dict(zip(names, values))
+                    # Apply edge mapping 
+                    rollout_values = {k : self._edge_mapping(v,k,name) 
+                                      for k,v in rollout_values.items()}
+
                     rollout_values = {k: v for k, v in rollout_values.items()}
 
                     outputs.append(output_dict | rollout_values)
 
+                # Collect recurrent final output
                 var = [flatten(self[name](o or _X)) for o in outputs]
 
                 var_map = {k: [{x: y for x, y in o[k].items() if hasattr(
-                    y, '__len__') or y is not None} if isinstance(o[k], dict) else o[k] for o in var if o[k] is not None] for k in var[0]}
-                # var_map = {k: [x for x in v if len(x) > 0] for k, v in var_map.items()}
+                    y, '__len__') or y is not None} if isinstance(o[k], dict) 
+                    else o[k] for o in var if o[k] is not None] for k in var[0]}
+                #var_map = {k: [x for x in v if len(x) > 0] for k, v in var_map.items()}
+                var_map = {k: [x for x in v if not isinstance(x,dict) or len(x) > 0] 
+                           for k, v in var_map.items()}
 
-                var_map = {k: [x for x in v if not isinstance(
-                    x, dict) or len(x) > 0] for k, v in var_map.items()}
+                # Restructure var_map as {'key' : [tensor,tensor,..]}
+                _var_map = {}
+                return_seq = self.graph.get_node_attributes('return_seq')[name]
+                for k,v in var_map.items():
+                    collect = {}
+                    for i in v:
+                        if isinstance(i,dict):
+                            for m,n in i.items():
+                                if m not in collect:
+                                    collect[m] = []
+                                collect[m].append(n)
+                        else:
+                            collect = tf.stack(v) if return_seq else v[-1] 
 
-                return var_map
+                    if isinstance(collect,dict):
+                        for m,n in collect.items():
+                            if return_seq:
+                                collect[m] = tf.stack(n)
+                            else:
+                                collect[m] = v[-1]
+
+                    _var_map[k] = collect
+
+                return _var_map
             else:
                 return self[name](output_dict or _X)
 
@@ -1170,15 +1134,80 @@ class HierarchalTensorGraph(TensorGraph):
 
         # can loop through and define
         for node in self.nodes:
-            if not hasattr(self[node], 'roll_out'):
+            # if not hasattr(self[node], 'roll_out'):
+            if not self[node].attributes['roll_out']:
                 for input_node in nodes(node):
                     if self.graph.edges[input_node, node]['rollout_axis'] is not None:
                         rollout_axis = self.graph.edges[input_node,
                                                         node]['rollout_axis']
-                        self[input_node].roll_out = Recurrence(
+                        self[input_node].attributes['roll_out'] = Recurrence(
                             self, input_node, traverse, _X, rollout_axis)
 
-        return self.feature_map(flatten(dict(map(traverse, self.sinks))), 'output')
+        return self.find_and_select(flatten(dict(map(traverse, self.sinks))), 'output')
+
+    # Should not have tensorflow in here but ...
+    def test(self,seed=0):
+        """ Generate a random input tensor and evaluate htg"""
+
+        rng = np.random.default_rng(seed)
+        X = {}
+        for k,v in self.inputs.items():
+            X[k] = rng.random(v.shape,dtype=v.dtype)
+
+        return X,self(X)
+
+
+    @property
+    def summary(self):
+        """ 
+        Displays a summary of the graph and exchange
+        of tensors.
+
+        """
+        # Check lazy build for subclassing
+        self.build()
+
+        def node_table(node):
+            table = ColorTable([node.name, "Key", "Tensor Spec"],theme=Themes.GLARE_REDUCTION)
+
+            if node.inputs:
+                last = list(node.inputs.keys())[-1]
+                for k,v in node.inputs.items():
+                    table.add_row(['input',k,v],divider= k == last)
+
+            if node.outputs:
+                last = list(node.outputs.keys())[-1]
+                for k,v in node.outputs.items():
+                    table.add_row(['output',k,v],divider= k == last)
+
+            if node is not self:
+                edge_inputs = {}
+                for e in list(self.graph.in_edges(node.name)):
+                    s,t = e
+                    X = self[s].outputs
+                    if s == 'input':
+                        X = self[t].inputs.copy()
+                        if self[t].attributes['recurrent']:
+                            for i in self[t].outputs:
+                                if i in X:
+                                    X.pop(i)
+
+                    X = self._edge_mapping(X,s,t)
+                    edge_inputs[(s,t)] = X
+
+                for key,val in edge_inputs.items():
+                    for k,v in val.items():
+                        table.add_row([key,k,v],divider=False)
+            print(table)
+
+        # Parent
+        node_table(self)
+
+        # Children summary
+        for k,v in self.nodes.items():
+            if k not in ['input','output']:
+                node_table(v)
+
 
 
     def expand_graph_node(self, nodename: str, g=None):
@@ -1252,12 +1281,12 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.debug(f'Getting node {name} in HTG {self.name}')
-        
+        self.logger.info(f'Getting node {name} in HTG {self.name}')
+
         node = self if node is None else node
 
         # if node is in current graph
-        if (not '.' in name):
+        if not '.' in name:
             return node[name]
 
         # if node is in a subgraph, recurse
@@ -1282,10 +1311,10 @@ class HierarchalTensorGraph(TensorGraph):
         node = self if node is None else node
 
         # if parent is in current graph
-        if (source.count('.') == 1):
+        if source.count('.') == 1:
             ind = source.split('.', 1)[0]
             return node[ind]
-        elif (not '.' in source):
+        elif not '.' in source:
             return self
 
         # if parents is in a subgraph, recurse
@@ -1294,153 +1323,152 @@ class HierarchalTensorGraph(TensorGraph):
 
         return self._get_parent(source, node[ind])
 
-    def edge_label(self, source, target):
-        """ Returns the edge label between source and target nodes
+    # def edge_label(self, source, target):
+    #     """ Returns the edge label between source and target nodes
 
-        Parameters:
+    #     Parameters:
 
-        source : str
-                The source node to get the output from
+    #     source : str
+    #             The source node to get the output from
 
-        target : str
-                The target node to get the input from
+    #     target : str
+    #             The target node to get the input from
 
-        Returns: A dictionary with the edge label
+    #     Returns: A dictionary with the edge label
 
-        """
+    #     """
 
-        self.logger.debug(f'Getting edge label from {source} to {target} in HTG {self.name}')
+    #     self.logger.info(f'Getting edge label from {source} to {target} in HTG {self.name}')
+    #     # get source and target nodes
+    #     source_node = self._get_node(source)
+    #     target_node = self._get_node(target)
 
-        # get source and target nodes
-        source_node = self._get_node(source)
-        target_node = self._get_node(target)
+    #     # get source outputs
+    #     tmp_output = source_node.outputs if not source == 'input' else self.inputs
+    #     tmp_output = self.get_outputs(self._get_parent(source)) if (
+    #         '.' in source and not '.' in target) else tmp_output
 
-        # get source outputs
-        tmp_output = source_node.outputs if not source == 'input' else self.inputs
-        tmp_output = self.get_outputs(self._get_parent(source)) if (
-            '.' in source and not '.' in target) else tmp_output
+    #     # convert source output format to list of labels
+    #     if isinstance(tmp_output, dict):
+    #         source_outputs = list(tmp_output.keys())
+    #     else:
+    #         source_outputs = tmp_output
 
-        # convert source output format to list of labels
-        if isinstance(tmp_output, dict):
-            source_outputs = list(tmp_output.keys())
-        else:
-            source_outputs = tmp_output
+    #     # get source output correspecting to the mapped output
+    #     if len(source_node._outputs_map) > 0 or len(target_node._inputs_map) > 0:
+    #         tmp_outputs = []
+    #         for k in source_outputs:
+    #             if k in source_node._outputs_map:
+    #                 tmp_outputs.append(source_node._outputs_map[k])
+    #             elif k in target_node._inputs_map:
+    #                 tmp_outputs.append(target_node._inputs_map[k])
+    #             else:
+    #                 tmp_outputs.append(k)
 
-        # get source output correspecting to the mapped output
-        if len(source_node._outputs_map) > 0 or len(target_node._inputs_map) > 0:
-            tmp_outputs = []
-            for k in source_outputs:
-                if k in source_node._outputs_map:
-                    tmp_outputs.append(source_node._outputs_map[k])
-                elif k in target_node._inputs_map:
-                    tmp_outputs.append(target_node._inputs_map[k])
-                else:
-                    tmp_outputs.append(k)
+    #         source_outputs = tmp_outputs
 
-            source_outputs = tmp_outputs
+    #     # get target inputs
+    #     tmp_input = target_node.inputs if not target == 'output' else self.outputs
 
-        # get target inputs
-        tmp_input = target_node.inputs if not target == 'output' else self.outputs
+    #     # convert target input format to list of labels
+    #     if isinstance(tmp_input, dict):
+    #         target_inputs = list(tmp_input.keys())
+    #     else:
+    #         target_inputs = tmp_input
 
-        # convert target input format to list of labels
-        if isinstance(tmp_input, dict):
-            target_inputs = list(tmp_input.keys())
-        else:
-            target_inputs = tmp_input
+    #     # get target input correspecting to the mapped input
+    #     if len(source_node._outputs_map) > 0 and len(target_node._inputs_map) > 0:
+    #         tmp_inputs = []
+    #         for k in target_inputs:
+    #             if k in target_node._inputs_map:
+    #                 tmp_inputs.append(target_node._inputs_map[k])
+    #             elif k in source_node._outputs_map:
+    #                 tmp_inputs.append(source_node._outputs_map[k])
+    #             else:
+    #                 tmp_inputs.append(k)
 
-        # get target input correspecting to the mapped input
-        if len(source_node._outputs_map) > 0 and len(target_node._inputs_map) > 0:
-            tmp_inputs = []
-            for k in target_inputs:
-                if k in target_node._inputs_map:
-                    tmp_inputs.append(target_node._inputs_map[k])
-                elif k in source_node._outputs_map:
-                    tmp_inputs.append(source_node._outputs_map[k])
-                else:
-                    tmp_inputs.append(k)
+    #         target_inputs = tmp_inputs
 
-            target_inputs = tmp_inputs
+    #     # return dictionary of edge labels
+    #     return {(source, target): (source_outputs, target_inputs)}
 
-        # return dictionary of edge labels
-        return {(source, target): (source_outputs, target_inputs)}
+    # def get_all_edge_labels(self, graph):
+    #     """ Returns all edge labels in the graph
 
-    def get_all_edge_labels(self, graph):
-        """ Returns all edge labels in the graph
+    #     Parameters:
 
-        Parameters:
+    #     graph : BaseGraph
+    #             The graph to get the edge labels from
 
-        graph : BaseGraph
-                The graph to get the edge labels from
+    #     Returns: A dictionary with the edge labels
 
-        Returns: A dictionary with the edge labels
+    #     """
 
-        """
+    #     self.logger.info(f'Getting all edge labels in HTG {self.name}')
 
-        self.logger.debug(f'Getting all edge labels in HTG {self.name}')
+    #     edge_labels = {}
+    #     avial = {}
+    #     req = {}
 
-        edge_labels = {}
-        avial = {}
-        req = {}
+    #     # for all edges in the graph
+    #     for edge in graph.edges:
+    #         source = edge[0]
+    #         target = edge[1]
 
-        # for all edges in the graph
-        for edge in graph.edges:
-            source = edge[0]
-            target = edge[1]
+    #         # get edge labels
+    #         edge_labels.update(self.edge_label(source, target))
 
-            # get edge labels
-            edge_labels.update(self.edge_label(source, target))
+    #         # get available inputs
+    #         if target in avial:
+    #             if source == 'input':
+    #                 avial[target] += edge_labels[(source, target)][1]
+    #             else:
+    #                 avial[target] += edge_labels[(source, target)][0]
+    #         else:
+    #             if source == 'input':
+    #                 avial[target] = edge_labels[(source, target)][1]
+    #             else:
+    #                 avial[target] = edge_labels[(source, target)][0]
+    #             if source == 'input':
+    #                 avial[target] += edge_labels[(source, target)][1]
+    #             else:
+    #                 avial[target] += edge_labels[(source, target)][0]
 
-            # get available inputs
-            if target in avial:
-                if source == 'input':
-                    avial[target] += edge_labels[(source, target)][1]
-                else:
-                    avial[target] += edge_labels[(source, target)][0]
-            else:
-                if source == 'input':
-                    avial[target] = edge_labels[(source, target)][1]
-                else:
-                    avial[target] = edge_labels[(source, target)][0]
-                if source == 'input':
-                    avial[target] += edge_labels[(source, target)][1]
-                else:
-                    avial[target] += edge_labels[(source, target)][0]
+    #         # get required inputs
+    #         if target in req and not source == 'input':
+    #             req[target] += edge_labels[(source, target)][1]
+    #         else:
+    #             req[target] = edge_labels[(source, target)][1]
 
-            # get required inputs
-            if target in req and not source == 'input':
-                req[target] += edge_labels[(source, target)][1]
-            else:
-                req[target] = edge_labels[(source, target)][1]
+    #     validity = {}
+    #     # check if all required inputs are available
+    #     for tar in avial.keys():
+    #         avial[tar] = list(set(avial[tar]))
+    #         req[tar] = list(set(req[tar]))
 
-        validity = {}
-        # check if all required inputs are available
-        for tar in avial.keys():
-            avial[tar] = list(set(avial[tar]))
-            req[tar] = list(set(req[tar]))
+    #         # determine validity color based on matching between required and available inputs
+    #         if all(x in avial[tar] for x in req[tar]):
+    #             validity[tar] = True
+    #         else:
+    #             validity[tar] = False
 
-            # determine validity color based on matching between required and available inputs
-            if all(x in avial[tar] for x in req[tar]):
-                validity[tar] = True
-            else:
-                validity[tar] = False
+    #     # colors = mcolors.CSS4_COLORS
+    #     colors = mcolors.XKCD_COLORS
+    #     # colors = mcolors.TABLEAU_COLORS
 
-        # colors = mcolors.CSS4_COLORS
-        colors = mcolors.XKCD_COLORS
-        # colors = mcolors.TABLEAU_COLORS
+    #     edge_attr = {}
+    #     for edge in graph.edges:
+    #         source = edge[0]
+    #         target = edge[1]
 
-        edge_attr = {}
-        for edge in graph.edges:
-            source = edge[0]
-            target = edge[1]
+    #         random = rand.randint(1, len(list(colors.keys())))
 
-            random = rand.randint(1, len(list(colors.keys())))
+    #         edge_attr[(source, target)] = {
+    #             'validity': validity[target],
+    #             'label': edge_labels[(source, target)],
+    #             'source-color': list(colors.keys())[random]}
 
-            edge_attr[(source, target)] = {
-                'validity': validity[target],
-                'label': edge_labels[(source, target)],
-                'source-color': list(colors.keys())[random]}
-
-        return edge_attr
+    #     return edge_attr
 
     def print_edge_labels(self, expand_nodes=None):
         """ Prints all edge labels in the graph
@@ -1479,24 +1507,24 @@ class HierarchalTensorGraph(TensorGraph):
                         if not node.is_basenode:
                             g = self.expand_graph_node(node.name, g)
 
-        # get all edge labels and attributes
-        edge_labels = self.get_all_edge_labels(g)
-        label_output = []
-        for k, v in edge_labels.items():
-            outputs = list(set(v['label'][0]))
-            inputs = list(set(v['label'][1]))
-            validity = v['validity']
-            label_output.append(
-                {'source': k[0], 'target': k[1], 'source output': outputs, 'target inputs': inputs, 'valid': validity})
+        # # get all edge labels and attributes
+        # edge_labels = self.get_all_edge_labels(g)
+        # label_output = []
+        # for k, v in edge_labels.items():
+        #     outputs = list(set(v['label'][0]))
+        #     inputs = list(set(v['label'][1]))
+        #     validity = v['validity']
+        #     label_output.append(
+        #         {'source': k[0], 'target': k[1], 'source output': outputs, 'target inputs': inputs, 'valid': validity})
 
         # convert to dataframe and apply color
-        label_output = pd.DataFrame(label_output)
+        #label_output = pd.DataFrame(label_output)
 
-        label_output = label_output.style.apply(lambda x: [
-            'background-color: green' if x['valid'] else 'background-color: red' for v in x], axis=1)
+        #label_output = label_output.style.apply(lambda x: [
+        #    'background-color: green' if x['valid'] else 'background-color: red' for v in x], axis=1)
 
         # return dataframe
-        return label_output
+        #return label_output
 
     def draw(self, expand_nodes=None, layout='kamada_kawai_layout'):
         """ Draws the graph
@@ -1511,7 +1539,9 @@ class HierarchalTensorGraph(TensorGraph):
 
         """
 
-        self.logger.debug(f'Drawing HTG {self.name}')
+        self.logger.info("Drawing HTG %s", self.name)
+
+        self.build()
 
         # check if nodes are empty
         def is_not_all_empty(graph):
@@ -1547,219 +1577,25 @@ class HierarchalTensorGraph(TensorGraph):
         else:
             pos = None
 
-        # get all edge labels and attributes
-        edge_attributes = self.get_all_edge_labels(g)
-        edge_styles = ['solid' if v['validity'] else 'dashed' for k, v in edge_attributes.items()]
-        edge_colors = [v['source-color'] for k, v in edge_attributes.items()]
+        # # get all edge labels and attributes
+        # edge_attributes = self.get_all_edge_labels(g)
+        # edge_styles = ['solid' if v['validity'] else 'dashed' for k, v in edge_attributes.items()]
+        # edge_colors = [v['source-color'] for k, v in edge_attributes.items()]
 
         # draw
-        nx.draw(g.graph, pos, edge_color=edge_colors, style=edge_styles, with_labels=True, alpha=1, font_size=10, node_size=1000,
+        # nx.draw(g, pos, edge_color=edge_colors, style=edge_styles, with_labels=True, alpha=1, font_size=10, node_size=1000,
+        #         node_color='white', font_color='darkblue', font_family='Impact')
+        nx.draw(g.graph, pos, with_labels=False, alpha=1, font_size=10, node_size=1000,
                 node_color='white', font_color='darkblue', font_family='Impact')
 
-    def _generate_color(self, number):
-        """ Generates random color for each node group. """
-
-        random.seed(number)
-        r = random.randint(0, 255)
-        g = random.randint(0, 255)
-        b = random.randint(0, 255)
-        return '#{:02x}{:02x}{:02x}'.format(r, g, b)
-
-    def _build_graph(self, nodes: list[dict], edges: list[dict], net: Network):
-        """ Builds NetworkX Graph for the sake of visualization. 
-
-        Parameter
-        ---------
-        nodes, edges: list[dict]
-            List of dictionaries expected 
-        """
-
-        for node in nodes:
-            net.add_node(node["id"], label=node["label"], title="Expand", level=node["level"],
-                         color=self._generate_color(int(node["level"])),
-                         hidden=True if node["custom_property"] == "hidden" else False,
-                         on=True)
-
-        for edge in edges:
-            net.add_edge(edge["from"], edge["to"])
-
-        return net
-
-    def _write_html(self, net: Network, html_file: str = "interactive_graph.html"):
-        """ Writes the NetworkX graph to an html file to enable view and interactivity. 
-
-        Parameter
-        ---------
-        net: Network 
-            networkX graphical representation of the HTG object user would like dislayed.
-        html_file: str
-            filepath where the html will be saved.
-
-        Returns
-        -------
-            filepath will be written to. 
-        """
-        if (not isinstance(net.options, dict)):
-            net.set_options("""
-            {
-                "interaction": {"hover": true},
-                "nodes": {"shape": "dot", "size": 15}
-            }
-            """)
-
-        with open(html_file, "r", encoding="utf-8") as f:
-            html_content = f.read()
-
-        js_script = """
-        <script>
-
-            function recurGraph(root, mode, nodes, edges, visited = new Set()) {
-                console.log(visited);
-
-                if (visited.has(root)) {
-                    return;
-                }
-
-                visited.add(root);
-                if (edges.length == 0) {
-                    let targetNode = network.body.data.nodes.get(root);
-
-                    console.log(targetNode, rootNode, targetNode.level);
-                    if (targetNode &&
-                        targetNode.on != mode){
-                        targetNode.hidden = !targetNode.hidden;
-                        targetNode.on = mode;
-                        network.body.data.nodes.update(targetNode);
-                    }
-                }
-
-                for (let edge of edges) {
-                    if (edge.from === root) {
-
-                        const to = edge.to;
-                        let targetNode = network.body.data.nodes.get(to);
-                        let rootNode = network.body.data.nodes.get(root);
-
-                        if (targetNode && 
-                            targetNode.level >= rootNode.level &&
-                            targetNode.on != mode){
-
-                            targetNode.hidden = !targetNode.hidden;
-                            targetNode.on = mode;
-                            network.body.data.nodes.update(targetNode);
-                        }
-
-                        recurGraph(to, mode, nodes, edges, visited);
-                    }
-                }
-            }
-
-            function addSubgraph(nodeId) {
-                let allNodes = network.body.data.nodes.get();
-                let allEdges = network.body.data.edges.get();
-
-                let targetNode = network.body.data.nodes.get(nodeId);
-                targetNode.on = !targetNode.on;
-                network.body.data.nodes.update(targetNode);
-
-                var visited = new Set();
-                recurGraph(nodeId, targetNode.on, allNodes, allEdges, visited);
-                network.redraw();
-            }
-            network.on("click", function(params) {
-                if (params.nodes.length > 0) {
-                    addSubgraph(params.nodes[0]);
-                }
-            });
-        </script>
-        """
-
-        html_content = html_content.replace("</body>", js_script + "</body>")
-
-        with open(html_file, "w", encoding="utf-8") as f:
-            f.write(html_content)
-
-        logger.debug(
-            f"Interactive graph saved as {html_file}. Open it in a browser.")
-
-    def _vis_graph(self):
-        """ Formats the HTG objects for ease of building the NetworkX graph. """
-
-        nodes = self.all_nodes
-
-        logger.debug('Iterating through all the nodes.')
-        net_nodes = {}
-        for node in nodes.keys():
-            parent_node = self
-            htg_node = None
-
-            if (len(node) > 1):
-                htg_node = self
-                for i, n in enumerate(node):
-                    if (i < (len(node) - 1)):
-                        parent_node = parent_node[n]
-                    htg_node = htg_node[n]
-            else:
-                htg_node = parent_node[node[-1]]
-
-            all_edges = parent_node.edges if htg_node.is_basenode else htg_node.edges
-            from_edges = [(node[:-1] + (e[0],), node[:-1] + (e[1],))
-                          for e in all_edges if (node[-1] in e)]
-
-            net_nodes[node] = {
-                "id": str(node),
-                "level": len(node) - 1,
-                "label": str(node[-1]),
-                "custom_property": "visible",
-                "htg": htg_node,
-                "edges": from_edges
-            }
-
-        logger.debug(
-            f'Successfully collected node information and stored in dictionary.')
-        net_edges = []
-
-        for n in net_nodes.keys():
-            net_edges = net_edges + net_nodes[n]['edges']
-
-        for n in net_nodes.keys():
-            if ((n + ('input',)) in net_nodes.keys()):
-                net_edges.append((n, n + ('input',)))
-
-        logger.debug(f'Creating dictionary of edge information.')
-        net_edges = list(set(net_edges))
-        net_edges = [{"from": str(e[0]), "to": str(e[1])} for e in net_edges]
-
-        return (net_nodes, net_edges)
-
-    def draw_int(self, html_file='interactive_graph.html', inline=False):
-        """ The primary driving function that enables the visualization of the HTG.
-
-        Parameter
-        ---------
-        html_file: str
-            The filepath where the html file will be saved and displayed from. 
-
-        """
-        (nodes, edges) = self._vis_graph()
-        net = Network(height="750px", width="100%",
-                      notebook=True, directed=True)
-        net = self._build_graph(list(nodes.values()), edges, net)
-
-        net.write_html(html_file)
-        self._write_html(net, html_file)
-
-        if (not inline):
-            import webbrowser
-            webbrowser.open('file://' + os.path.abspath(html_file))
-
-class Recurrence():
+class Recurrence:
     """
     Define recurrence for a given node in an HTG
     """
 
     @property
     def logger(self) -> logging.Logger:
+        """ logger """
         return logging.getLogger(__name__)
 
     def __init__(self, node, name, traverse, X, rollout_axis):
@@ -1770,8 +1606,7 @@ class Recurrence():
         self.X = X
         self.rollout_axis = rollout_axis
 
-        self.logger.debug(
-            f'Initializing Recurrence for node {name} in HTG {node.name}')
+        self.logger.info("Initializing Recurrence for node %s in HTG %s",name,node.name)
 
     def __iter__(self):
         i = 0
@@ -1788,11 +1623,11 @@ class Recurrence():
     # the future.
     def __getitem__(self, index):
 
-        self.logger.debug(f'Getting item {index} in HTG {self.name}')
-        if not self.node[self.name].is_recurrent:
+        self.logger.info(f'Getting item {index} in HTG {self.name}')
+        is_recurrent = self.node.graph.get_node_attributes('recurrent')[self.name]
+        if not is_recurrent:
             values = self.traverse(self.name)[
                 1] if self.name != 'input' else self.X
-
             if any(isinstance(v, list) for v in values.values()):
                 max_iter = min([len(v) for v in values.values()])
             else:
@@ -1806,19 +1641,21 @@ class Recurrence():
 
             raise StopIteration('No more values')
 
+        # Initialization of recurrent states
         if index == 0:
-            self.cache[index] = {k: None for k in self.node[self.name].outputs}
+            self.cache[index] = self.node[self.name].initial_state(self.X)
+            #self.cache[index] = self.node[self.name].attributes['roll_out'].initial_state
 
         elif index not in self.cache:
             input_values = {}
 
-            # index is not yet computed
+            # Index is not yet computed
             for input_node in dict(self.node.graph.in_edges(self.name)):
 
                 # if the input node is recurrent
                 if self.node.graph.edges[input_node, self.name]['rollout_axis'] is not None:
-                    recurrence = self.node[input_node].roll_out
-                    input_values[input_node] = recurrence[index - 1]
+                    recurrence = self.node[input_node].attributes['roll_out']
+                    input_values[input_node] = self.node._edge_mapping(recurrence[index - 1],input_node,self.name)
                 else:
 
                     # get the value of the input node
@@ -1829,8 +1666,27 @@ class Recurrence():
 
         return self.cache[index]
 
+
+    # @cached_property
+    # def initial_state(self) -> dict:
+    #     """ 
+    #         Calls node initialization routine.
+            
+    #         Returns:
+    #             Initial states
+                
+    #     """
+    #     # Check that initialization has been defined
+    #     if not self.node[self.name].attributes['initialization']:
+    #         message = 'Recurrent node ({self.name} has not defined an initialzation routine. '
+    #         message += 'recurrent nodes must define the initialzation routine.'
+    #         raise ImproperTensorGraphError(message)
+
+    #     return self.node[self.name].attributes['initialization'](self.X)
+
     # Removes 'input' or 'output' nesting of keys
     def flatten(self, d):
+        """ Flatten input/output dictionaries """
         # find 'input' or 'output' items that are dicts
         keys = [k for k in ['input', 'output']
                 if k in d and isinstance(d[k], dict)]
@@ -1842,12 +1698,16 @@ class Recurrence():
         # otherwise, return original
         return d
 
-# aliases for HierarchalTensorGraph
+class Identity(HierarchalTensorGraph):
+    """ Idenity node used for I/O """
+    registry_name = 'CREST_MODEL_HTG_IDENT'
+    def __init__(self,name):
+        super().__init__(name)
+        self.node = lambda x : x
 
+    def build(self):
+        pass
 
-class HierarchichalTensorGraph(HierarchalTensorGraph):
-    pass
-
-
-class HTG(HierarchalTensorGraph):
-    pass
+    @property
+    def is_basenode(self):
+        return True
