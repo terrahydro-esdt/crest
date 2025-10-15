@@ -42,9 +42,3 @@ One can use CREST to load/train/predict with the well-known `MNIST dataset`_ and
 .. _MNIST dataset: mnist_demo.nblink
 
 .. _CIFAR-10 dataset: cifar_demo.nblink
-
-
-The `Soil Moisture Demo`_ is an end-to-end worflow that shows how to use CREST to build/train a model using soil moisture data.
-
-.. _Soil Moisture Demo: soil_moisture_demo.nblink
-
