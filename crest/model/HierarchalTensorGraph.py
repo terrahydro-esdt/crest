@@ -23,7 +23,6 @@ class HierarchalTensorGraph(TensorGraph):
 
     Parameters
     ----------
-
     name : str
        The name of the HTG which must be different than other nodes
        in the graph. If name is None, it will default to
@@ -35,6 +34,15 @@ class HierarchalTensorGraph(TensorGraph):
         'return_seq' : False,
         'initialization' : None,
         'roll_out' : None,
+
+    Examples
+    --------
+    Create a simple HierarchalTensorGraph
+
+    >>> from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
+    >>> htg = HierarchalTensorGraph(name="my_model")
+    >>> htg.name
+    'my_model'
 
     """
 
@@ -225,7 +233,6 @@ class HierarchalTensorGraph(TensorGraph):
     @staticmethod
     def get_name(obj) -> str:
         """
-
         Try to determine the name of the given object
         using in order 'name', '__name__', and '__qualname__'.
 
@@ -233,6 +240,23 @@ class HierarchalTensorGraph(TensorGraph):
         ----------
         obj : Callable, HierarchalTensorGraph
              The object from which to get the name
+
+        Returns
+        -------
+        str
+            The name of the object
+
+        Examples
+        --------
+        >>> from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
+        >>> htg = HierarchalTensorGraph(name="test_node")
+        >>> HierarchalTensorGraph.get_name(htg)
+        'test_node'
+
+        >>> def my_function():
+        ...     pass
+        >>> HierarchalTensorGraph.get_name(my_function)
+        'my_function'
 
         """
 
@@ -333,7 +357,22 @@ class HierarchalTensorGraph(TensorGraph):
 
     @property
     def is_basenode(self) -> bool:
-        """ Check if graph is a basenode """
+        """
+        Check if graph is a basenode.
+
+        Returns
+        -------
+        bool
+            False for HierarchalTensorGraph, True for Node subclasses
+
+        Examples
+        --------
+        >>> from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
+        >>> htg = HierarchalTensorGraph(name="my_graph")
+        >>> htg.is_basenode
+        False
+
+        """
         self.logger.info("Checking if HTG %s is a basenode",self.name)
         return False
 
@@ -724,7 +763,22 @@ class HierarchalTensorGraph(TensorGraph):
                 self.add_edge(*i[:2],**i[2])
 
     def __repr__(self):
-        """ Represent the HierarchalTensorGraph """
+        """
+        Represent the HierarchalTensorGraph.
+
+        Returns
+        -------
+        str
+            String representation showing name and object id
+
+        Examples
+        --------
+        >>> from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
+        >>> htg = HierarchalTensorGraph(name="example")
+        >>> repr(htg)  # doctest: +ELLIPSIS
+        'HierarchalTensorGraph("example", id=...)'
+
+        """
 
         self.logger.debug(f'Representing HTG {self.name}')
 
@@ -789,7 +843,8 @@ class HierarchalTensorGraph(TensorGraph):
                 f'node with path = {path} not in graph.')
 
     def __contains__(self, path: str | tuple | TensorGraph) -> bool:
-        """ Check if a node with the given name is in our graph.
+        """
+        Check if a node with the given name is in our graph.
 
         Parameters
         ----------
@@ -797,6 +852,22 @@ class HierarchalTensorGraph(TensorGraph):
               In the case of a string, the name of the child node within the parent HTG.
               In the case of a path (tuple), the node with the given path relative
               to the parent HTG.
+
+        Returns
+        -------
+        bool
+            True if the node exists in the graph, False otherwise
+
+        Examples
+        --------
+        >>> from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
+        >>> parent = HierarchalTensorGraph(name="parent")
+        >>> child = HierarchalTensorGraph(name="child")
+        >>> parent.add_node(child)
+        >>> "child" in parent
+        True
+        >>> "nonexistent" in parent
+        False
 
         """
 
@@ -818,7 +889,31 @@ class HierarchalTensorGraph(TensorGraph):
 
     # find keys and replace them
     def find_and_replace(self,namelist: dict, X: dict) -> dict:
-        """Tries to find keys specified in namelist and replace them with the values in namelist"""
+        """
+        Tries to find keys specified in namelist and replace them with the values in namelist.
+
+        Parameters
+        ----------
+        namelist : dict
+            Dictionary mapping old key names to new key names
+        X : dict
+            Dictionary whose keys will be renamed
+
+        Returns
+        -------
+        dict
+            New dictionary with renamed keys
+
+        Examples
+        --------
+        >>> from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
+        >>> htg = HierarchalTensorGraph(name="test")
+        >>> data = {'a': 1, 'b': 2, 'c': 3}
+        >>> result = htg.find_and_replace({'a': 'x', 'b': 'y'}, data)
+        >>> result['x'], result['y'], result['c']
+        (1, 2, 3)
+
+        """
         _X = X.copy()
         for k, v in namelist.items():
 
