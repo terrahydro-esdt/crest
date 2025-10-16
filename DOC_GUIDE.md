@@ -98,7 +98,7 @@ class HierarchalTensorGraph:
 
 ## Full module documentation example
 
-At the top of each module file, place domentation like this:
+At the top of each module file, add documentation like this:
 
 ```python
 """Soil moisture modeling components.
@@ -315,20 +315,43 @@ When creating/updating example notebooks:
 Build documentation locally:
 
 ```bash
+# If starting on a brand new feature branch, start from develop
+git checkout -b my_feature
+
+# If already on a feature branch
+git checkout my_feature
+git rebase develop
+
+# When done with your feature (after testing, etc.)
+git checkout develop
+git merge --no-ff my_feature
+
+# Testing:
+# --------
+
 # Build docs locally (see your changes)
 cd docs/ && make html && open _build/html/index.html
 
 # Test notebooks work
-pytest examples/some_notebook.py -v
+pytest examples/your_notebook.py -v
+
+# Test documentation examples You need to use run_doctest.py):
+# For example:
+python run_doctest.py crest.model.HierarchalTensorGraph -v
 
 # Optional
-# Check your docstring coverage (need to pip install interrogate)
+# --------
+# Check your docstring coverage (need to "pip install interrogate")
 interrogate crest/your_module.py
 
 # Optional
+# --------
 # Format your code
-# Note black enforces a single consistent format
+# Note black enforces a single consistent format (need to "pip install black")
 black crest/your_module.py
+# dry-run:
+black --check crest/your_module.py
+
 
 # for example
 def foo(a,b= 42):  print(  a + b )
@@ -338,7 +361,11 @@ def foo(a, b=42):
     print(a + b)
 
 # isort sorts and groups your import statements in a consistent, logical order
+# (need to "pip install isort")
+# This is actually quite harmless and produces nice import groupings
 isort crest/your_module.py
+# dry-run:
+isort --check crest/your_module.py
 
 # for example:
 import xarray as xr
