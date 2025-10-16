@@ -63,8 +63,10 @@ class Batcher:
         a time. `block_size` determines how many samples should be pulled from 
         each block of the data (at most, since a block may not have enough 
         samples due to NaN values); `epoch_size` indirectly controls the number
-        of samples which are pulled from each block by computing 
-            `block_size = (epoch_size*batch_size) / n_blocks`
+        of samples which are pulled from each block by computing::
+
+            block_size = (epoch_size*batch_size) / n_blocks
+
         In this way, both parameters affect how many batches are required to 
         complete a full cycle through the spatiotemporal extent of the data 
         (i.e. an epoch); epoch_size takes care of the sample calculation
@@ -79,22 +81,23 @@ class Batcher:
         default, no features are extracted, and a batch will be a list of
         Sample objects. When given, a batch will have the same nested layout
         as the feature list, and contain dictionaries with features as keys
-        and numpy arrays (shaped [batch_size, ...]) as values. For example:
-        features=[['a', 'b'], ['c']] would result in batches that look like
-        
+        and numpy arrays (shaped [batch_size, ...]) as values. For example,
+        features=[['a', 'b'], ['c']] would result in batches that look like:
+
         - [{'a':<batch of 'a' values>, 'b': <batch of 'b' values>},
-           {'c': <batch of 'c' values>}]
+          {'c': <batch of 'c' values>}]
 
         If any features are missing in the
         dataset, an exception is raised. If an empty list is given, it is
         equivalent to selecting all available features. Note that any nested
         list in features must contain homogeneous types; i.e. all strings, or
-        all lists:
-        
+        all lists. Examples:
+
         - [['a'], ['b', 'c'], [['d', 'e'], ['f']]] is valid
         - [['a'], 'b'] is not valid
         - [['a'], ['b', ['c', 'd']]] is not valid
-        
+
+
     workers    : int
         Number of processes to use to create batches in parallel. Note that
         workers <= 0 means that only threads will be used to generate batches;
@@ -197,10 +200,12 @@ class Batcher:
         samples from others. For instance, sparse data coming from ground 
         stations (e.g. FLUXNET) would have few (if any) spatial overlaps with 
         other sparse data sources (e.g. SNOTEL); in order to generate samples 
-        from both of these sources, we can rotate through allowing and 
-        disallowing missing values for each of them with this parameter: 
-            ```valid_percents=[ {'FLUXNET' : {'datetime':0}},
-                                {'SNOTEL'  : {'datetime':0}}, ]```
+        from both of these sources, we can rotate through allowing and
+        disallowing missing values for each of them with this parameter::
+
+            valid_percents=[ {'FLUXNET' : {'datetime':0}},
+                             {'SNOTEL'  : {'datetime':0}}, ]
+
         This has two valid_percent configurations to rotate through, which will
         be used independently by each worker. In other words, when a worker is
         preparing to compute samples for a block, it will first randomly choose
@@ -218,8 +223,10 @@ class Batcher:
         Datafiles which are dropped in a block will produce NaN features, even
         if those features are actually valid for a given sample location. The
         usage of this parameter follows the same format of `valid_percents`,
-        but only requires the name of Datafiles to drop: 
-            `drop_datafiles = [['FLUXNET'], ['SNOTEL']]`
+        but only requires the name of Datafiles to drop::
+
+            drop_datafiles = [['FLUXNET'], ['SNOTEL']]
+
         This list contains two configurations that will be rotated through: 
         one which drops the FLUXNET Datafile during block computation, and one
         which drops the SNOTEL Datafile. Multiple names can be specified for a

@@ -37,13 +37,13 @@ class MultiBatcher(Batcher):
     different worker processes, while also allowing its workers to be allocated
     in a dynamic way towards the different Dataset configurations:
 
-        1. Worker needs a new configuration to use for batch creation
-        2. MultiBatcher calculates the expected number of samples available
-            from each configuration (based on current availability and the
-            status of other worker processes)
-        3. MultiBatcher assigns Worker the configuration which has the smallest
-            number of expected samples, thus maximizing the expected number of
-            combined batches that can be produced. 
+    1. Worker needs a new configuration to use for batch creation
+    2. MultiBatcher calculates the expected number of samples available
+       from each configuration (based on current availability and the
+       status of other worker processes)
+    3. MultiBatcher assigns Worker the configuration which has the smallest
+       number of expected samples, thus maximizing the expected number of
+       combined batches that can be produced.
 
     In this way, worker processes are able to be dynamically assigned work, in
     order to maximize the speed at which combined batches are created - even if
@@ -55,8 +55,9 @@ class MultiBatcher(Batcher):
     *args, **kwargs
         Same as Batcher - see its docstring for available parameters. Note that
         total number of samples contained in each batch will be the requested
-        batch_size multiplied by the number of configurations, i.e.:
-            `batch_size * max(len(valid_percents), len(drop_datafiles))`
+        batch_size multiplied by the number of configurations, i.e.::
+
+            batch_size * max(len(valid_percents), len(drop_datafiles))
 
     """
     

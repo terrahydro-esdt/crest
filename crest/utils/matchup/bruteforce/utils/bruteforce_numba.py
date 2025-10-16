@@ -174,12 +174,12 @@ def bruteforce_original(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
     """ Brute-force method to find neighbors within left/right distance tolerance.
     
     Note that this method *requires* a1 and a2 to be lexicographically sorted,
-    or else some valid matches may be missed. For our application, this 
-    constraint can be adhered to for free - so long as care is taken when 
-    combining grids together into their extended-dimension representation;
-    e.g. bruteforce(A, B) -> extended-dimension grid AB.
-         bruteforce(AB, C) -> ABC
-         etc.
+    or else some valid matches may be missed. For our application, this
+    constraint can be adhered to for free - so long as care is taken when
+    combining grids together into their extended-dimension representation::
+
+        bruteforce(A, B) -> extended-dimension grid AB
+        bruteforce(AB, C) -> ABC
 
     The remaining l/r parameters correspond to the left and right side neighbor
     distance tolerance for a1 and a2, respectively. 
@@ -448,12 +448,12 @@ def bruteforce_single(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
     """ Brute-force method to find neighbors within left/right distance tolerance.
     
     Note that this method *requires* a1 and a2 to be lexicographically sorted,
-    or else some valid matches may be missed. For our application, this 
-    constraint can be adhered to for free - so long as care is taken when 
-    combining grids together into their extended-dimension representation;
-    e.g. bruteforce(A, B) -> extended-dimension grid AB.
-         bruteforce(AB, C) -> ABC
-         etc.
+    or else some valid matches may be missed. For our application, this
+    constraint can be adhered to for free - so long as care is taken when
+    combining grids together into their extended-dimension representation::
+
+        bruteforce(A, B) -> extended-dimension grid AB
+        bruteforce(AB, C) -> ABC
 
     The remaining l/r parameters correspond to the left and right side neighbor
     distance tolerance for a1 and a2, respectively. 

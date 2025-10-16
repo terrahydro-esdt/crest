@@ -28,16 +28,18 @@ class Transform(BaseAbstract):
         feature by name, with '*' allowed to be used as a special key denoting
         a catch-all transformation to be applied when a given feature is not
         otherwise contained in the dictionary. Values may be defined as:
-            - a string, referencing a predefined transformation contained in
-              this class (e.g. 'normalize'); 
-            - a function, directly giving the callable that should be applied,
-              which should have the signature `function(data, key)`;
-            - a Sequence of two elements, where each element can be one of the
-              two previously stated types (string or function) and representing
-              the same. The first element will be applied during the forward 
-              transformation of a feature, and the second element during the 
-              inverse transformation of that feature. Generally, the following
-              relation should hold: `inverse(forward(data)) == data`. 
+
+        - a string, referencing a predefined transformation contained in
+          this class (e.g. 'normalize');
+        - a function, directly giving the callable that should be applied,
+          which should have the signature `function(data, key)`;
+        - a Sequence of two elements, where each element can be one of the
+          two previously stated types (string or function) and representing
+          the same. The first element will be applied during the forward
+          transformation of a feature, and the second element during the
+          inverse transformation of that feature. Generally, the following
+          relation should hold: `inverse(forward(data)) == data`.
+ 
     drop : list[str]
         Features which have entries within the summary statistics array,
         but should be excluded from the transformation process (e.g. for

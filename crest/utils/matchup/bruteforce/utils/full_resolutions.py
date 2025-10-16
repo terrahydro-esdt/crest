@@ -10,31 +10,39 @@ def full_resolutions(
     The general format for resolutions is to have two resolution vectors
     for each coordinate vector: one for the left (lower) bound, and one
     for the right (upper) coordinate bound.
-    
+
     There are three cases that must be handled:
+
     1. self.resolutions.ndim == 1
-        This is a uniform resolution (i.e. all points use the same
-        resolution vector), and so we can simply duplicate the left/right
-        side and have a singleton dimension for the coordinate rows. For
-        example, given data with 3 dimensions, we would have resolutions
-        shape=(3,), which we tile and return a shape of (2, 1, 3).
+
+       This is a uniform resolution (i.e. all points use the same
+       resolution vector), and so we can simply duplicate the left/right
+       side and have a singleton dimension for the coordinate rows. For
+       example, given data with 3 dimensions, we would have resolutions
+       shape=(3,), which we tile and return a shape of (2, 1, 3).
+
     2. self.resolutions.ndim == 2
-        This is a non-uniform resolution (i.e. all points use a different
-        resolution vector), and so we only need to shift this left/right
-        by one element to create the lower/upper bounds.
-    3. self.resolutions.ndim == 3 
-        This is an anisotropic resolution, where the left/right bounds
-        for each coordinate row aren't necessarily the same coming from
-        different directions. For example, given the following situation:
-            - point A matches point X if (A-A_left <= X <= A+A_right)
-            - point B matches point X if (B-B_left <= X <= B+B_right)
-            - point B is the direct neighbor of point A to the right
-        With a non-uniform resolution, A_right == B_left, since resolutions
-        can change per point, but are only shifted left or right by one. In
-        contrast, for the anisotropic case, we can have A_right != B_left,
-        such that neighboring points can have overlapping regions in which
-        they would match a point (or equivalently, regions between them for
-        which neither point would match).
+
+       This is a non-uniform resolution (i.e. all points use a different
+       resolution vector), and so we only need to shift this left/right
+       by one element to create the lower/upper bounds.
+
+    3. self.resolutions.ndim == 3
+
+       This is an anisotropic resolution, where the left/right bounds
+       for each coordinate row aren't necessarily the same coming from
+       different directions. For example, given the following situation:
+
+       - point A matches point X if (A-A_left <= X <= A+A_right)
+       - point B matches point X if (B-B_left <= X <= B+B_right)
+       - point B is the direct neighbor of point A to the right
+
+       With a non-uniform resolution, A_right == B_left, since resolutions
+       can change per point, but are only shifted left or right by one. In
+       contrast, for the anisotropic case, we can have A_right != B_left,
+       such that neighboring points can have overlapping regions in which
+       they would match a point (or equivalently, regions between them for
+       which neither point would match).
     
     Returns
     -------
