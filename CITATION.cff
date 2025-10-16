@@ -1,0 +1,33 @@
+cff-version: 1.2.0
+message: "If you use CREST in your research, please cite it as below."
+title: "CREST: Coupled Reusable Earth System Tensor Framework"
+abstract: "The CREST framework provides a graph-based modeling framework built on top of tensor-based software along with engines to support the development of community-based AI-enabled Earth Information Systems."
+authors:
+  - family-names: "Pelissier"
+    given-names: "Craig"
+    orcid: "https://orcid.org/0000-0000-0000-0000"
+    affiliation: "TerraHydro"
+  - name: "CREST Development Team"
+type: software
+repository-code: "https://github.com/terrahydro/crest"
+url: "https://crest.readthedocs.io/"
+keywords:
+  - "earth system modeling"
+  - "machine learning"
+  - "tensor graphs"
+  - "hydrological modeling"
+  - "climate science"
+  - "artificial intelligence"
+license: MIT
+version: 0.1.0
+date-released: "2024-10-14"
+preferred-citation:
+  type: article
+  title: "CREST: A Framework for Coupled Reusable Earth System Tensors"
+  authors:
+    - family-names: "Pelissier"
+      given-names: "Craig"
+    - name: "et al."
+  year: 2024
+  journal: "TBD"
+  # doi: "10.xxxx/xxxxx"  # Add when available
