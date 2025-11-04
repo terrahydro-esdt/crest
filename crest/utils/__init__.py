@@ -1,5 +1,6 @@
 from .classproperty    import classproperty
 from .chunk_dict       import chunk_dict
+from .ensure_with      import ensure_with
 from .find_neighbors   import find_neighbors
 from .interactive      import interactive
 from .Metrics          import Metrics

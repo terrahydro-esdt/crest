@@ -52,6 +52,30 @@ class MultiBatcher(Batcher):
 
     Parameters
     ----------
+    directed_sampling : bool
+        Whether blocks should be chosen in a directed manner. If False, blocks
+        and configurations are sampled uniformly at random (with configurations
+        only filtered by whether they produce > 0 samples for the current block
+        a worker is computing). If True (default), the speed of batch creation
+        can be significantly increased by choosing blocks and configurations to
+        maximize the number of expected future batches. This is accomplished by
+        first choosing a configuration based on the current batch expectations,
+        then uniformly sampling all blocks that produce > 0 samples for that
+        configuration. While further optimization is possible by performing a
+        weighted sampling over the blocks based on the number of samples they
+        produce for the chosen configuration, this strategy would introduce a
+        risk of bias in which samples are generated (e.g. high-density regions
+        would be over-sampled relative to low-density regions). By uniformly
+        sampling over all blocks that produce any samples, we avoid this bias.
+    duplicate : bool
+        Whether to duplicate blocks across workers (same functionality as the
+        parameter in Batcher). In contrast to Batcher, duplication is True by
+        default since there are multiple configurations to run for each block.
+        With duplicate=False, the expected number of blocks computed in a data
+        epoch for a given configuration will be `n_blocks // n_configurations`.
+        Duplicating blocks across workers mitigates this, since the number of
+        blocks computed in total will be `n_blocks * n_workers` and the percent
+        of blocks per configuration is then `n_workers / n_configurations`. 
     *args, **kwargs
         Same as Batcher - see its docstring for available parameters. Note that
         total number of samples contained in each batch will be the requested
@@ -61,8 +85,8 @@ class MultiBatcher(Batcher):
 
     """
     
-    def __init__(self, *args, directed_sampling=True, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, *args, directed_sampling=True, duplicate=True, **kwargs):
+        super().__init__(*args, duplicate=duplicate, **kwargs)
         self.directed_sampling = directed_sampling
         self._init_keys.add('directed_sampling')
 
@@ -127,7 +151,12 @@ class MultiBatcher(Batcher):
             c.set_n_blocks(len(blocks))
         if self.directed_sampling:
             # self._sampler = NonzeroSampler(blocks, self._block_configs, self.random)
-            self._sampler = FutureSampler(blocks, self._block_configs, self.random, batch_size=self.batch_size, max_queue=self.max_queue, exit_flag=lambda: self._exit)
+            self._sampler = FutureSampler(blocks, self._block_configs, **{
+                'random'     : self.random, 
+                'batch_size' : self.batch_size, 
+                'max_queue'  : self.max_queue, 
+                'exit_flag'  : (lambda: self._exit),
+            })
         yield from super()._generate_batches(blocks)
         
         # After completing an epoch, reduce block counts so that adapting to
@@ -136,6 +165,19 @@ class MultiBatcher(Batcher):
             with c:
                 c.n_blocks.value = c.n_blocks.value // 2
 
+    
+    def _finish_epoch(self):
+        """ Yield remainder samples as the final batch in an epoch """
+        # If we repeat over multiple epochs, save remainders for the next epoch
+        if not self.repeat and any(map(len, self._remainder.values())):
+
+            # In contrast to Batcher, ingest remainders separately and combine
+            size = lambda v: getattr(v, '__len__', lambda: 0)()
+            keys = [k for k, v in self._remainder.items() if size(v)]
+            data = map(self._finalize_batch, map(self._remainder.pop, keys))
+            list(map(self._batch_combiner, keys, data))
+            yield from self._batch_combiner
+            
     
     @cached_property
     def _batch_combiner(self) -> 'BatchCombiner':
@@ -205,19 +247,22 @@ class MultiBatcher(Batcher):
             self.debug(f'Sending {len(batches)} batches for {config}')
             config.add_batches([], n_batches=len(batches))
             hashval = hash(config)
-            # batches = [(batch, hashval) for batch in batches]
-            batches = [(batches, hashval)]
+            batches = [(hashval, batches)]
         return batches
 
 
     def _parse_batch(self, batch):
         """ Ingest BlockConfig batches and return combined batched """
-        # Remainder samples aren't paired with any configuration
-        if (len(batch) == 2) and isinstance(batch[1], int):
-            self.debug(f'Received {len(batch[0])} batches for {batch[1]}')
-            batch = self._batch_combiner(*batch, method='extend').next()
-        # else: raise Exception(f'Received unprocessed batch: {batch}')
-            
-        # Yield the current batch, as well as any others that are ready
+        # `batch` should have the format [config_hash, [samples]]
+        if isinstance(batch, (list, tuple)) and len(batch) == 2: 
+            if isinstance(batch[0], int) and not isinstance(batch[1], int):
+                self.debug(f'Received {len(batch[1])} batches for {batch[0]}')
+                yield from self._batch_combiner(*batch, method='extend')
+                return
+
+        # An unexpected format might be a bug, but we can still just yield it
+        message = f'Unexpected batch format: {type(batch)=}'
+        if hasattr(batch, '__len__'):
+            message += f' {len(batch)=} {list(map(type, batch))[:5]=}'
+        self.info(message)
         yield batch
-        yield from self._batch_combiner

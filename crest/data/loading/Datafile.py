@@ -686,11 +686,11 @@ class Datafile(BaseAbstract):
         # Stack the left/right resolution for each vector 
         setattr(self, 'is_uniform', all(map(uniform, vectors)))
         if not self.is_uniform:
-            stack_lr = lambda vector: np.stack([
+            stack_lr = lambda i, vector: np.stack([
                 np.r_[vector[:1], vector],
                 np.r_[vector, vector[-1:]]
-            ], axis=-1)
-            return list(map(stack_lr, vectors))
+            ], axis=-1) if not self.virtual[i] else np.array([[np.nan, np.nan]])
+            return list(map(stack_lr, *zip(*enumerate(vectors))))
         return [vec.min() for vec in vectors]
 
 

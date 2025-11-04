@@ -1,11 +1,12 @@
 from collections.abc import Collection
+from collections import defaultdict
 from contextlib import nullcontext, contextmanager
 from functools import partial, cached_property
 from itertools import chain, islice
 from tqdm.auto import tqdm
 from pathlib import Path
 from ctypes import c_int
-from typing import Union
+from typing import Union, ContextManager, Callable
 from queue import Empty, Full, Queue
 from math import ceil
 
@@ -30,7 +31,7 @@ import os
 import re
 import gc
 
-from crest.utils import Stopwatch, TimedHandler
+from crest.utils import Stopwatch, TimedHandler, ensure_with
 from .ThreadedFunction import ThreadedFunction
 from ..loading import Dataset, StructuredDataset, SampleSet, Block
 
@@ -44,6 +45,9 @@ Number = numbers.Real | int | float
 #   This should be a small value, but large enough that there won't be
 #   a large number of GIL releases which can cause additional slowdown
 WAIT_TIME = 0.01
+
+def identity(x):
+    return x
 
 
 class Batcher:
@@ -191,6 +195,23 @@ class Batcher:
         is enabled and the prefetch queue uses the `max_queue` parameter as its
         maximum size. An integer may also be given, which enables prefetching
         and sets the maximum size of the prefetch queue to that value. 
+    prefetcher : ContextManager | Callable
+        A function or context manager (factory) which is applied to batches
+        when they are prefetched. This allows additional work to be performed
+        in a background thread, if any post-processing needs to be applied to
+        batches. If a context manager is passed, it should yield the actual 
+        prefetcher function; it will be entered just before batches begin
+        to be yielded, and exited after all batches have been yielded. Note
+        that using `prequeuer` should be preferred, unless the function uses
+        objects which cannot be pickled.
+    prequeuer  : ContextManager | Callable
+        Same as `prefetcher`, but the function is applied prior to adding
+        batches to the multiprocessing worker queue - meaning it is applied
+        by workers in parallel, and thus can improve speed considerably if
+        the batch post-processing function requires significant work. Note
+        that the function must be pickle-able since it is distributed to the
+        worker processes; if for some reason it cannot be pickled, use the
+        `prefetcher` parameter instead. 
     seed       : int | None
         Seed for reproducible randomness.
     valid_percents : list[dict[str, dict]]
@@ -262,6 +283,8 @@ class Batcher:
         fast_path   : bool   = False,
         block_sync  : bool   = False,
         prefetch    : int | bool = 200,
+        prefetcher  : ContextManager | Callable = identity,
+        prequeuer   : ContextManager | Callable = identity,
         seed        : int | None = None,
         valid_percents : list[dict[str, dict]] = [],
         drop_datafiles : list[list[str]] = [],
@@ -287,6 +310,8 @@ class Batcher:
         self.fast_path   = fast_path
         self.block_sync  = block_sync
         self.prefetch    = prefetch
+        self.prefetcher  = prefetcher
+        self.prequeuer   = prequeuer
         self.seed        = seed
         self.valid_percents = valid_percents
         self.drop_datafiles = drop_datafiles
@@ -295,7 +320,7 @@ class Batcher:
             'Cannot specify both valid_percents and drop_datafiles')
 
         # Store initialization parameter names for pickling
-        self._init_keys = locals().keys() - {'self'}
+        self._init_keys = locals().keys() - {'self', 'prefetcher'}
 
         # If multiprocessing, fail quickly when dataset can't be pickled
         if self.workers: self._is_picklable()
@@ -581,6 +606,10 @@ class Batcher:
             for batches in self._iterate_process_batches():
                 try:          yield from batches
                 except Empty: pass
+
+            # Close here instead of in _iterate_process_batches
+            if self.workers and not self._exit:
+                self.close(origin='_prefetched_batches')
             return
 
         queue_size = self.max_queue 
@@ -598,55 +627,81 @@ class Batcher:
         if self.workers > 0: self._processes
         else:                self._generator
 
-        # Start the thread that prefetches batches 
-        if getattr(self, '_prefetch_queue', None) is None:
-            self._prefetch_queue = Queue(queue_size)
-        self._prefetch_thread = threading.Thread(**{
-            'target' : self._queue_prefetched, 
-            'daemon' : True,
-            'name'   : 'prefetcher',
-        })
-        self._prefetch_thread.start()
+        # Enter the prefetcher context manager
+        with ensure_with(self.prefetcher) as prefetcher:
 
-        # Track the total number of yielded batches and occasionally log info
+            # Start the thread that prefetches batches 
+            if getattr(self, '_prefetch_queue', None) is None:
+                self._prefetch_queue = Queue(queue_size)
+            self._prefetch_thread = threading.Thread(**{
+                'target' : self._queue_prefetched, 
+                'daemon' : True,
+                'name'   : 'prefetcher',
+                'kwargs' : {'prefetcher': prefetcher},
+            })
+            self._prefetch_thread.start()
+
+            # Start yielding batches
+            try:
+                yield from self._iterate_prefetched()                    
+            except KeyboardInterrupt:
+                self.info('KeyboardInterrupt')
+                self.close(timeout=0, origin='_prefetched_batches') 
+                raise
+            finally:
+                self.debug('Exiting _prefetched_batches')
+        
+
+    def _iterate_prefetched(self):
+        """ Yield batches from the prefetch queue """
+        # Track total number of yielded batches and occasionally log info
         batch_count = start_count = 0
         start_timer = lambda: self.benchmark('_prefetched_batches', self.info).__enter__()
         timer = start_timer()
-
-        # Keep iterating until the exit signal is set
-        try:
-            while not self._exit:
-                try:
-                    batch = self._prefetch_queue.get_nowait()
-                    batch_count += 1
-                    yield batch
-                except Empty: time.sleep(WAIT_TIME)
-                
-                #if (batch_count % 100) == 0:
-                if (time.time() - timer.start['time']) > 60:
-                    with Stopwatch('timer reset', self.info):
-                        timer.message += '\n\t'.join(['',
-                            f'Batches since last status: {batch_count-start_count}',
-                            f'Total batches: {batch_count}',
-                        ] + [s.replace('\n\t', '\n\t\t') for s in self._get_status()])
-                        # print(timer.message)
-                        timer.__exit__()
-                        timer = start_timer()
-                        start_count = batch_count
-
-            # Only join the thread here to allow restarting the batcher
-            if hasattr(self, '_prefetch_thread'):
-                self._prefetch_thread.join(timeout=3)
-            self.__dict__.pop('_prefetched_batches', None)
-            
-        except KeyboardInterrupt:
-            self.info('KeyboardInterrupt')
-            self.close(timeout=0, origin='_prefetched_batches') 
-            raise
-        finally:
-            self.debug('Exiting _prefetched_batches')
+        running = True
         
-    
+        # Keep iterating until the exit signal is set
+        while not self._exit:
+            try:
+                batch = self._prefetch_queue.get_nowait()
+                yield batch
+                batch_count += 1
+
+                # Keep looping while more batches are being fetched
+                running = True
+            except Empty: 
+                # If no workers alive, loop again for any remaining batches
+                if self.workers: 
+                    if not (self._processes_alive(verbose=False) or running):
+                        break
+                else:
+                    if not (self._prefetch_thread.is_alive() or running):
+                        break
+                running = False
+                time.sleep(WAIT_TIME)
+            
+            #if (batch_count % 100) == 0:
+            if (time.time() - timer.start['time']) > 60:
+                with Stopwatch('timer reset', self.info):
+                    timer.message += '\n\t'.join(['',
+                        f'Batches since last status: {batch_count-start_count}',
+                        f'Total batches: {batch_count}',
+                    ] + [s.replace('\n\t', '\n\t\t') for s in self._get_status()])
+                    # print(timer.message)
+                    timer.__exit__()
+                    timer = start_timer()
+                    start_count = batch_count
+
+        # Only join the thread here to allow restarting the batcher
+        if hasattr(self, '_prefetch_thread'):
+            self._prefetch_thread.join(timeout=3)
+        self.__dict__.pop('_prefetched_batches', None)
+
+        # Close here instead of in _iterate_process_batches
+        if self.workers and not self._exit:
+            self.close(origin='_prefetched_batches')
+
+            
     def _get_status(self) -> list[str]:
         """ Status report on internal resources """
         status = []
@@ -658,10 +713,10 @@ class Batcher:
             status += [f'Prefetch thread alive: {self._prefetch_thread.is_alive()}']
 
         if self.is_main_process and ('_processes' in self.__dict__):
-            alive = [job.is_alive() for job in self._processes]
-            status += [f'Workers alive: {sum(alive)}/{len(alive)}']
-            if not sum(alive):
-                self._exit_flag.set()
+            alive = self._processes_alive(verbose=False)
+            status += [f'Workers alive: {len(alive)}/{self.workers}']
+            # if not len(alive):
+            #     self._exit_flag.set()
         return status
         
     
@@ -695,59 +750,70 @@ class Batcher:
         except Empty:
             raise
         except Exception as e:
-            self.error(f'Exception when queuing batches: {e}')
-            self.close('_safe_queue_batches')
+            self.error(f'Exception when queuing batches: {e}\n' + 
+                      f'\n{queue=}\n{traceback.format_exc()}')
+            self.close(origin='_safe_queue_batches')
             raise
             
     
-    def _queue_prefetched(self):
-        """ Wraps the generator for background thread """
+    def _queue_prefetched(self, prefetcher):
+        """ Wraps the generator for background prefetching thread """
         for batches in self._iterate_process_batches():
             if not self._exit:
                 try:
+                    batches = map(prefetcher, batches)
                     self._safe_queue_batches(self._prefetch_queue, batches)
                 except Empty: pass
-                    
-    
+
+        
+    def _processes_alive(self, jobs=None, verbose: bool=True) -> list:
+        """ Return a list of worker processes which are alive """
+        alive = []
+        if '_processes' in self.__dict__:
+            for job in (jobs or self._processes):
+                if not job.is_alive():
+                    if verbose:
+                        message = f'Worker {job.pid} exitcode: {job.exitcode}'
+                        if job.exitcode and not self._exit:
+                            self.error(message)
+                        else: self.info(message)
+                else: alive.append(job)
+        return alive
+        
+        
     def _iterate_process_batches(self):
         """ Unified interface for single/multiprocessing, yielding batches. """
         try:
             # If using multiprocessing, yield batches from the queue
             if self.workers > 0:
-                error = self.error
-                debug = self.debug
-
-                def alive(job, verbose=True):
-                    if not job.is_alive():
-                        if verbose:
-                            log = error if job.exitcode else debug
-                            log(f'Worker {job.pid} exitcode: {job.exitcode}')
-                        return False
-                    return True
 
                 # Poll the queue for new batches until all workers exit
                 jobs = list(self._processes)
-                count = 0
+                n_empty = 1
                 seconds = 120
-                while not self._exit and any(alive(j, False) for j in jobs):
+
+                while not self._exit:
                     try:          
                         yield self._parse_batch( self._queue.get_nowait() )
-                        count = 1
+                        n_empty = 1
                     except Empty: 
-                        count += 1
+                        # Loop one more time after all workers are finished
+                        if not self._processes_alive(jobs) and n_empty > 1:
+                            break
+                        n_empty += 1
                         time.sleep(0.1)
-                    if (count % (seconds * 10)) == 0:
-                        self.info(f'_iter_process_batches: No batches received ' +
-                                  f'from worker queue in at least {seconds} seconds')
+                    if (n_empty % (seconds * 10)) == 0:
+                        self.info(f'_iter_process_batches: No batches from ' +
+                                  f'worker queue in at least {seconds} secs')
                         
                     # while not self._exit and self._queue.poll(timeout=0.2):
                     #     yield self._queue.recv()
-                    jobs = list(filter(alive, jobs))
+                    jobs = self._processes_alive(jobs)
 
                 # Exit code 3221225477 is STATUS_ACCESS_VIOLATION, which is
                 # commonly caused by an issue with data cached on disk. It can
                 # also occur when the system runs out of memory, however.
-                list(map(alive, jobs))
+                self._processes_alive(jobs)
 
             # Otherwise, just yield from the threaded generator
             else:
@@ -773,7 +839,8 @@ class Batcher:
         # Do not wrap in 'finally', as this will also prematurely
         # close the _generator object when Batcher.generator is
         # garbage collected.
-        self.close(origin='Batcher._iterate_process_batches')
+        if not (self.prefetch or self.workers):
+            self.close(origin='Batcher._iterate_process_batches')
 
 
     @cached_property
@@ -919,7 +986,8 @@ class Batcher:
             subsets = subsets[self._pidx::self.workers]
 
         # Initialize a new container for leftover samples
-        self._remainder = []
+        if not hasattr(self, '_remainder'):
+            self._remainder = defaultdict(list)
         n_block = len(subsets)
 
         # Send off first block ASAP to minimize time to first batch
@@ -935,7 +1003,7 @@ class Batcher:
                 if self._block_tasks.threads < 1:
                     next(self._block_tasks)
                 if self._batch_tasks.threads < 1:
-                    while not len(self._batch_tasks):
+                    while not (len(self._batch_tasks) or self._first or self._exit):
                         time.sleep(WAIT_TIME)
                     for task in self._batch_tasks:
                         yield from task
@@ -995,9 +1063,21 @@ class Batcher:
 
         if running(): self.debug('Exiting _generate_batches early (exit flag)')
 
-        # Yield any remaining samples as the final batch
-        if not self._exit and len(self._remainder):
-            yield self._finalize_batch(self._remainder)
+        # Perform epoch completion tasks and yield any final batches
+        if not self._exit:
+            yield from self._finish_epoch()
+
+    
+    def _finish_epoch(self):
+        """ Yield remainder samples as the final batch in an epoch """
+        # If we repeat over multiple epochs, save remainders for the next epoch
+        if not self.repeat and any(map(len, self._remainder.values())):
+
+            # Get any remaining batches and combine into one batch to yield
+            has_any = lambda v: getattr(v, '__len__', lambda: 0)()
+            valid_k = [k for k,v in self._remainder.items() if has_any(v)]
+            batches = map(list, map(self._remainder.pop, valid_k))
+            yield self._finalize_batch(sum(batches, []))
 
 
     def _get_block_config(self, blocks, *block_idxs) -> dict:
@@ -1165,7 +1245,7 @@ class Batcher:
         """
 
         # Combine multiple blocks into a single array
-        message = f'Computed {len(blocks)} blocks'
+        message = f'Computed {len(blocks)} blocks via {block_idxs=}'
         with self.benchmark(f'_blocker {message}', self.info) as timer:
             
             # Need to find a better way to do this
@@ -1177,6 +1257,8 @@ class Batcher:
                     'task_bytes'   : self.task_bytes,
                     'task_samples' : self.block_size,
                     'features'     : self.features if self.fast_path else None,
+                    'seed'         : self.seed,
+                    'rng'          : self.random,
                 } | config) for find_matches in blocks])
 
             # But we can handle the case where find_matches was already called
@@ -1227,10 +1309,13 @@ class Batcher:
         with self.benchmark(f'_batcher {message}', self.debug):
             samples = samples.compute()
 
+            hashable  = getattr(config, '__hash__', None) is not None
+            conf_hash = hash(config if hashable else str(config))
+            remainder = self._remainder[conf_hash]
             if getattr(samples, 'make_objs', True):
                 samples = self._extract_features(samples)
-                n_remain = len(self._remainder)
-            else: n_remain = len((self._remainder or [[]])[0])
+                n_remain = len(remainder)
+            else: n_remain = len((remainder or [[]])[0])
 
         if self._exit:
             self.debug(f'Exiting _batcher early due to exit flag')
@@ -1269,10 +1354,10 @@ class Batcher:
                 # Use a lock to ensure _remainder is handled by only one thread
                 with self._remainder_lock:
                     samples, remainder = zip( *map(create_batches,
-                        samples, self._remainder or ([[]] * len(samples))) )
+                        samples, remainder or ([[]] * len(samples))) )
 
                     if len(remainder[0]):
-                        self._remainder = remainder
+                        self._remainder[conf_hash] = remainder
                 samples = list(map(self._finalize_batch, zip(*samples)))
 
             else:
@@ -1280,12 +1365,12 @@ class Batcher:
 
                 # Faster, but discards any (samples % batch_size) samples
                 if self.continuous:
-                    samples, _ = create_batches(samples, self._remainder, True)
+                    samples, _ = create_batches(samples, remainder, True)
                 else:
 
                     # Use a lock to ensure _remainder is handled by only one thread
                     with self._remainder_lock:
-                        samples, self._remainder = create_batches(samples, self._remainder)
+                        samples, self._remainder[conf_hash] = create_batches(samples, remainder)
 
                         # # Calculate attributes to create a view of the samples
                         # n_group = len(samples) // self.batch_size
@@ -1489,7 +1574,8 @@ class Batcher:
             # with memray.Tracker(f'output.bin.{os.getpid()}'):
 
             # Start adding batches to the queue
-            self._safe_queue_batches(queue, self._generator)
+            with ensure_with(self.prequeuer) as prequeuer:
+                self._safe_queue_batches(queue, map(prequeuer, self._generator))
             # for batch in self._generator:
             #     # with tf.device('GPU:0'):
             #     #     batch = [{k:tf.convert_to_tensor(v) for k,v in b.items()} for b in batch]
@@ -1512,7 +1598,7 @@ class Batcher:
 
         # Ensure queued items do not block this process from joining
         finally:
-            if self._exit: self.close(0, '_queue_batches')
+            if self._exit: self.close(0, origin='_queue_batches')
             self.debug(f'{self.process_name} waiting for queue to clear')
             while len(queue._buffer):
                 if not psutil.pid_exists(self._ppid):

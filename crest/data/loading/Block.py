@@ -238,11 +238,11 @@ class Block(BaseAbstract):
             keys, percent = keys_pct
             
             # Get the required number of elements for a valid window
-            n_total = np.prod([self.window_total[k] for k in keys])
+            n_total = np.prod([self.window_total.get(k, 1) for k in keys])
             windows = [slice(-s, e+1) for e, s in self.window_depth.values()]
 
             # Expand the indices to be broadcastable with the N-d window
-            idxs = self.data.coords[[self.axes[k] for k in keys]][:, valid]
+            idxs = self.sparse_data[...,0].coords[[self.axes[k] for k in keys]][:, valid]
             view = np.expand_dims(idxs, tuple(-(1+np.arange(len(windows)))))
             view = view + np.mgrid[tuple(windows)][:, None] # Broadcast window
             view = view.reshape(len(view), -1)              # (dims, samples)
@@ -255,14 +255,15 @@ class Block(BaseAbstract):
 
         # return idxs[ counts >= (percent * n_total) ]
         # Create a mask indicating valid elements, and extract indices 
-        data  = self.data 
+        data  = self.sparse_data[..., 0]
         valid = ~self.invalid(data.data)
         valid = reduce(window_count, self.valid_percent.items(), valid)
         
         # Remove indices outside of coordinate bounds (except virtual)
         # inbound = np.isfinite(self.coords)
         # inbound|= np.isnan(self.coords).all(tuple(range(self.ndim)))
-        return data.coords[:, valid][:-1].T# & inbound.all(-1).flatten()][:-1].T
+        return valid
+        # return data.coords[:, valid][:-1]# & inbound.all(-1).flatten()][:-1].T
         # return valid & inbound.all(-1).flatten()
 
 
@@ -349,17 +350,26 @@ class Block(BaseAbstract):
     @property
     def valid_coords(self) -> np.ndarray:
         """ Coordinate values for the valid locations """
-        if self.sparse and sum([np.sum(v) for v in self.window_depth.values()]+[0]) == 0:
-            return self.coords
-        #     return self.coords[:-1].T#.reshape(-1, self.coords.shape[-1])#[self.valid_windows]
+        if self.sparse:
+            if sum([np.sum(v) for v in self.window_depth.values()]+[0]) == 0:
+                return self.coords
+            coords = self.coords
+            if hasattr(coords, 'todense'):
+                n_dims = self._coords.shape[-1]
+                coords = coords.data.reshape((-1, n_dims))
+            return coords[self.valid_windows]
         return self.coords[tuple(self.valid_windows)]
 
 
     @property
     def valid_data(self) -> np.ndarray:
         """ Center data values for the valid locations """
-        if self.sparse and sum([np.sum(v) for v in self.window_depth.values()]+[0]) == 0:
-            return self.sparse_data.data.reshape(-1, self.sparse_data.data.shape[-1])
+        if self.sparse:
+            if sum([np.sum(v) for v in self.window_depth.values()]+[0]) == 0:
+                return self.sparse_data.data.reshape(-1, self.sparse_data.data.shape[-1])
+            n_dims = self._data.shape[-1]
+            data = self.sparse_data.data.reshape((-1, n_dims))
+            return data[self.valid_windows]
         return self.data[tuple(self.valid_windows)]
 
 
@@ -380,6 +390,8 @@ class Block(BaseAbstract):
         if min(self.valid_percent.values()) > 0:
             if self.sparse:
                 n = self.sparse_data.data.size
+                if n and any(t > 1 for t in self.window_total.values()):
+                    return not self.valid_windows.any()
                 # if not n:
                 #     self.__dict__.pop('sparse_data', None)
                 return n == 0
@@ -596,9 +608,42 @@ class Block(BaseAbstract):
         is_arr = isinstance(self._data, da.Array)
         n_feat = self._data.shape[-1] if is_arr else len(self._data)
         get_ix = lambda i: self._data[..., i] if is_arr else self._data[i]
+
+        # Sparse data matches require different handling than dense arrays
         if self.sparse:
-            data = np.stack([self.sparse_data[..., i].data[list(indices)] for i in range(len(features))], axis=-1).reshape((len(indices),1,1,1, len(features)))
-            coords = self.coords[list(indices)][:,None,None,None]
+            indices = list(indices)
+            
+            # If a window is requesting along at least one dimension, we need
+            # to construct a flattened grid of indices to pull from the 'dense'
+            # COO object representation (as advanced indexing isn't available)
+            if any(t > 1 for k,t in self.window_total.items()): 
+
+                # Gather window centers, add dimensions to allow broadcasting
+                newdim = tuple(range(ndims))
+                center = self.sparse_data[..., 0].coords[:, self.valid_windows]
+                window = np.expand_dims(center.T[indices] - lower, newdim).T
+
+                # Create the flattened meshgrid for indexing into sparse.COO
+                offset = map(np.arange, total)
+                offset = np.meshgrid(indices, *offset, indexing='ij')[1:]
+                window = [dim+right for dim, right in zip(window, offset)]
+                window = tuple(w.ravel() for w in window)
+
+                # Extract flat windows from the coordinate vectors and reshape
+                shapes = [samples] + list(total)
+                coords = [v[w].compute() for v,w in zip(self.coord_vecs,window)]
+                coords = np.stack(coords, axis=-1).reshape(shapes + [ndims])
+
+                # Extract flat windows from the data, reshape, and materialize
+                data = self.sparse_data[window]
+                data = data.reshape(shapes + [len(features)]).todense()
+
+            # If no window is requested, we can just pull directly out of the
+            # sparse representation rather than requiring dense materialization
+            else:
+                data = np.stack([self.sparse_data[..., i].data[indices] for i in range(len(features))], axis=-1)
+                data = data.reshape((len(indices),1,1,1, len(features)))
+                coords = self.coords[indices][:,None,None,None]
         else:
             data   = [get_ix(i).compute()[windows] for i in range(n_feat)]
             data   =   np.stack(data, -1).reshape((samples,)+shape+(len(features),))

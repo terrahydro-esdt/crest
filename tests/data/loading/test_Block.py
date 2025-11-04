@@ -223,6 +223,7 @@ def test_sparse():
 
 def test_valid_windows_sparse():
     output = example_block_sparse.valid_windows
+    output = example_block_sparse.sparse_data[..., 0].coords[:, output]
     expect = np.array([[1,1], [1,2]])
     assert((output == expect).all())
 
