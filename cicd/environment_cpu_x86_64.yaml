@@ -1,17 +1,22 @@
 # Hard requirements for running documentation generator (sphinx)
 # WARNING: Keep this up-to-date!
-name: crest_cpu
+name: ctest
 channels:
  - conda-forge
+ - nodefaults
 
 dependencies:
+  - awscli
   - boto3
   - bottleneck
+  - cfgrib
   - cloudpickle
   - crick
   - cython
   - dask=2025.5.0
   - dill
+  - earthaccess
+  - ecmwf-api-client
   - fsspec
   - geopandas
   - hdf5
@@ -33,6 +38,7 @@ dependencies:
   - pyarrow
   - pytest
   - python=3.12.11
+  - python-daemon
   - pyvis
   - rasterio
   - s3fs
@@ -42,13 +48,13 @@ dependencies:
   - setuptools
   - sparse
   - tensorflow=2.18.0=cpu_py312h69ecde4_52
-  - tiledb-py=0.34.0
+  - tiledb-py
   - tqdm
   - xarray
   - zarr=2.18.7
   
   # for docs
-  - docutils=0.20.1
+  - docutils
   - flit
   - furo
   - myst-nb

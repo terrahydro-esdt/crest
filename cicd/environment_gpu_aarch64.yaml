@@ -3,10 +3,12 @@
 name: crest_gpu
 channels:
  - conda-forge
+ - nodefaults
 
 dependencies:
   - absl-py
   - astunparse
+  - awscli
   - bazel=7.4.1
   - boto3
   - bottleneck
@@ -22,6 +24,8 @@ dependencies:
   - cython
   - dask=2025.5.0
   - dill
+  - earthaccess
+  - ecmwf-api-client
   - flatbuffers
   - fsspec
   - gast
@@ -63,6 +67,7 @@ dependencies:
   - pygments
   - pytest
   - python=3.12.11
+  - python-daemon
   - pyvis
   - rasterio
   - rich
