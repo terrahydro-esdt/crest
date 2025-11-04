@@ -259,6 +259,7 @@ def multiset_single(
     num_samples : int = -1,
     shuffle     : bool = True,
     logger      : logging.Logger | None = None, 
+    seed        : int | None = None,
 ):
     log = getattr(logger, 'debug', print)
     with Stopwatch('multiset_single preparation', log, silent=logger is None):
@@ -304,8 +305,11 @@ def multiset_single(
         
         if logger is not None:
             log(f'Set numba {chunksize=} (num threads={n_threads})')
-        
-    table = multiset_single_numba(c, array_lens, array_idxs, num_samples, shuffle)
+    # nb.set_num_threads(1)
+
+    if seed is None:
+        seed = np.random.randint(1e8)
+    table = multiset_single_numba(c, array_lens, array_idxs, num_samples, shuffle, seed)
     order = np.argsort(order)
     return np.array([i[t] for t,i in zip(table.T[order], orig_idxs)]).T
 
@@ -322,6 +326,8 @@ def find_neighbors(
     logger      : logging.Logger | None = None,
     eps         : float = 1e-5,
     num_samples : int   = -1,
+    seed        : int | None = None,
+    rng                      = None,
     grid_labels : Collection[str] | None = None,
     axis_labels : Collection[str] | None = None,
     **kwargs,
@@ -469,6 +475,9 @@ def find_neighbors(
         table = np.arange(len(coordinates[0]), dtype=itype)[None]
         count = np.ones_like(table)
         return table, count 
+
+    if rng is None:
+        rng = np.random.default_rng(seed)
 
     # Add small value to radius to account for numerical instability
     # Bear in mind this is related to the resolution's rounding
@@ -621,7 +630,8 @@ def find_neighbors(
                 resolutions = list(map(np.atleast_1d, resolutions))
 
             if method == 'multi':
-                table = multiset_single(coordinates, resolutions, num_samples, shuffle, logger)
+                seed  = (seed or 0) + rng.integers(1e8)
+                table = multiset_single(coordinates, resolutions, num_samples, shuffle, logger, seed)
             else:
                 # Optimize column and grid orderings
                 optimizations = True
@@ -827,7 +837,7 @@ def find_neighbors(
         if shuffle:
             if debug: print('Shuffling...')
             i = np.arange(len(table))
-            np.random.shuffle(i)
+            rng.shuffle(i)
             table = table[i].T
 
         # Lexigraphic sort to have consistent return order

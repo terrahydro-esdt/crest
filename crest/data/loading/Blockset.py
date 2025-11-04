@@ -81,7 +81,9 @@ class Blockset(BaseSet):
         features       : list | None = None,
         valid_percents : dict | None = None,
         drop_datafiles : list | None = None,
+        seed           : int  | None = None,
         verbose        : bool = False,
+        rng                   = None,
     ) -> da.Array:
         """Find all valid samples when matching up Blocks in this Blockset.
         
@@ -117,10 +119,12 @@ class Blockset(BaseSet):
             the names of Blocks which should be excluded when calculating the
             valid samples of this Blockset. See the docstring of Batcher for
             further discussion.
+        seed    : int | None 
+            Random seed.
         verbose : bool
             Adjust the logger verbosity level to DEBUG, and log all timing 
             benchmarks (even if Blockset was initialized with timing=False).
-
+            
         Returns
         -------
         dask.Array
@@ -182,6 +186,8 @@ class Blockset(BaseSet):
                     logger  = self.logger if self.timing else None,
                     shuffle = self.shuffle,
                     debug   = False,
+                    seed    = seed,
+                    rng     = rng,
                 )
 
             complete_time = time.time() - timer.start['time']

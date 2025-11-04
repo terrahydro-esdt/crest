@@ -1,9 +1,6 @@
 from pathlib import Path
 import warnings
 from dill import PicklingWarning,settings
-from .model import HierarchalTensorGraph, Model, NetworkXGraph, Node, TensorSpec
-from .data_server import DataServer
-from .nodes import CrossStitchLSTM,LSTM,LSTMCell
 
 ROOT_PATH = Path(__file__).parent
 
@@ -41,13 +38,20 @@ try:
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 except ImportError: pass
 
-# TileDB needs to be imported prior to TensorFlow
+# TileDB and pyarrow both need to be imported prior to TensorFlow, or they segfault
 try: import tiledb
+except ImportError: pass
+try: import pyarrow.parquet
+except ImportError: pass
+try: import pandas
 except ImportError: pass
 
 # from ._dask_monkeypatch import *
 from .model import HierarchalTensorGraph, Model, NetworkXGraph
 from .data_server import DataServer
+from .model import HierarchalTensorGraph, Model, NetworkXGraph, Node, TensorSpec
+from .data_server import DataServer
+from .nodes import CrossStitchLSTM,LSTM,LSTMCell
 
 warnings.filterwarnings('ignore',category=PicklingWarning)
 settings['byref'] = True

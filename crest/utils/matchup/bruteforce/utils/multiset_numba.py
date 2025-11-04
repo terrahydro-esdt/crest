@@ -499,10 +499,10 @@ def multiset_single(coordinates: list[np.ndarray], resolutions: list[np.ndarray]
 
 
 @nb.njit(
-    [i32[:,:](fx[:,::1], i32[:], i32[:,:], i32, boolean)#ListType(fx[:,::1]))#, ListType(fx[:,:,:]), i32[:])
+    [i32[:,:](fx[:,::1], i32[:], i32[:,:], i32, boolean, i32)#ListType(fx[:,::1]))#, ListType(fx[:,:,:]), i32[:])
     for fx in INPUT_TYPES], 
 cache=True, nogil=True, parallel=USE_PARALLEL, fastmath=True)
-def multiset_single_numba(arrays, array_lens, array_idxs, num_samples, shuffle):#, resolutions, steps):
+def multiset_single_numba(arrays, array_lens, array_idxs, num_samples, shuffle, seed):#, resolutions, steps):
     # a = np.arange(10)
     # _nd_image.zoom_shift(a, None, np.array([2.]), a, 0, 4, 0., 0, False)
     # print('shifted:',a)
@@ -514,7 +514,7 @@ def multiset_single_numba(arrays, array_lens, array_idxs, num_samples, shuffle):
 
     # We can return early if we generate the requested number of samples
     allow_early_stop = num_samples > 0
-    
+    np.random.seed(seed)
     n_arrays = len(array_lens)
     n_rows = array_lens[0]
     n_cols = arrays.shape[1]
@@ -667,6 +667,7 @@ def multiset_single_numba(arrays, array_lens, array_idxs, num_samples, shuffle):
         np.random.shuffle(zero_indices)
     
     for zero_index in nb.prange(n_rows):
+        np.random.seed(seed + zero_index)
         if allow_early_stop:
             if n_match.sum() >= num_samples:
                 continue
