@@ -29,6 +29,9 @@ from .Block import Block
 from .Blockset import Blockset
 from .backend import get_backend
 
+import logging
+logger = logging.getLogger(__name__)
+
 # Allow libraries like gdal, rasterio, and opencv to be missing
 try:                
     from .RegionalMaskGenerator import RegionalMaskGenerator
@@ -1360,12 +1363,12 @@ class Datafile(BaseAbstract):
                 overwrite = True
 
         if overwrite or (not dest.exists()):
-            print(f'\nCaching {self.name} to {dest}...')
+            logger.info(f'Caching {self.name} to {dest}...')
             # data['summary'] = self.summary(compute=True)
             if dest.exists():
-                print(f'Re-caching reason: {reason}')
+                logger.info(f'Re-caching reason: {reason}')
             if verbose:
-                print(self.to_string())
+                logger.debug(self.to_string())
 
         # Reinitialize this Datafile with the new cache
         # Anything handled by the cache (e.g. extent) can be dropped

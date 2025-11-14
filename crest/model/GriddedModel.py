@@ -199,6 +199,39 @@ class GriddedModel():
                 logger.debug('Calling Dataset.from_models with model class')
                 self.extent |= dt_extent
                 df_kwargs = {'*': {'extent': self.extent}}# | self.preprocessors
+                target_dt = self.config.process_dataset_args['target_dt']
+
+                if (isinstance(target_dt, str)):
+                    start_dt = (pd.Timestamp(target_dt) - pd.Timedelta(hours=(self.config.variable_depth['datetime'][0] + 1))).strftime('%Y-%m-%d %H:%M:%S')
+                    dt_range = {'datetime': [start_dt, pd.Timestamp(target_dt).strftime('%Y-%m-%d %H:%M:%S')]}
+                else:
+                    start_dt = (pd.Timestamp(target_dt[0]) - pd.Timedelta(hours=(self.config.variable_depth['datetime'][0] + 1))).strftime('%Y-%m-%d %H:%M:%S')
+                    dt_range = {'datetime': [start_dt, pd.Timestamp(target_dt[-1]).strftime('%Y-%m-%d %H:%M:%S')]}
+
+                logger.debug(f'{self.extent}=')
+
+                self.sm.record_dataset_info(
+                    start_dt=start_dt,
+                    end_dt=target_dt if isinstance(target_dt, str) else target_dt[-1]
+                )
+
+                self.extent = self.extent | dt_range
+                # self.extent = dt_range
+
+                logger.debug(f'{self.extent=}')
+
+                self.sm.record_dataset_info(
+                    start_dt=start_dt,
+                    end_dt=target_dt if isinstance(target_dt, str) else target_dt[-1]
+                )
+
+                datafile_kwargs = {'*': {'extent': self.extent}}
+                for key, funcs in self.preprocessors.items():
+                    datafile_kwargs[key] = {'preprocessors': funcs}
+
+                logger.info('Datafile arguments: ' + str(datafile_kwargs))
+                logger.debug("Calling Dataset.from_models with model class")
+
                 self.data = Dataset.from_models(verbose=False, **{
                     'models': [self.model_dataset_class],
                     'database_folder': self.config.database_path,

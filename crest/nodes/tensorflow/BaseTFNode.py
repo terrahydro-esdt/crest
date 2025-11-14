@@ -14,11 +14,14 @@ import tlz
 import json
 import os
 import importlib
+import logging
 
 from crest.utils import classproperty, plot_to_array
 from crest.base import BaseAbstract
 from crest.model import HierarchalTensorGraph as HTG
 from crest.model.Node import Node
+
+logger = logging.getLogger(__name__)
 
 
 # BaseNode.inputs/outputs type annotation. These two dictionaries should
@@ -340,8 +343,8 @@ class BaseTFNode(BaseAbstract):
                 if len(unable) == len(self.output_spec):
                     raise Exception(f'{error} any of the outputs!\n{solve}')
 
-                # Otherwise just print a warning
-                print(f'WARNING: {error} some outputs: {unable}\n{solve}')
+                # Otherwise just log a warning
+                logger.warning(f'{error} some outputs: {unable}\n{solve}')
 
     def convert_onehot(self, X: dict, onehot_classes: dict) -> dict:
         """ One-hot encode the given class features. 

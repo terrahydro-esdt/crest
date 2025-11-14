@@ -35,8 +35,7 @@ from crest.utils import Stopwatch, TimedHandler, ensure_with
 from .ThreadedFunction import ThreadedFunction
 from ..loading import Dataset, StructuredDataset, SampleSet, Block
 
-# from crest.utils.setup_logging import logger_setup
-# logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 # Some type checkers report Literal numbers aren't compatible with Number
 Number = numbers.Real | int | float
@@ -401,7 +400,7 @@ class Batcher:
                 if show_timing and (i == 0):
                     elapsed = time.time() - start
                     pbar.clear();   pbar2.clear()
-                    print(f'\nTime to first batch: {elapsed:.1f} seconds\n')
+                    logger.info(f'Time to first batch: {elapsed:.1f} seconds')
                     pbar.unpause(); pbar2.unpause()
                 pbar2.update(self.batch_size); pbar.update(1)   
                 yield tuple(batch) if isinstance(batch, list) else batch
@@ -551,7 +550,7 @@ class Batcher:
         # Create the cache if it does not yet exist
         cache_path = Path(cache_path)
         if not cache_path.exists():
-            if verbose: print(f'\nStoring batches to "{cache_path}"')
+            if verbose: logger.info(f'Storing batches to "{cache_path}"')
             cache_path.parent.mkdir(exist_ok=True, parents=True)
 
             # Create a Batcher object using the given parameters
@@ -1708,18 +1707,18 @@ class Batcher:
                     message = f'Received {sig.name} from {frame=}\n'
                     message+= 'Attempting graceful exit...\n'
                     try:    self.error(message)
-                    except: print(message)
+                    except: logger.error(message)
                     function(sig_id, frame)
                 else:
                     message = f'Received {sig.name} {count} times; '
                     message+= 'Halting immediately\n'
                     try:    self.error(message)
-                    except: print(message)
+                    except: logger.error(message)
                     while len(jobs):
                         try:
                             message = f'Terminating {jobs[-1]}'
                             try:    self.error(message)
-                            except: print(message)
+                            except: logger.error(message)
                             try: jobs[-1].terminate()
                             except: pass
                             jobs.pop()
@@ -1923,7 +1922,7 @@ class Batcher:
                         try:
                             backup.unlink()
                         except Exception as e:
-                            print(f'Exception removing file {backup}: {e}')
+                            logger.warning(f'Exception removing file {backup}: {e}')
 
                     # Make backup of main Batcher.log, as well as any process logs
                     for plog in filename.parent.glob(f'{filename.name}.*'):
@@ -1931,7 +1930,7 @@ class Batcher:
                         try:
                             plog.unlink()
                         except Exception as e:
-                            print(f'Exception removing file {plog}: {e}')
+                            logger.warning(f'Exception removing file {plog}: {e}')
 
                     shutil.copy(filename, Path(f'{filename.as_posix()}.backup'))
                 Path(self.log_file).write_text(header)

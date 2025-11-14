@@ -6,14 +6,17 @@ from operator import and_
 from abc import abstractmethod
 from typing import Union
 
-import matplotlib.pyplot as plt 
-import tensorflow as tf 
+import matplotlib.pyplot as plt
+import tensorflow as tf
 import seaborn as sns
 import numpy as np
-import tlz 
+import tlz
+import logging
 
 from crest.utils import classproperty, plot_to_array
 from crest.base import BaseAbstract
+
+logger = logging.getLogger(__name__)
 
 
 # BaseNode.inputs/outputs type annotation. These two dictionaries should 
@@ -331,8 +334,8 @@ class BaseNode(BaseAbstract):
                 if len(unable) == len(self.output_spec):
                     raise Exception(f'{error} any of the outputs!\n{solve}')
 
-                # Otherwise just print a warning
-                print(f'WARNING: {error} some outputs: {unable}\n{solve}')
+                # Otherwise just log a warning
+                logger.warning(f'{error} some outputs: {unable}\n{solve}')
 
     def convert_onehot(self, X: dict, onehot_classes: dict) -> dict:
         """ One-hot encode the given class features. 
