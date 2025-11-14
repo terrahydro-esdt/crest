@@ -13,6 +13,73 @@ class DataServer:
     """ Data Server for loading files from crest server"""
 
     @staticmethod
+    def _download_and_convert_zarr(dataset_name, url, path, files_config):
+        """
+        Helper method to download NetCDF files and convert to Zarr format.
+
+        Parameters
+        ----------
+        dataset_name : str
+            Name of the dataset being downloaded (for logging)
+        url : str
+            Base URL for downloading files
+        path : str
+            Local path to store the dataset
+        files_config : list of dict
+            List of file configurations with keys:
+            - 'netcdf': NetCDF filename
+            - 'zarr': Zarr path/filename
+            - 'zarr_processor': Optional function to process zarr conversion
+
+        Returns
+        -------
+        str
+            Path to the downloaded dataset, or None on failure
+        """
+        logger.debug(f'Loading dataset: {dataset_name}')
+        logger.debug(f'Source URL: {url}')
+        logger.debug(f'Target path: {path}')
+
+        # Make directory if it doesn't exist
+        if not os.path.isdir(path):
+            os.mkdir(path)
+            logger.debug(f'Created directory: {path}')
+
+        for config in files_config:
+            netcdf_name = config['netcdf']
+            zarr_name = config['zarr']
+            zarr_processor = config.get('zarr_processor', None)
+
+            file = os.path.join(path, netcdf_name)
+            file_zarr = os.path.join(path, zarr_name)
+
+            if not os.path.isfile(file) and not os.path.exists(file_zarr):
+                logger.debug(f'Downloading {netcdf_name} from {url}')
+                try:
+                    urlretrieve(url + netcdf_name, file)
+                    logger.info(f'Successfully downloaded {netcdf_name}')
+                except Exception as e:
+                    logger.error(f'Could not retrieve file from url: {url}{netcdf_name} - {e}')
+                    return None
+
+                # Convert files to zarr format
+                logger.debug(f'Converting {netcdf_name} to Zarr format')
+                with xr.open_dataset(file) as data:
+                    if zarr_processor:
+                        zarr_processor(data, path, netcdf_name)
+                    else:
+                        data.to_zarr(os.path.join(path, netcdf_name.split('.')[0] + '.zarr'))
+
+                # Remove the netcdf files
+                os.remove(file)
+                logger.debug(f'Removed temporary NetCDF file: {netcdf_name}')
+            else:
+                logger.debug(f'File already exists: {zarr_name}')
+
+        logger.info(f'Download complete for {dataset_name}')
+        return path
+
+    @staticmethod
     def load_mnist(path=''):
         """
         Creates a folder /mnist and stores MNIST
@@ -59,7 +126,7 @@ class DataServer:
                 try:
                     urlretrieve(url + name, file)
                 except Exception as e:
-                    print('Could not retrieve file from url:' + url, e)
+                    logger.error('Could not retrieve file from url:' + url, e)
                     return None
 
             # Create StructuredDatasets
@@ -115,7 +182,7 @@ class DataServer:
             try:
                 urlretrieve(url + name, file)
             except Exception as e:
-                print('Could not retrieve file from url: ' + url, e)
+                loger.error('Could not retrieve file from url: ' + url, e)
                 return None
 
         # Create StructuredDatasets
@@ -154,44 +221,23 @@ class DataServer:
         else:
             path = os.path.join(path, 'soil_moisture')
 
-        # Make directory if it doesn't exist
-        if not os.path.isdir(path):
-            os.mkdir(path)
+        # Custom processor for soil moisture files
+        def soil_moisture_processor(data, base_path, filename):
+            if filename in ['SMAP.nc', 'ERA5.nc']:
+                data.to_zarr(os.path.join(base_path, filename.split('.')[0] + '.zarr'))
+            else:
+                data.to_zarr(os.path.join(base_path, 'StaticAttributes.zarr/' + filename.split('.')[0]))
 
-        # list of the required files
-        names = ['SMAP.nc',
-                 'ERA5.nc',
-                 'Soil.nc',
-                 'Irrigation.nc']
-        zarr_names = ['SMAP.zarr',
-                      'ERA5.zarr',
-                      'StaticAttributes.zarr/Soil',
-                      'StaticAttributes.zarr/Irrigation']
-        for index, n in enumerate(names):
-            # Download files which are in
-            # netcdf formats
-            file = os.path.join(path, n)
-            file_zarr = os.path.join(path, zarr_names[index])
-            if not os.path.isfile(file) and not os.path.exists(file_zarr):
-                try:
-                    urlretrieve(url + n, file)
-                except Exception as e:
-                    print('Could not retrieve file from url: ' + url, e)
-                    return None
-            
-                # convert files to the zarr format
-                with xr.open_dataset(file) as data:
-                    if n in ['SMAP.nc', 'ERA5.nc']:
-                        data.to_zarr(os.path.join(path, n.split('.')[0]+'.zarr'))
-                    else:
-                        data.to_zarr(os.path.join(path, 'StaticAttributes.zarr/'+n.split('.')[0]))
-                
-                # remove the netcdf files
-                os.remove(file)
-        
-        print('Download complete at', path)
-        return path
-            
+        # Configuration for files to download
+        files_config = [
+            {'netcdf': 'SMAP.nc', 'zarr': 'SMAP.zarr', 'zarr_processor': soil_moisture_processor},
+            {'netcdf': 'ERA5.nc', 'zarr': 'ERA5.zarr', 'zarr_processor': soil_moisture_processor},
+            {'netcdf': 'Soil.nc', 'zarr': 'StaticAttributes.zarr/Soil', 'zarr_processor': soil_moisture_processor},
+            {'netcdf': 'Irrigation.nc', 'zarr': 'StaticAttributes.zarr/Irrigation', 'zarr_processor': soil_moisture_processor}
+        ]
+
+        return DataServer._download_and_convert_zarr('soil_moisture', url, path, files_config)
+
     @staticmethod
     def load_evapotranspiration(path=''):
         """
@@ -212,7 +258,7 @@ class DataServer:
         Path to the downloaded dataset
 
         """
-        # URL to the soil_moisture data on server
+        # URL to the evapotranspiration data on server
         url = 'https://portal.nccs.nasa.gov/datashare/astg/terrahydro/toy_dataset/'
 
         # Default path
@@ -221,36 +267,13 @@ class DataServer:
         else:
             path = os.path.join(path, 'evapotranspiration')
 
-        # Make directory if it doesn't exist
-        if not os.path.isdir(path):
-            os.mkdir(path)
+        # Configuration for files to download
+        files_config = [
+            {'netcdf': 'FLUXNET.nc', 'zarr': 'FLUXNET.zarr'},
+            {'netcdf': 'ERA5.nc', 'zarr': 'ERA5.zarr'}
+        ]
 
-        # list of the required files
-        names = ['FLUXNET.nc',
-                 'ERA5.nc',]
-        zarr_names = ['FLUXNET.zarr',
-                      'ERA5.zarr',]
-        for index, n in enumerate(names):
-            # Download files which are in
-            # netcdf formats
-            file = os.path.join(path, n)
-            file_zarr = os.path.join(path, zarr_names[index])
-            if not os.path.isfile(file) and not os.path.exists(file_zarr):
-                try:
-                    urlretrieve(url + n, file)
-                except Exception as e:
-                    print('Could not retrieve file from url: ' + url, e)
-                    return None
-            
-                # convert files to the zarr format
-                with xr.open_dataset(file) as data:
-                    data.to_zarr(os.path.join(path, n.split('.')[0]+'.zarr'))
-                
-                # remove the netcdf files
-                os.remove(file)
-        
-        print('Download complete at', path)
-        return path
+        return DataServer._download_and_convert_zarr('evapotranspiration', url, path, files_config)
     
     @classmethod
     def load(cls, name, path=''):
