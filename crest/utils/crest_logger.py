@@ -6,6 +6,7 @@ import json
 import os
 from enum import Enum
 from typing import Optional
+from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 
 class LogLevel(Enum):
     """Log level enumeration for type-safe level specification."""
@@ -98,7 +99,11 @@ def logger_setup(
     log_dir: str = "logs",
     format_type: str = "json",
     module_levels: Optional[dict[str, str | int]] = None,
-    clear_handlers: bool = True
+    clear_handlers: bool = True,
+    rotate: bool = False,
+    max_bytes: int = 10 * 1024 * 1024,
+    backup_count: int = 5,
+    rotate_when: Optional[str] = None
 ) -> None:
     """
     Configure CREST logging system with enhanced configurability.
@@ -134,6 +139,16 @@ def logger_setup(
         Example: {"crest.model": "DEBUG", "crest.data": "WARNING"}
     clear_handlers : bool, default=True
         Clear existing handlers before adding new ones (prevents duplicate logs).
+    rotate : bool, default=False
+        Enable log file rotation to prevent unbounded file growth.
+    max_bytes : int, default=10485760 (10MB)
+        Maximum size of log file before rotation (when rotate=True and rotate_when=None).
+    backup_count : int, default=5
+        Number of backup log files to keep when rotating.
+    rotate_when : str, optional
+        Time-based rotation interval: 'S' (seconds), 'M' (minutes), 'H' (hours),
+        'D' (days), 'midnight', 'W0'-'W6' (weekday). If specified, uses time-based
+        rotation instead of size-based.
 
     Environment Variables
     ---------------------
@@ -244,8 +259,28 @@ def logger_setup(
     if clear_handlers:
         crest.handlers.clear()
 
-    # File handler for application logs
-    fh_app = logging.FileHandler(app_path, mode="a", encoding="utf-8")
+    # File handler for application logs (with optional rotation)
+    if rotate:
+        if rotate_when:
+            # Time-based rotation
+            fh_app = TimedRotatingFileHandler(
+                app_path,
+                when=rotate_when,
+                backupCount=backup_count,
+                encoding="utf-8"
+            )
+        else:
+            # Size-based rotation
+            fh_app = RotatingFileHandler(
+                app_path,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding="utf-8"
+            )
+    else:
+        # No rotation
+        fh_app = logging.FileHandler(app_path, mode="a", encoding="utf-8")
+
     fh_app.setLevel(log_level)
     fh_app.setFormatter(formatter)
     crest.addHandler(fh_app)
@@ -265,7 +300,25 @@ def logger_setup(
     if clear_handlers:
         metrics.handlers.clear()
 
-    fh_met = logging.FileHandler(met_path, mode="a", encoding="utf-8")
+    # Metrics file handler (with optional rotation)
+    if rotate:
+        if rotate_when:
+            fh_met = TimedRotatingFileHandler(
+                met_path,
+                when=rotate_when,
+                backupCount=backup_count,
+                encoding="utf-8"
+            )
+        else:
+            fh_met = RotatingFileHandler(
+                met_path,
+                maxBytes=max_bytes,
+                backupCount=backup_count,
+                encoding="utf-8"
+            )
+    else:
+        fh_met = logging.FileHandler(met_path, mode="a", encoding="utf-8")
+
     fh_met.setLevel(logging.INFO)
     fh_met.setFormatter(formatter)
     metrics.addHandler(fh_met)
