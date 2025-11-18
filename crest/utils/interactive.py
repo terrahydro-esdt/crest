@@ -378,11 +378,12 @@ class InteractiveConsole(code.InteractiveConsole):
     - using tab to complete variable names
     - using tab to print object attrs/functions (e.g. obj.<tab>)
     - restoring history to the same place after executing previous command,
-      so multiple commands can be executed without needing to scroll back 
+      so multiple commands can be executed without needing to scroll back
       for each. Note: Windows only, due to pyreadline3 dependency
 
-    .. _readline reference: 
-        https://tiswww.case.edu/php/chet/readline/readline.html
+    References
+    ----------
+    .. _readline reference: https://tiswww.case.edu/php/chet/readline/readline.html
 
     """
 

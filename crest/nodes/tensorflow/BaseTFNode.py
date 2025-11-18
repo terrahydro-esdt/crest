@@ -57,7 +57,7 @@ class BaseTFNode(BaseAbstract):
     and output shapes for features coming into, and going out of, the model. 
     BaseNode objects will then automatically have input_spec and output_spec 
     attributes defined, allowing the specs to be directly passed into any 
-    HierarchalTensorGraph definition. As well, if forward/inverse normalization
+    HierarchalTensorGraph definition. As well, if forward and inverse normalization
     functions are given to the Model upon initialization, pre- and post-
     processing nodes will be added to the Model, which will normalize and 
     de-normalize the inputs and outputs of the Model, respectively.
@@ -89,7 +89,7 @@ class BaseTFNode(BaseAbstract):
         can be given to use as a different normalization procedure than the 
         feature normalization.
     debug          : bool
-        Determines whether y_true/y_pred statistics should be printed on each
+        Determines whether y_true and y_pred statistics should be printed on each
         batch inside the loss wrapper (default: False). Note this has no effect
         if no *normalize functions are given, or transform_loss=False. 
     plot_scatter   : bool

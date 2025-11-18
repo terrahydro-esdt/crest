@@ -97,20 +97,26 @@ def create_skiplist(array, res_l, res_r):
     """ Create a skip list for the given array.
 
     The skip list indicates the index for the next unique
-     value along each axis. For example, the array:
+    value along each axis. For example, the array::
+
         [ [1 1 2 0]
           [1 2 2 2]
           [2 1 1 2] ]
-    would generate the skip list:
+
+    would generate the skip list::
+
         [ [2 1 2 1]
           [2 2 2 3]
           [3 3 3 3] ]
-    However, we then also set each element to the minimum 
-    value left of the of the element in its row, 
-    i.e. `skip = np.minimum.accumulate(skip, axis=-1)`:
+
+    However, we then also set each element to the minimum
+    value left of the of the element in its row,
+    i.e. `skip = np.minimum.accumulate(skip, axis=-1)`::
+
         [ [2 1 1 1]
           [2 2 2 2]
           [3 3 3 3] ]
+
     This ensures no potential matches are missed when the
     skip list is used to jump forward during bruteforce.
 

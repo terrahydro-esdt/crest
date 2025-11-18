@@ -15,10 +15,11 @@ class BlockConfig(dict):
     batches (due to a lack of samples currently available from that config).
     
     To determine that, we can check three values that track the current status
-    with respect to each configuration: 
-        1. how many samples are queued and waiting to be used (n_queued) 
-        2. how many workers are computing a block (n_worker) 
-        3. how many samples can be expected from a block (avg_size)
+    with respect to each configuration:
+
+    1. how many samples are queued and waiting to be used (n_queued)
+    2. how many workers are computing a block (n_worker)
+    3. how many samples can be expected from a block (avg_size)
     
     From these, we can calculate the currently expected number of samples for
     each configuration (n_queued + n_worker * avg_size) and pick the 
