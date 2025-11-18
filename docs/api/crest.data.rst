@@ -1,12 +1,6 @@
 crest.data package
 ==================
 
-.. automodule:: crest.data
-   :members:
-   :undoc-members:
-   :show-inheritance:
-   :imported-members:
-
 Subpackages
 -----------
 
@@ -16,3 +10,11 @@ Subpackages
    crest.data.batching
    crest.data.loading
    crest.data.transform
+
+Module contents
+---------------
+
+.. automodule:: crest.data
+   :members:
+   :undoc-members:
+   :show-inheritance:

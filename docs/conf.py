@@ -41,7 +41,7 @@ always_use_bars_union = True
 #    "sphinx.ext.viewcode",
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "**.ipynb_checkpoints"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "**.ipynb_checkpoints", "examples/*.nblink"]
 
 # The suffix of source filenames.
 source_suffix = [".rst", ".md"]
@@ -86,6 +86,8 @@ autodoc_mock_imports = [
     "geopandas",
     "cv2",
     "shapely",
+    "dill",
+    "prettytable",
 ]
     
   # -- Options for HTML output -------------------------------------------------
@@ -102,3 +104,5 @@ napoleon_include_init_with_doc = True
 nbsphinx_allow_errors = True
 nbsphinx_kernel_name = "python3"
 nbsphinx_execute = "never"
+nbsphinx_timeout = -1  # No timeout
+nbsphinx_require_js_path = ""  # Don't require JS

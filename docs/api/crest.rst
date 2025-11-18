@@ -14,6 +14,7 @@ Subpackages
    crest.data_server
    crest.engine
    crest.model
+   crest.nodes
    crest.utils
 
 Module contents
@@ -21,5 +22,6 @@ Module contents
 
 .. automodule:: crest
    :members:
-   :show-inheritance:
    :undoc-members:
+   :show-inheritance:
+   :no-index:
