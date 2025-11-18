@@ -1,9 +1,6 @@
 """
-Centralized logging service for CREST.
-
 This module provides a unified interface for configuring and accessing loggers
-throughout the CREST application. It wraps the underlying logger_setup functionality
-and provides additional convenience methods for common logging patterns.
+throughout the CREST application. It wraps logger_setup functionality.
 
 Examples
 --------
@@ -12,27 +9,27 @@ Initialize logging at application startup:
 >>> from crest.utils.logging_service import LoggingService
 >>> LoggingService.initialize(log_level="INFO", console_level="WARNING")
 
-Get a logger in any module:
+Then get a logger in any module:
 
 >>> from crest.utils.logging_service import get_logger
 >>> logger = get_logger(__name__)
 >>> logger.info("Application started")
 
-Use context-aware logging:
+Can also use context-aware logging:
 
 >>> from crest.utils.logging_service import log_context
 >>> with log_context(run_id="exp_001", stage="training"):
 ...     logger.info("Training started")  # Will include run_id and stage
 """
 
-import logging
 import inspect
-from typing import Optional, Any
+import logging
 from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
+from typing import Any, Optional
 
-from .crest_logger import logger_setup, LogLevel
+from .crest_logger import LogLevel, logger_setup
 
 
 class LoggingService:
@@ -81,7 +78,7 @@ class LoggingService:
         format_type: str = "json",
         module_levels: Optional[dict[str, str | int]] = None,
         clear_handlers: bool = True,
-        force: bool = False
+        force: bool = False,
     ) -> None:
         """
         Initialize the CREST logging system.
@@ -134,15 +131,15 @@ class LoggingService:
 
         # Store configuration
         cls._config = {
-            'log_file': log_file,
-            'metrics_file': metrics_file,
-            'console': console,
-            'log_level': log_level,
-            'console_level': console_level,
-            'log_dir': log_dir,
-            'format_type': format_type,
-            'module_levels': module_levels,
-            'clear_handlers': clear_handlers,
+            "log_file": log_file,
+            "metrics_file": metrics_file,
+            "console": console,
+            "log_level": log_level,
+            "console_level": console_level,
+            "log_dir": log_dir,
+            "format_type": format_type,
+            "module_levels": module_levels,
+            "clear_handlers": clear_handlers,
         }
 
         # Initialize logging
@@ -191,8 +188,8 @@ class LoggingService:
             cls.initialize()
 
         # Ensure logger is under crest hierarchy
-        if not name.startswith('crest'):
-            name = f'crest.{name}'
+        if not name.startswith("crest"):
+            name = f"crest.{name}"
 
         return logging.getLogger(name)
 
@@ -263,7 +260,7 @@ class LoggingService:
 
         # Clear all handlers from crest loggers
         for logger_name in list(logging.Logger.manager.loggerDict.keys()):
-            if logger_name.startswith('crest'):
+            if logger_name.startswith("crest"):
                 logger = logging.getLogger(logger_name)
                 logger.handlers.clear()
                 logger.setLevel(logging.NOTSET)
@@ -300,7 +297,7 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
         frame = inspect.currentframe()
         if frame and frame.f_back:
             caller_globals = frame.f_back.f_globals
-            name = caller_globals.get('__name__', 'crest')
+            name = caller_globals.get("__name__", "crest")
 
     return LoggingService.get_logger(name)
 
@@ -386,6 +383,7 @@ def log_function_call(logger: Optional[logging.Logger] = None, level: str = "DEB
     ... def important_function():
     ...     pass
     """
+
     def decorator(func):
         nonlocal logger
         if logger is None:
@@ -410,6 +408,7 @@ def log_function_call(logger: Optional[logging.Logger] = None, level: str = "DEB
                 raise
 
         return wrapper
+
     return decorator
 
 
@@ -453,26 +452,27 @@ def log_execution_time(logger: Optional[logging.Logger] = None, level: str = "IN
                 elapsed = time.time() - start_time
                 log_method(
                     f"{func.__name__} completed in {elapsed:.3f}s",
-                    extra={'duration_sec': elapsed, 'function': func.__name__}
+                    extra={"duration_sec": elapsed, "function": func.__name__},
                 )
                 return result
             except Exception as e:
                 elapsed = time.time() - start_time
                 logger.exception(
                     f"{func.__name__} failed after {elapsed:.3f}s",
-                    extra={'duration_sec': elapsed, 'function': func.__name__}
+                    extra={"duration_sec": elapsed, "function": func.__name__},
                 )
                 raise
 
         return wrapper
+
     return decorator
 
 
 # Convenience exports
 __all__ = [
-    'LoggingService',
-    'get_logger',
-    'log_context',
-    'log_function_call',
-    'log_execution_time',
+    "LoggingService",
+    "get_logger",
+    "log_context",
+    "log_function_call",
+    "log_execution_time",
 ]

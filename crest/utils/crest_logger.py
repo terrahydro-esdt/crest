@@ -1,15 +1,17 @@
 import datetime as dt
+import json
 import logging
+import os
 import pathlib
 import sys
-import json
-import os
 from enum import Enum
-from typing import Optional
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
+from typing import Optional
+
 
 class LogLevel(Enum):
     """Log level enumeration for type-safe level specification."""
+
     DEBUG = logging.DEBUG
     INFO = logging.INFO
     WARNING = logging.WARNING
@@ -45,7 +47,7 @@ LOG_RECORD_BUILTIN_ATTRS = {
 
 
 class CrestJSONFormatter(logging.Formatter):
-    """ Define a CREST JSON Formatter used by CREST loggers
+    """Define a CREST JSON Formatter used by CREST loggers
 
     Allows for the storage of logs in JSON format so that they can be programmatically
     parsed.
@@ -69,7 +71,9 @@ class CrestJSONFormatter(logging.Formatter):
     def _prepare_log_dict(self, record: logging.LogRecord) -> dict[str, any]:
         always = {
             "message": record.getMessage(),
-            "timestamp": dt.datetime.fromtimestamp(record.created, tz=dt.timezone.utc).isoformat(),
+            "timestamp": dt.datetime.fromtimestamp(
+                record.created, tz=dt.timezone.utc
+            ).isoformat(),
         }
         if record.exc_info is not None:
             always["exc_info"] = self.formatException(record.exc_info)
@@ -77,8 +81,9 @@ class CrestJSONFormatter(logging.Formatter):
             always["stack_info"] = self.formatStack(record.stack_info)
 
         front = {
-            key: (always.pop(val, None)
-                  if val in always else getattr(record, val, None))
+            key: (
+                always.pop(val, None) if val in always else getattr(record, val, None)
+            )
             for key, val in self.fmt_keys.items()
         }
         out = {k: v for k, v in front.items() if v is not None}
@@ -103,17 +108,10 @@ def logger_setup(
     rotate: bool = False,
     max_bytes: int = 10 * 1024 * 1024,
     backup_count: int = 5,
-    rotate_when: Optional[str] = None
+    rotate_when: Optional[str] = None,
 ) -> None:
     """
-    Configure CREST logging system with enhanced configurability.
-
-    This function sets up the logging infrastructure for CREST, including:
-    - Application logs (all log messages)
-    - Metrics logs (isolated metrics tracking)
-    - Console output (optional)
-    - Per-module log level configuration
-    - Environment variable support
+    This function sets up the logging infrastructure for CREST.
 
     Parameters
     ----------
@@ -235,27 +233,29 @@ def logger_setup(
 
     # Create formatter based on format_type
     if format_type == "json":
-        formatter = CrestJSONFormatter(fmt_keys={
-            "level": "levelname",
-            "logger": "name",
-            "kind": "kind",
-            "stage": "stage",
-            "run": "run",
-        })
+        formatter = CrestJSONFormatter(
+            fmt_keys={
+                "level": "levelname",
+                "logger": "name",
+                "kind": "kind",
+                "stage": "stage",
+                "run": "run",
+            }
+        )
     elif format_type == "text":
         formatter = logging.Formatter(
-            fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
+            fmt="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
     else:
-        raise ValueError(f"Invalid format_type: {format_type}. Must be 'json' or 'text'")
+        raise ValueError(
+            f"Invalid format_type: {format_type}. Must be 'json' or 'text'"
+        )
 
-    # Configure root CREST logger
     crest = logging.getLogger("crest")
     crest.setLevel(log_level)
     crest.propagate = False
 
-    # Clear existing handlers if requested
     if clear_handlers:
         crest.handlers.clear()
 
@@ -264,18 +264,12 @@ def logger_setup(
         if rotate_when:
             # Time-based rotation
             fh_app = TimedRotatingFileHandler(
-                app_path,
-                when=rotate_when,
-                backupCount=backup_count,
-                encoding="utf-8"
+                app_path, when=rotate_when, backupCount=backup_count, encoding="utf-8"
             )
         else:
             # Size-based rotation
             fh_app = RotatingFileHandler(
-                app_path,
-                maxBytes=max_bytes,
-                backupCount=backup_count,
-                encoding="utf-8"
+                app_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
             )
     else:
         # No rotation
@@ -285,14 +279,14 @@ def logger_setup(
     fh_app.setFormatter(formatter)
     crest.addHandler(fh_app)
 
-    # Console handler (optional)
+    # Console handler
     if console:
         ch = logging.StreamHandler(sys.stderr)
         ch.setLevel(console_level)
         ch.setFormatter(formatter)
         crest.addHandler(ch)
 
-    # Configure metrics logger (isolated to its file)
+    # Configure metrics logger
     metrics = logging.getLogger("crest.metrics")
     metrics.setLevel(logging.INFO)
     metrics.propagate = False
@@ -304,17 +298,11 @@ def logger_setup(
     if rotate:
         if rotate_when:
             fh_met = TimedRotatingFileHandler(
-                met_path,
-                when=rotate_when,
-                backupCount=backup_count,
-                encoding="utf-8"
+                met_path, when=rotate_when, backupCount=backup_count, encoding="utf-8"
             )
         else:
             fh_met = RotatingFileHandler(
-                met_path,
-                maxBytes=max_bytes,
-                backupCount=backup_count,
-                encoding="utf-8"
+                met_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
             )
     else:
         fh_met = logging.FileHandler(met_path, mode="a", encoding="utf-8")
@@ -383,9 +371,10 @@ def install_global_exception_logger(logger_name: str = "crest"):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
             return
         logger = logging.getLogger(logger_name)
-        logger.critical("Uncaught exception occurred",
-                        exc_info=(exc_type, exc_value, exc_traceback))
-        
+        logger.critical(
+            "Uncaught exception occurred", exc_info=(exc_type, exc_value, exc_traceback)
+        )
+
         original_hook(exc_type, exc_value, exc_traceback)
 
     sys.excepthook = log_uncaught_exceptions
