@@ -46,7 +46,7 @@ Number = numbers.Real | int | float
 #   a large number of GIL releases which can cause additional slowdown
 WAIT_TIME = 0.01
 
-def identity(x):
+def identity(batcher, x):
     return x
 
     
@@ -629,7 +629,7 @@ class Batcher:
         else:                self._generator
 
         # Enter the prefetcher context manager
-        with ensure_with(self.prefetcher) as prefetcher:
+        with ensure_with(partial(self.prefetcher, self)) as prefetcher:
 
             # Start the thread that prefetches batches 
             if getattr(self, '_prefetch_queue', None) is None:
@@ -1629,7 +1629,7 @@ class Batcher:
             # with memray.Tracker(f'output.bin.{os.getpid()}'):
 
             # Start adding batches to the queue
-            with ensure_with(self.prequeuer) as prequeuer:
+            with ensure_with(partial(self.prequeuer, self)) as prequeuer:
                 self._safe_queue_batches(queue, map(prequeuer, self._generator))
             # for batch in self._generator:
             #     # with tf.device('GPU:0'):
