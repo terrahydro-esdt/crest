@@ -10,6 +10,7 @@ import bottleneck as bn
 import xarray as xr
 import pandas as pd
 import numpy as np 
+import dask
 
 from crest.base import BaseAbstract
 from crest.utils import Stopwatch
@@ -645,7 +646,7 @@ class Block(BaseAbstract):
                 data = data.reshape((len(indices),1,1,1, len(features)))
                 coords = self.coords[indices][:,None,None,None]
         else:
-            data   = [get_ix(i).compute()[windows] for i in range(n_feat)]
+            data   = da.compute([dask.delayed(get_ix(i))[windows] for i in range(n_feat)])
             data   =   np.stack(data, -1).reshape((samples,)+shape+(len(features),))
             coords = self.coords[windows].reshape((samples,)+shape+(len(self.dims),))
         

@@ -49,7 +49,7 @@ WAIT_TIME = 0.01
 def identity(x):
     return x
 
-
+    
 class Batcher:
     """Handles creating batches of data samples.
 
@@ -728,26 +728,55 @@ class Batcher:
 
     def _safe_queue_batches(self, queue, batches):
         """ Add batches to a queue without the risk of deadlocking """
-        try:
-            for batch in batches:
-                count = 0
-                seconds = 5 * 60
-    
-                # Ensure exit flag is monitored while waiting on a full queue
-                while not self._exit:
-                    try:
-                        queue.put_nowait(batch)
+        class CheckExit(threading.Timer):
+            def __init__(self, exit_flag, *args, check_interval=1, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.check_interval = check_interval
+                self.interval_count = 0
+                self.daemon = True
+                self.exit_flag = exit_flag
+                self.exit = False
+
+            def __enter__(self):
+                self.start() 
+                return self
+
+            def __exit__(self, *args, **kwargs):
+                self.exit = True
+
+            def reset(self):
+                self.interval_count = 0
+                
+            def run(self):
+                while not self.finished.wait(self.check_interval):
+                    if self.exit or self.exit_flag():
                         break
-                    except Full:
-                        count += 1
-                        while (not self._exit) and queue.full():
-                            time.sleep(WAIT_TIME)
-    
-                    # Notify when the queue has been full for a long time
-                    if (count % (seconds*10)) == 0:
-                        self.info(f'_safe_queue_batches: {queue=} full ' +
-                                  f'for at least {seconds} seconds')
-                if self._exit: break
+                    self.interval_count += 1
+                    if (self.interval_count % self.interval) == 0:
+                        self.function(*self.args, **self.kwargs)
+                        
+        try:
+            with CheckExit(lambda: self._exit, 180, self._get_threads_traceback) as batch_monitor:
+                for batch in batches:
+                    batch_monitor.reset()
+                    count = 0
+                    seconds = 5 * 60
+        
+                    # Ensure exit flag is monitored while waiting on a full queue
+                    while not self._exit:
+                        try:
+                            queue.put_nowait(batch)
+                            break
+                        except Full:
+                            count += 1
+                            while (not self._exit) and queue.full():
+                                time.sleep(WAIT_TIME)
+        
+                        # Notify when the queue has been full for a long time
+                        if (count % (seconds*10)) == 0:
+                            self.info(f'_safe_queue_batches: {queue=} full ' +
+                                      f'for at least {seconds} seconds')
+                    if self._exit: break
         except Empty:
             raise
         except Exception as e:
@@ -927,7 +956,7 @@ class Batcher:
                 'logger'   : self._logger,
             }
             self._batch_tasks = ThreadedFunction(self._batcher, **kwargs)
-            self._block_tasks = ThreadedFunction(self._blocker, **kwargs)
+            self._block_tasks = ThreadedFunction(self._blocker, **(kwargs|{'capacity':1}))
 
             divider = ''.join(['-'] * 57)
             message = '\n\t'.join(['', divider, 'Completed epoch'])
@@ -981,16 +1010,16 @@ class Batcher:
         # No repeating blocks means we use dynamic block allocations in order
         # to provide load balancing; i.e. blocks are allocated to workers via 
         # a shared queue rather than a static subset 
-        static_alloc = self.repeat or self.duplicate or (self.workers <= 1)
+        static_alloc = self.repeat or self.duplicate or (self.workers <= 1) or self.block_sync
         self.info(f'{static_alloc=}: {self.repeat=} {self.duplicate=} {self.workers=}')
 
-        def next_block(timeout=2):
+        def next_block():
             # Since the block queue indices are based on numblocks rather than
             # the true block count, there may be indices greater than the total
             # number available - so we simply poll until a valid one is found
             with self._block_queue_lock:
-                while (idx := self._block_queue.get(timeout)) >= len(subsets): 
-                    pass
+                while (idx := self._block_queue.get_nowait()) >= len(subsets): 
+                    pass                        
             self.debug(f'{self.pidx=} pulling block {idx}')
             return subsets[idx]
 
@@ -1060,7 +1089,7 @@ class Batcher:
                     # All work is finished once the block queue is empty
                     try:          self._block_tasks(next_block())
                     except Empty: subsets = []
-                        
+
             # Yield any batches that have been generated
             for task in self._batch_tasks:
                 yield from getattr(task, 'result', lambda: task)()
@@ -1080,6 +1109,7 @@ class Batcher:
                     #     blk_lim = len(Block._refs) + 1
                     #     self.warning(f'Blocks may not be clearing memory: '+
                     #                  f'{blk_lim-1} block objects held')
+
             elif len(self._batch_tasks) == 0:
                 next(self._block_tasks)
 
@@ -1901,7 +1931,22 @@ class Batcher:
                 return self.dataset
         return [self.dataset]
 
+    
+    def _get_threads_traceback(self, limit=3, names=['MainThread', '_batcher', '_blocker']):
+        """ Prints the stack trace for active threads """
+        log = f'{self.process_name} Threads Status:\n' + ('_'*40) + '\n'
+        for thread_id, frame in sys._current_frames().items():
+            # Get the thread object corresponding to the frame
+            for t in threading.enumerate():
+                if t.ident == thread_id:
+                    if not names or any(n in t.name for n in names):
+                        log += f'Thread: {t.name} (ID: {thread_id})\n'
+                        log += ''.join(traceback.format_stack(frame, limit=limit))
+                        log += '-'*20 + '\n'
+                        break
+        self.debug(log)
 
+    
     @cached_property
     def _logger(self):
         """ Create the logging object which writes logs to a file """

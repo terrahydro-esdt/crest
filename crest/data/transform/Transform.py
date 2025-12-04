@@ -542,7 +542,8 @@ class Transform(BaseAbstract):
         """ Transform using the data quantiles and the target distribution """
 
         def _do_transform(x):
-
+            x = tf.cast(x, tf.float32)
+            
             # Clip input values to quantile bounds to avoid extrapolation
             x_clipped = tf.clip_by_value(x, quantiles[0], quantiles[-1])
     
