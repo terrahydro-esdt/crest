@@ -702,14 +702,19 @@ class Batcher:
         if self.workers and not self._exit:
             self.close(origin='_prefetched_batches')
 
-            
+    
+    def _get_qsize(self, queue):
+        try:    return queue.qsize()
+        except: return 0
+
+
     def _get_status(self) -> list[str]:
         """ Status report on internal resources """
         status = []
         if hasattr(self, '_queue'):
-            status += [f'Worker queue size: ~{self._queue.qsize()}']
+            status += [f'Worker queue size: ~{self._get_qsize(self._queue)}']
         if hasattr(self, '_prefetch_queue'):
-            status += [f'Prefetch queue size: ~{self._prefetch_queue.qsize()}']
+            status += [f'Prefetch queue size: ~{self._get_qsize(self._prefetch_queue)}']
         if hasattr(self, '_prefetch_thread'):
             status += [f'Prefetch thread alive: {self._prefetch_thread.is_alive()}']
 
@@ -1098,7 +1103,7 @@ class Batcher:
             if self._block_tasks.threads > 0:
                 if len(list(self._block_tasks)):
                     remaining = (len(subsets) + len(self._block_tasks)
-                        if static_alloc else self._block_queue.qsize())
+                        if static_alloc else self._get_qsize(self._block_queue))
                     task_secs = runtime(remaining)
                     tps = Stopwatch.readable(task_secs, 'time')
                     eta = Stopwatch.readable(task_secs * remaining, 'time')
