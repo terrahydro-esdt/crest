@@ -33,6 +33,8 @@ class Config:
             with open(self.config_file, 'r') as file:
                 self._config = yaml.safe_load(file)
 
+            logger.info(f'Configurations loaded {self._config}')
+
             return self._config
         except Exception as e:
             logger.exception(f'Could not safetly load YAML. {e}')

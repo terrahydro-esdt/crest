@@ -3,6 +3,8 @@ import logging
 import pathlib
 import sys
 import json
+import io
+import re
 
 LOG_RECORD_BUILTIN_ATTRS = {
     "args",
@@ -76,49 +78,72 @@ class CrestJSONFormatter(logging.Formatter):
                 out[k] = v
         return out
 
+class StreamToLogger(io.TextIOBase):
 
-def logger_setup(log_file: str = "crest.log.jsonl",
-                 metrics_file: str = "metrics.jsonl",
-                 console: bool = True) -> None:
-    logs_dir = pathlib.Path("logs")
+    def __init__(self, logger, level=logging.INFO):
+        self.logger = logger
+        self.level = level
+        self._buffer = ""
+
+    def write(self, buf):
+        ansi_re = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
+
+        if not buf:
+            return
+        # Strip ANSI sequences
+        buf = ansi_re.sub('', buf)
+        self._buffer += buf
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            line = line.strip()
+            if line:
+                self.logger.log(self.level, line)
+
+    def flush(self):
+        if self._buffer:
+            line = self._buffer.strip()
+            if line:
+                self.logger.log(self.level, line)
+            self._buffer = ""
+
+def logger_setup(config_path: str,
+                enabled: bool = True,
+                env_vars: dict = None,
+                logs_dir = pathlib.Path("logs")):
+
+    if (not enabled):
+        logging.disable(logging.CRITICAL)
+        print("[logger_setup] Logging disabled")
+        return 
+
+    if (not isinstance(logs_dir, pathlib.Path)):
+        logs_dir = pathlib.Path(logs_dir)
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    app_path = logs_dir / log_file
-    met_path = logs_dir / metrics_file
+    print(f"[logger_setup] Using logging config: {config_path} and logs dir: {logs_dir}")
 
-    # Create formatter once
-    formatter = CrestJSONFormatter(fmt_keys={
-        "level": "levelname",
-        "logger": "name",
-        "kind": "kind",          
-        "stage": "stage",        
-        "run": "run",            
-    })
+    with open(config_path) as f:
+        raw = f.read()
 
-    # App logger
+    if env_vars:
+        for key, val in env_vars.items():
+            print(f"[logger_setup] Replacing env var {key} with {val}")
+            raw = raw.replace("${" + key + "}", val)
+
+    config = json.loads(raw)
+    logging.config.dictConfig(config)
+
     crest = logging.getLogger("crest")
-    crest.setLevel(logging.INFO)
-    crest.propagate = False
-    fh_app = logging.FileHandler(app_path, mode="a", encoding="utf-8")
-    fh_app.setLevel(logging.INFO)
-    fh_app.setFormatter(formatter)
-    crest.addHandler(fh_app)
-    
-    if console:
-        ch = logging.StreamHandler(sys.stderr)
-        ch.setLevel(logging.INFO)
-        ch.setFormatter(formatter)
-        crest.addHandler(ch)
+    sys.stdout = StreamToLogger(crest, logging.INFO)
+    sys.stderr = StreamToLogger(crest, logging.ERROR)
 
-    # Metrics logger (isolated to its file)
-    metrics = logging.getLogger("crest.metrics")
-    metrics.setLevel(logging.INFO)
-    metrics.propagate = False
-    fh_met = logging.FileHandler(met_path, mode="a", encoding="utf-8")
-    fh_met.setLevel(logging.INFO)
-    fh_met.setFormatter(formatter)
-    metrics.addHandler(fh_met)
+    crest.info("Crest logger initialized.")
+    for h in crest.handlers:
+        crest.info(f"Crest logger handler: {h}")
+        if isinstance(h, logging.FileHandler):
+            crest.info(f"  -> log file: {h.baseFilename}")
 
+    return crest
 
 def install_global_exception_logger(logger_name: str = "crest"):
     """Logs all uncaught exceptions to the given logger."""

@@ -3,7 +3,7 @@ from crest.configuration.Config import Config
 import os
 import logging
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger(__name__)
 
 
 class DigitalReplicaEngine():
@@ -12,7 +12,7 @@ class DigitalReplicaEngine():
         The update of the model is performed with the data specified in the config. 
     """
 
-    def __init__(self, config: str, model_loader=None, process_dataset=None):
+    def __init__(self, config: str | Config, **kwargs):
         """ Initializes the DigitalReplicaEngine. 
 
         Parameters
@@ -21,22 +21,30 @@ class DigitalReplicaEngine():
             Path to the YAML format configuration file that helps to configure the digital
             replica engine and the gridded model. 
         """
-        logger.info(f'Initializing DigitalReplicaEngine')
+        log.info(f'Initializing DigitalReplicaEngine')
 
-        logger.info(f'Load configuration.')
-        self.config = Config(config)
+        log.info(f'Load configuration.')
+        if (isinstance(config, str)):
+            self.config = Config(config)
+        else:
+            self.config = config
 
-        self.model_loader = model_loader
-        self.process_dataset = process_dataset
+        self.model_loader = kwargs.get('model_loader', None)
+        self.process_dataset = kwargs.get('process_dataset', None)
+        self.process_model = kwargs.get('process_model', None)
+        self.data_schema_adapter = kwargs.get('data_schema_adapter', None)
 
-        logger.info(
+        log.info(
             'Create the directory required to store all out-going data.')
-        if not os.path.exists(self.config.output_path):
-            os.makedirs(self.config.output_path)
-            os.makedirs(os.path.join(self.config.output_path, 'logs'))
 
-        logger.info(f'Initialize Gridded Model to initiate an update.')
-        self.gridModel = GriddedModel(self.config, alt_model_loader=model_loader)
+        output_path = self.config.archive_kwargs['output_path']
+        if output_path is not None and not os.path.exists(output_path):
+            os.makedirs(output_path)
+            os.makedirs(os.path.join(output_path, 'logs'))
+
+        log.info(f'Initialize Gridded Model to initiate an update.')
+        self.gridModel = GriddedModel(
+            self.config, alt_model_loader=self.model_loader, process_model=self.process_model)
 
     def reset_config(self, new_config: Config | str):
         """ Set self.config to different configuration. 
@@ -63,7 +71,7 @@ class DigitalReplicaEngine():
             self.gridModel = GriddedModel(self.config)
 
         except Exception as e:
-            logger.exception(f'Could not set configuration for DRE. {e=}')
+            log.exception(f'Could not set configuration for DRE. {e=}')
             return False
 
     def update_config(self, new_config: Config | str | dict):
@@ -83,7 +91,7 @@ class DigitalReplicaEngine():
             True if the merge was successful and False otherwise.
         """
 
-        logger.info('Updating the config with input.')
+        log.info('Updating the config with input.')
         try:
             nc = None
             if (isinstance(new_config, str)):
@@ -94,26 +102,31 @@ class DigitalReplicaEngine():
             else:
                 nc = new_config
 
-            logger.info('Update the underlying config dictionary.')
+            log.info('Update the underlying config dictionary.')
             self.config.update(nc)
 
-            logger.info(f'Reinitialize Gridded Model.')
+            log.info(f'Reinitialize Gridded Model.')
             self.gridModel = GriddedModel(self.config)
 
             return True
         except Exception as e:
-            logger.exception(f'Could not update config: {e}')
+            log.exception(f'Could not update config: {e}')
             return False
 
-    def nowcast(self):
+    def cast(self):
         """ Updating the model based on data specified in config. """
 
         try:
-            logging.info(f'Update dataset.')
-            self.gridModel.init_dataset(process_dataset=self.process_dataset)
+            log.info(f'Update dataset.')
+            data = self.gridModel.init_dataset(
+                process_dataset=self.process_dataset)
 
-            logging.info(f'Update DigitalReplicaEngine')
-            return self.gridModel.predict()
+            if self.data_schema_adapter is not None:
+                log.info(f'Adapting dataset schema.')
+                data_schema = self.data_schema_adapter(data)
+
+            log.info(f'Update DigitalReplicaEngine')
+            return self.gridModel.predict(data_schema)
         except:
-            logger.exception('Could not complete nowcast.')
+            log.exception('Could not complete casting.')
             return False

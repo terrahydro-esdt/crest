@@ -171,7 +171,7 @@ class Stopwatch:
 
         metrics = '|'.join(starmap(fmt, self.deltas.items()))
         message = f'[{metrics}] {self.message}'
-        try:    self.logger(message, stacklevel=2)
+        try:    self.logger(message)
         except: self.logger(message)
 
     def __getitem__(self, key):

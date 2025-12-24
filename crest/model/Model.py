@@ -338,11 +338,11 @@ class Model(BaseModel):
 
         if (save_metrics):
             # covert metrics to json
-            print(self.metric.customs)
+            logger.debug(self.metric.customs)
 
             metric_json = self.metric.to_json()
 
-            print(metric_json)
+            logger.debug(metric_json)
 
             with open(os.path.join(dir, 'htg.metric.json'), 'w') as f:
                 json.dump(metric_json, f)
@@ -366,7 +366,7 @@ class Model(BaseModel):
         model = Model(graph)
 
         if (load_metrics):
-            print(load_metrics)
+            logger.debug(load_metrics)
             metrics = None
 
             # convert metrics from json
