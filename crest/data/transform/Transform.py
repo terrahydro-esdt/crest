@@ -541,43 +541,57 @@ class Transform(BaseAbstract):
     def _quantile_transform(self, x, quantiles, targets):
         """ Transform using the data quantiles and the target distribution """
 
+        def _do_transform(x):
+            x = tf.cast(x, tf.float32)
+            
+            # Clip input values to quantile bounds to avoid extrapolation
+            x_clipped = tf.clip_by_value(x, quantiles[0], quantiles[-1])
+    
+            # Flatten input to [N] for easier processing
+            x_flat = tf.reshape(x_clipped, [-1])  # shape [N]
+            n_bins = tf.shape(quantiles)[0]
+    
+            # Find bin index for each value
+            # Right bin: smallest i such that x <= quantiles[i]
+            bin_idx = tf.searchsorted(quantiles, x_flat, side='right') - 1
+            bin_idx = tf.clip_by_value(bin_idx, 0, n_bins - 2)  
+    
+            # Gather quantile bounds
+            q_lo = tf.gather(quantiles, bin_idx)
+            q_hi = tf.gather(quantiles, bin_idx + 1)
+            t_lo = tf.gather(targets, bin_idx)
+            t_hi = tf.gather(targets, bin_idx + 1)
+    
+            # Linear interpolation of new value
+            slope = (t_hi - t_lo) / tf.maximum(q_hi - q_lo, 1e-4)
+            value = t_lo + slope * (x_flat - q_lo)
+    
+            # Where q_low == q_high, just assign t_lo directly
+            same_bin = tf.equal(q_lo, q_hi)
+            t_interp = tf.where(same_bin, t_lo, value)
+    
+            # Reshape back to original input shape
+            return tf.reshape(t_interp, tf.shape(x))
+
         # Handle non-tensorflow objects
-        if not isinstance(x, tf.Tensor):
-            data = getattr(x, 'values', x)
-            x_clipped = np.clip(data, quantiles[0], quantiles[-1])
-            transform = np.interp(x_clipped, quantiles, targets)
+        not_tensor = not isinstance(x, tf.Tensor)
+        if not_tensor:
+            original, x = x, tf.constant(getattr(x, 'values', x))
+
+        z = _do_transform(x)
+        if not_tensor:
+            # Handle xarray objects
+            if hasattr(original, 'loc'):
+                original.values = z.numpy()
+                return original
+            return z.numpy()
+        return z
+            # data = getattr(x, 'values', x)
+            # x_clipped = np.clip(data, quantiles[0], quantiles[-1])
+            # transform = np.interp(x_clipped, quantiles, targets)
 
             # Handle xarray objects
-            if hasattr(x, 'loc'):
-                x.values = transform
-                return x
-            return transform
-
-        # Clip input values to quantile bounds to avoid extrapolation
-        x_clipped = tf.clip_by_value(x, quantiles[0], quantiles[-1])
-
-        # Flatten input to [N] for easier processing
-        x_flat = tf.reshape(x_clipped, [-1])  # shape [N]
-        n_bins = tf.shape(quantiles)[0]
-
-        # Find bin index for each value
-        # Right bin: smallest i such that x <= quantiles[i]
-        bin_idx = tf.searchsorted(quantiles, x_flat, side='right') - 1
-        bin_idx = tf.clip_by_value(bin_idx, 0, n_bins - 2)  
-
-        # Gather quantile bounds
-        q_lo = tf.gather(quantiles, bin_idx)
-        q_hi = tf.gather(quantiles, bin_idx + 1)
-        t_lo = tf.gather(targets, bin_idx)
-        t_hi = tf.gather(targets, bin_idx + 1)
-
-        # Linear interpolation of new value
-        slope = (t_hi - t_lo) / tf.maximum(q_hi - q_lo, 1e-4)
-        value = t_lo + slope * (x_flat - q_lo)
-
-        # Where q_low == q_high, just assign t_lo directly
-        same_bin = tf.equal(q_lo, q_hi)
-        t_interp = tf.where(same_bin, t_lo, value)
-
-        # Reshape back to original input shape
-        return tf.reshape(t_interp, tf.shape(x))
+            # if hasattr(x, 'loc'):
+            #     x.values = transform
+            #     return x
+            # return transform

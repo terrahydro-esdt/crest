@@ -35,7 +35,7 @@ all_examples = [
 
 
 
-def check_equality(transform, data, transformed, tol=1e-5):
+def check_equality(transform, data, transformed, tol=1e-4):
     """ Verify that `data == inverse(forward(data))` """
     for k in data:
 

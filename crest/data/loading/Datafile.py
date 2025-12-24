@@ -1293,13 +1293,13 @@ class Datafile(BaseAbstract):
             cached in `./Cache`. 
 
         """
-        timer = Stopwatch(f'Cache exists for {self.name}', silent=True)
-        timer.__enter__()
         if isinstance(cache_dir, str):
             cache_dir = Path(cache_dir)
         elif isinstance(cache_dir, FSMap):
             cache_dir = S3Path(cache_dir)
-            
+        timer = Stopwatch(f'Cache exists for {self.name} {self.config_hash[:6]}..', silent=True)
+        timer.__enter__()
+        
         ext = '.tiledb' if '.tiledb' in str(self.location) else '.zarr'
         data = self.data.to_dataset('features')
         dest = cache_dir.joinpath(self.name, f'{self.config_hash}{ext}')
