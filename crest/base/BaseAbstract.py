@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import get_args, get_origin, _type_repr
+from typing import get_args, get_origin, get_type_hints, _type_repr
 from typing import Union, Iterator, TypeVar
 from types import UnionType
 from abc import ABC
@@ -125,7 +125,7 @@ class EnsureTypes:
 
         # Extract the function parameters and respective annotations
         function = self._callable
-        annotate = function.__annotations__
+        annotate = get_type_hints(function)
         keyvalue = inspect.getcallargs(function, *args, **kwargs)
         keyvalue |= {'return': function(*args, **kwargs)}
 
