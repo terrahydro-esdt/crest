@@ -45,10 +45,10 @@ Number = numbers.Real | int | float
 #   a large number of GIL releases which can cause additional slowdown
 WAIT_TIME = 0.01
 
-def identity(x):
+def identity(batcher, x):
     return x
 
-
+    
 class Batcher:
     """Handles creating batches of data samples.
 
@@ -444,17 +444,18 @@ class Batcher:
                 if key in self.__dict__:
                     self.__dict__.pop(key).close()
 
-        # Exhaust queue if this is the main process
-        with handler:
-            if hasattr(self, '_queue') and self.is_main_process:
-
-                # Discard any queue items if we need to close immediately
-                if timeout == 0:
-                    self._queue.cancel_join_thread()
-                else:
-                    while not self._queue.empty():
-                        try:    self._queue.get_nowait()
-                        except: break
+        # Exhaust queue(s) if this is the main process
+        for queue_key in ['_queue', '_block_queue']:
+            with handler:
+                if hasattr(self, queue_key) and self.is_main_process:
+                    queue = getattr(self, queue_key)
+                    # Discard any queue items if we need to close immediately
+                    if timeout == 0:
+                        queue.cancel_join_thread()
+                    else:
+                        while not queue.empty():
+                            try:    queue.get_nowait()
+                            except: break
 
         # Only join the prefetching thread if we're in the main thread
         with handler:
@@ -464,7 +465,7 @@ class Batcher:
                     with handler: self.__dict__.pop('_prefetch_thread', None)
                     
         # Delete cached attributes
-        for key in ['_generator', '_queue', '_prefetched_batches', '_prefetch_queue']:
+        for key in ['_generator', '_queue', '_prefetched_batches', '_prefetch_queue', '_block_queue', '_block_queue_lock']:
             with handler: self.__dict__.pop(key, None)
 
         # Clean up background processes
@@ -627,7 +628,7 @@ class Batcher:
         else:                self._generator
 
         # Enter the prefetcher context manager
-        with ensure_with(self.prefetcher) as prefetcher:
+        with ensure_with(partial(self.prefetcher, self)) as prefetcher:
 
             # Start the thread that prefetches batches 
             if getattr(self, '_prefetch_queue', None) is None:
@@ -700,14 +701,19 @@ class Batcher:
         if self.workers and not self._exit:
             self.close(origin='_prefetched_batches')
 
-            
+    
+    def _get_qsize(self, queue):
+        try:    return queue.qsize()
+        except: return 0
+
+
     def _get_status(self) -> list[str]:
         """ Status report on internal resources """
         status = []
         if hasattr(self, '_queue'):
-            status += [f'Worker queue size: ~{self._queue.qsize()}']
+            status += [f'Worker queue size: ~{self._get_qsize(self._queue)}']
         if hasattr(self, '_prefetch_queue'):
-            status += [f'Prefetch queue size: ~{self._prefetch_queue.qsize()}']
+            status += [f'Prefetch queue size: ~{self._get_qsize(self._prefetch_queue)}']
         if hasattr(self, '_prefetch_thread'):
             status += [f'Prefetch thread alive: {self._prefetch_thread.is_alive()}']
 
@@ -726,26 +732,55 @@ class Batcher:
 
     def _safe_queue_batches(self, queue, batches):
         """ Add batches to a queue without the risk of deadlocking """
-        try:
-            for batch in batches:
-                count = 0
-                seconds = 5 * 60
-    
-                # Ensure exit flag is monitored while waiting on a full queue
-                while not self._exit:
-                    try:
-                        queue.put_nowait(batch)
+        class CheckExit(threading.Timer):
+            def __init__(self, exit_flag, *args, check_interval=1, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.check_interval = check_interval
+                self.interval_count = 0
+                self.daemon = True
+                self.exit_flag = exit_flag
+                self.exit = False
+
+            def __enter__(self):
+                self.start() 
+                return self
+
+            def __exit__(self, *args, **kwargs):
+                self.exit = True
+
+            def reset(self):
+                self.interval_count = 0
+                
+            def run(self):
+                while not self.finished.wait(self.check_interval):
+                    if self.exit or self.exit_flag():
                         break
-                    except Full:
-                        count += 1
-                        while (not self._exit) and queue.full():
-                            time.sleep(WAIT_TIME)
-    
-                    # Notify when the queue has been full for a long time
-                    if (count % (seconds*10)) == 0:
-                        self.info(f'_safe_queue_batches: {queue=} full ' +
-                                  f'for at least {seconds} seconds')
-                if self._exit: break
+                    self.interval_count += 1
+                    if (self.interval_count % self.interval) == 0:
+                        self.function(*self.args, **self.kwargs)
+                        
+        try:
+            with CheckExit(lambda: self._exit, 180, self._get_threads_traceback) as batch_monitor:
+                for batch in batches:
+                    batch_monitor.reset()
+                    count = 0
+                    seconds = 5 * 60
+        
+                    # Ensure exit flag is monitored while waiting on a full queue
+                    while not self._exit:
+                        try:
+                            queue.put_nowait(batch)
+                            break
+                        except Full:
+                            count += 1
+                            while (not self._exit) and queue.full():
+                                time.sleep(WAIT_TIME)
+        
+                        # Notify when the queue has been full for a long time
+                        if (count % (seconds*10)) == 0:
+                            self.info(f'_safe_queue_batches: {queue=} full ' +
+                                      f'for at least {seconds} seconds')
+                    if self._exit: break
         except Empty:
             raise
         except Exception as e:
@@ -925,7 +960,7 @@ class Batcher:
                 'logger'   : self._logger,
             }
             self._batch_tasks = ThreadedFunction(self._batcher, **kwargs)
-            self._block_tasks = ThreadedFunction(self._blocker, **kwargs)
+            self._block_tasks = ThreadedFunction(self._blocker, **(kwargs|{'capacity':1}))
 
             divider = ''.join(['-'] * 57)
             message = '\n\t'.join(['', divider, 'Completed epoch'])
@@ -976,12 +1011,28 @@ class Batcher:
         subsets = list(enumerate(blocks))
         start_t = time.time()
 
-        if self.shuffle:
+        # No repeating blocks means we use dynamic block allocations in order
+        # to provide load balancing; i.e. blocks are allocated to workers via 
+        # a shared queue rather than a static subset 
+        static_alloc = self.repeat or self.duplicate or (self.workers <= 1) or self.block_sync
+        self.info(f'{static_alloc=}: {self.repeat=} {self.duplicate=} {self.workers=}')
+
+        def next_block():
+            # Since the block queue indices are based on numblocks rather than
+            # the true block count, there may be indices greater than the total
+            # number available - so we simply poll until a valid one is found
+            with self._block_queue_lock:
+                while (idx := self._block_queue.get_nowait()) >= len(subsets): 
+                    pass                        
+            self.debug(f'{self.pidx=} pulling block {idx}')
+            return subsets[idx]
+
+        if static_alloc and self.shuffle:
             self.random.shuffle(subsets)
 
         # If multiprocessing, use only a subset of the
         # overall blocks unless duplicate was set to True
-        if hasattr(self, '_pidx') and not self.duplicate:
+        if hasattr(self, '_pidx') and not self.duplicate and static_alloc:
             subsets = subsets[self._pidx::self.workers]
 
         # Initialize a new container for leftover samples
@@ -991,9 +1042,11 @@ class Batcher:
 
         # Send off first block ASAP to minimize time to first batch
         if not self._first and (self.pidx == 0):
-            first, *subsets = subsets
-            self._block_tasks([first])
-
+            if static_alloc:
+                first, *subsets = subsets
+                self._block_tasks([first])
+            else: self._block_tasks([next_block()])
+                
         # Wait for first batch job to signal completion
         if not self._first:
             self.info('Waiting for first set to be completed...')
@@ -1020,7 +1073,7 @@ class Batcher:
             self.info(f'Using {pertask} block/task, {len(subsets)} task total')
         
         # Generator is running if there are any subsets or tasks remaining
-        runtime = lambda r: (time.time()-start_t) / (n_block-r)
+        runtime = lambda r: (time.time()-start_t) / max(1, n_block-r)
         running = lambda: (subsets or getattr(self, '_block_tasks', None) or 
                                       getattr(self, '_batch_tasks', None))
 
@@ -1034,7 +1087,12 @@ class Batcher:
 
             # Fill the queue with data that still needs to be processed
             while subsets and not (self._exit or self._block_tasks.is_full()):
-                self._block_tasks(subsets.pop(0))
+                if static_alloc:
+                    self._block_tasks(subsets.pop(0))
+                else:
+                    # All work is finished once the block queue is empty
+                    try:          self._block_tasks(next_block())
+                    except Empty: subsets = []
 
             # Yield any batches that have been generated
             for task in self._batch_tasks:
@@ -1043,7 +1101,8 @@ class Batcher:
             # Clear out any completed block tasks (as no value is returned)
             if self._block_tasks.threads > 0:
                 if len(list(self._block_tasks)):
-                    remaining = len(subsets) + len(self._block_tasks)
+                    remaining = (len(subsets) + len(self._block_tasks)
+                        if static_alloc else self._get_qsize(self._block_queue))
                     task_secs = runtime(remaining)
                     tps = Stopwatch.readable(task_secs, 'time')
                     eta = Stopwatch.readable(task_secs * remaining, 'time')
@@ -1054,6 +1113,7 @@ class Batcher:
                     #     blk_lim = len(Block._refs) + 1
                     #     self.warning(f'Blocks may not be clearing memory: '+
                     #                  f'{blk_lim-1} block objects held')
+
             elif len(self._batch_tasks) == 0:
                 next(self._block_tasks)
 
@@ -1573,7 +1633,7 @@ class Batcher:
             # with memray.Tracker(f'output.bin.{os.getpid()}'):
 
             # Start adding batches to the queue
-            with ensure_with(self.prequeuer) as prequeuer:
+            with ensure_with(partial(self.prequeuer, self)) as prequeuer:
                 self._safe_queue_batches(queue, map(prequeuer, self._generator))
             # for batch in self._generator:
             #     # with tf.device('GPU:0'):
@@ -1647,12 +1707,14 @@ class Batcher:
             '_subset_blocks' : self._subset_blocks,
             '_barrier'       : self._barrier,
             '_queue'         : self._queue,
+            '_block_queue'   : self._block_queue,
+            '_block_queue_lock' : self._block_queue_lock,
         }
 
     
-    def get_queue(self, context):
+    def get_queue(self, context, max_queue=None):
         """ Allows extending the type of queue used for batching """
-        return context.Queue(self.max_queue)
+        return context.Queue(max_queue or self.max_queue)
 
         
     @cached_property
@@ -1688,6 +1750,19 @@ class Batcher:
         self._queue = self.get_queue(mp_context)
         # self._queue, conn = mp_context.Pipe(False)
 
+        n_blocks = int(np.prod(np.atleast_1d(self.numblocks)))
+        self._block_queue = self.get_queue(mp_context, n_blocks+1)
+        self._block_queue_lock = mp.get_context('spawn').Lock()
+        
+        # If we're not repeating blocks, add indices to the block queue
+        # to enable dynamic block allocation for workers
+        if not self.repeat:
+            block_ixs = np.arange(n_blocks).astype(int)
+            if self.shuffle:
+                self.random.shuffle(block_ixs)
+            for block_ix in block_ixs:
+                self._block_queue.put(block_ix)
+            
         # Create and start the background processes
         kwargs = {'target': self._queue_batches, 'daemon': True}
         create = lambda i: mp_context.Process(args=(i, self._shared_attrs), **kwargs)
@@ -1860,7 +1935,22 @@ class Batcher:
                 return self.dataset
         return [self.dataset]
 
+    
+    def _get_threads_traceback(self, limit=3, names=['MainThread', '_batcher', '_blocker']):
+        """ Prints the stack trace for active threads """
+        log = f'{self.process_name} Threads Status:\n' + ('_'*40) + '\n'
+        for thread_id, frame in sys._current_frames().items():
+            # Get the thread object corresponding to the frame
+            for t in threading.enumerate():
+                if t.ident == thread_id:
+                    if not names or any(n in t.name for n in names):
+                        log += f'Thread: {t.name} (ID: {thread_id})\n'
+                        log += ''.join(traceback.format_stack(frame, limit=limit))
+                        log += '-'*20 + '\n'
+                        break
+        self.debug(log)
 
+    
     @cached_property
     def _logger(self):
         """ Create the logging object which writes logs to a file """
