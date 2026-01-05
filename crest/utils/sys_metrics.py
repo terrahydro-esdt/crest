@@ -1,10 +1,9 @@
 from __future__ import annotations
-import os, time, logging, threading
+import os, time, logging
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 from pathlib import Path
-import psutil
-from psutil import Process
+import psutil, os
 from time import perf_counter_ns
 import socket
 from contextlib import contextmanager
@@ -55,11 +54,19 @@ class SysMetrics:
         self.ctx = RunContext(run_id=run_id, run_dir=run_dir)
 
     def _emit(self, kind: str, **fields):
-        emit_metric(kind, **fields)
+        base = {
+            "run_id": self.ctx.run_id,
+            "run_dir": self.ctx.run_dir,
+            **fields
+        }
+        emit_metric(kind, **base)
+
 
     def _stopwatch(self, message: str, name: Optional[str]=None,
                 extra_metrics: dict[str, Callable]=None,
                 silent: bool|dict=False, stop_gc=False):
+
+        silent = {} if silent is False else silent
 
         def jsonl_emit(deltas: dict):
             self._emit("stage", stage=name or message, desc=message, deltas=deltas)
@@ -73,6 +80,34 @@ class SysMetrics:
             silent=silent,
             stop_gc=stop_gc,
         )
+    
+    @staticmethod
+    def psutil_metrics():
+        proc = psutil.Process(os.getpid())
+
+        def rss_mb(): return proc.memory_info().rss / 1e6
+        def vms_mb(): return proc.memory_info().vms / 1e6
+        def threads(): return proc.num_threads()
+        def cpu_user_s(): return proc.cpu_times().user
+        def cpu_sys_s():  return proc.cpu_times().system
+
+        def io_read_b():
+            try: return proc.io_counters().read_bytes
+            except Exception: return None
+
+        def io_write_b():
+            try: return proc.io_counters().write_bytes
+            except Exception: return None
+
+        return {
+            "rss_mb": rss_mb,
+            "vms_mb": vms_mb,
+            "threads": threads,
+            "cpu_user_s": cpu_user_s,
+            "cpu_sys_s": cpu_sys_s,
+            "io_read_b": io_read_b,
+            "io_write_b": io_write_b,
+        }
 
     def record_dataset_info(self, *, start_dt=None, end_dt=None,
                             lat_range=None, lon_range=None,
@@ -102,7 +137,9 @@ class SysMetrics:
     def record_batch(self, batch_idx:int, size:int|None=None):
         def do_emit(deltas):
             self.ctx.totals["batches"] += 1
-            if size: self.ctx.totals["records"] += int(size)
+            if size is not None: 
+                self.ctx.totals["records"] += int(size)
+
             self._emit("batch", batch_idx=batch_idx, size=size, deltas=deltas)
 
         return emitting_stopwatch(

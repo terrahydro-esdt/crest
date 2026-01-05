@@ -17,46 +17,50 @@
       "formatter": "crest_json"
     },
     "app_file": {
-      "class": "logging.handlers.RotatingFileHandler",
+      "class": "logging.handlers.TimedRotatingFileHandler",
       "filename": "${LOG_FILE}",
-      "mode": "a",
+      "when": "midnight",
+      "interval": 1,
+      "backupCount": 14,
+      "utc": true,
       "level": "INFO",
       "formatter": "crest_json",
-      "maxBytes": 104857600,
-      "backupCount": 10,
       "encoding": "utf-8",
       "delay": true
     },
     "metrics_file": {
-      "class": "logging.handlers.RotatingFileHandler",
+      "class": "logging.handlers.TimedRotatingFileHandler",
       "filename": "${SYS_METRICS_FILE}",
-      "mode": "a",
+      "when": "midnight",
+      "interval": 1,
+      "backupCount": 14,
+      "utc": true,
       "level": "INFO",
       "formatter": "crest_json",
-      "maxBytes": 104857600,
-      "backupCount": 10,
       "encoding": "utf-8",
       "delay": true
     },
     "hindcast_file": {
-      "class": "logging.handlers.RotatingFileHandler",
+      "class": "logging.handlers.TimedRotatingFileHandler",
       "filename": "${HINDCAST_LOG_FILE}",
-      "mode": "a",
+      "when": "midnight",
+      "interval": 1,
+      "backupCount": 14,
+      "utc": true,
       "level": "INFO",
       "formatter": "crest_json",
-      "maxBytes": 104857600,
-      "backupCount": 10,
       "encoding": "utf-8",
       "delay": true
     },
     "forecast_file": {
-      "class": "logging.handlers.RotatingFileHandler",
+      "class": "logging.handlers.TimedRotatingFileHandler",
       "filename": "${FORECAST_LOG_FILE}",
-      "mode": "a",
+      "when": "midnight",
+      "interval": 1,
+      "backupCount": 14,
+      "utc": true,
       "level": "INFO",
       "formatter": "crest_json",
-      "maxBytes": 104857600,
-      "backupCount": 10,
       "encoding": "utf-8",
       "delay": true
     }
@@ -64,38 +68,27 @@
   "loggers": {
     "crest": {
       "level": "INFO",
-      "handlers": [
-        "app_file",
-        "console"
-      ],
+      "handlers": ["app_file", "console"],
       "propagate": false
     },
     "crest.metrics": {
       "level": "INFO",
-      "handlers": [
-        "metrics_file"
-      ],
+      "handlers": ["metrics_file"],
       "propagate": false
     },
     "crest.hindcast": {
       "level": "INFO",
-      "handlers": [
-        "hindcast_file"
-      ],
+      "handlers": ["hindcast_file"],
       "propagate": true
     },
     "crest.forecast": {
       "level": "INFO",
-      "handlers": [
-        "forecast_file"
-      ],
+      "handlers": ["forecast_file"],
       "propagate": true
     }
   },
   "root": {
     "level": "WARNING",
-    "handlers": [
-      "console"
-    ]
+    "handlers": ["console"]
   }
 }
