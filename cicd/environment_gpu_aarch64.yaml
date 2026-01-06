@@ -1,17 +1,23 @@
 # Hard requirements for running documentation generator (sphinx)
 # WARNING: Keep this up-to-date!
-name: crest_gpu
+name: OCETRA_gpu
 channels:
  - conda-forge
  - nodefaults
 
 dependencies:
   - absl-py
+  - apscheduler 
   - astunparse
+  - aws-c-cal
+  - aws-sdk-cpp
   - awscli
   - bazel=7.4.1
   - boto3
   - bottleneck
+  - cdsapi
+  - cfgrib
+  - cmake
   - cuda-compiler
   - cuda-cudart
   - cuda-cupti
@@ -19,27 +25,29 @@ dependencies:
   - cuda-toolkit=12.8.1
   - cuda-tools
   - cudnn=9.8.0.87
-  - clang=18.1.1
   - cloudpickle
   - cython
-  - dask=2025.5.0
+  - dask
+  - datapi
   - dill
   - earthaccess
   - ecmwf-api-client
-  - flatbuffers
+  - fastapi 
   - fsspec
   - gast
   - geopandas
   - google-pasta
   - grpcio
+  - h5netcdf
   - h5py
-  - hdf5=1.14.3=mpi_openmpi_hed3b578_5
+  - hdf5
   - ipykernel
   - ipywidgets
   - jsonpickle
-  - keras=3.11.2
-  - libclang=18.1.1
+  - keras
+  - libgdal-hdf4
   - lld
+  - make
   - markdown
   - markdown-it-py
   - matplotlib
@@ -50,19 +58,21 @@ dependencies:
   - nccl
   - netCDF4
   - networkx
-  - numpy=2.2.6
+  - numpy
   - opencv
-  - openjdk=24.0.2
-  - openmpi=5.0.8
+  - openjdk
+  - openmpi
+  - openssl
   - opt-einsum
   - optree
   - osmnx
   - pandas
   - pillow
-  - protobuf=5.28.3
   - pip
+  - ply
   - polars
   - prettytable
+  - protobuf
   - pyarrow
   - pygments
   - pytest
@@ -79,8 +89,7 @@ dependencies:
   - six
   - sparse
   - termcolor
-  - tiledb
-  - tiledb-py=0.34.0
+  - thriftpy2
   - tqdm
   - typing-extensions
   - werkzeug
@@ -89,7 +98,7 @@ dependencies:
   - zarr=2.18.7
 
   # for docs
-  - docutils=0.20.1
+  - docutils
   - flit
   - furo
   - myst-nb
@@ -102,5 +111,9 @@ dependencies:
   - sphinxcontrib-mermaid
 
   - pip:
-      - crick==0.0.8
-
+    - crick
+    - flatbuffers
+    - libclang==18.1.1
+    - parquet
+    - thriftpy2
+    - tiledb
