@@ -1,16 +1,16 @@
 default:
   image:
-    name: crest_cpu:1.03
+    name: ocetra_cpu:1.01
     pull_policy: if-not-present
 
+variables:
+  CI_PROJECT_DIR: /ASTG/sw/kraken/terrahydro/crest
 before_script:
   # Activate conda & load env
-  - source cicd/loadEnv.sh 
+  - source /ASTG/ops/ast_utils/etc/loadEnv.sh 
   # update if needed.  Static cpu_x86_64 for now(ever?)
-  - conda env update -f cicd/environment_cpu_x86_64.yaml
+  - conda env update -f /ASTG/ops/ast_utils/etc/environment_cpu_x86_64.yaml
 
-  # update if needed.  Static cpu_x86_64 for now(ever?)
-  - conda env update -f cicd/environment_cpu_x86_64.yaml
 test:
   script:
     - pytest --color=yes tests
