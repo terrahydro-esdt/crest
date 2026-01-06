@@ -10,11 +10,12 @@ import dask.array as da
 import tiledb as tdb
 import xarray as xr
 import numpy as np
+import threading
 import sparse
 import dask
 
 
-def _load_sparse_block(data: tdb.Array, block_info: dict) -> sparse.COO:
+def _load_sparse_block(lock, data: tdb.Array, block_info: dict) -> sparse.COO:
     """Retrieve a block of sparse data from the TileDB dataset. 
     
     Parameters
@@ -37,7 +38,10 @@ def _load_sparse_block(data: tdb.Array, block_info: dict) -> sparse.COO:
     names = [dim.name for dim in data.domain]
 
     # Select slices corresponding to the current block location
-    array = data.subarray(tuple(map(slice, *zip(*index))))
+    # TileDB appears to segfault here sometimes, which may be
+    # due to too many concurrent reads
+    with lock:
+        array = data.subarray(tuple(map(slice, *zip(*index))))
     
     # Sparse arrays require coordinates to be zero-based 
     coord = [array[dim]-idx[0] for dim,idx in zip(names, index)]
@@ -94,6 +98,8 @@ def tiledb_to_xarray(path: Path | str, **kwargs) -> xr.Dataset:
     coords = {}
     arrays = {}
 
+    lock = threading.Lock()
+
     # Iterate over all Array objects within the TileDB group at the given path
     with tdb.Group(str(path)) as items:
         for item in items:
@@ -120,7 +126,7 @@ def tiledb_to_xarray(path: Path | str, **kwargs) -> xr.Dataset:
                 
                 arrays[name] = (dims, da.map_blocks(**{
                     'chunks' : tuple(chunk),#map(chunks, data.domain)),
-                    'func'   : partial(_load_sparse_block, data),
+                    'func'   : partial(_load_sparse_block, lock, data),
                     'meta'   : sparse.COO(
                         [np.empty((0,), dtype=int)] * len(dims), 
                          np.empty((0,), dtype=dtype), 
