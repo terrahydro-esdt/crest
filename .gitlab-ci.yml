@@ -9,8 +9,8 @@ before_script:
   # Activate conda & load env
   - source /ASTG/ops/ast_utils/etc/loadEnv.sh 
   - unset PYTHONPATH
-  # update if needed.  Static cpu_x86_64 for now(ever?)
-  - conda env update -f /ASTG/ops/ast_utils/etc/environment_cpu_x86_64.yaml
+  # Auto environment updates seem prone to breakage
+  #- conda env update -f /ASTG/ops/ast_utils/etc/environment_cpu_x86_64.yaml
 
 test:
   script:
