@@ -5,7 +5,9 @@ import logging
 import toolz as tlz
 import numpy as np
 import pandas as pd
+import shutil
 import importlib
+import os
 from crest.configuration.Config import Config
 from crest.data.loading.Dataset import Dataset
 from crest.data.loading.Datafile import Datafile
@@ -17,50 +19,10 @@ from crest.model.ExtentStrategy import ExtentStrategy
 from tensorflow.python.framework import ops
 import tensorflow as tf
 
-import os
-
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
-
 logger = logging.getLogger(__name__)
-
-
-# def process_batch(batch, model_inputs):
-#     def extract(v, dim): return v.ravel(
-#     )[-1 if dim == 'datetime' else v.size//2]
-#     keys = [('datetime', 0), ('latitude', 0), ('longitude', 0)]
-#     coords = tlz.merge_with(np.array,
-#                             [{c: extract(s.coords[c][i], c) for c, i in keys} for s in batch])
-#     values = tlz.merge_with(
-#         np.array, [s.to_dict(model_inputs) for s in batch])
-
-#     if 'datetime' in values.keys():
-#         values['datetime'] = values['datetime'].astype('float32')
-#     return coords, values
-
-
-# @contextmanager
-# def process_batch_full(model_name, model_inputs, loader, schema, staging_dir):
-#     model = loader(model_name).load()
-
-#     # Get a Dataset object if a DataArray with a features dim was given
-#     if isinstance(schema, xr.DataArray):
-#         if 'features' in schema.dims:
-#             schema = schema.to_dataset('features')
-#     # Get a DataArray object if a Dataset was given
-#     if isinstance(schema, xr.Dataset):
-#         schema = schema[list(schema)[0]]
-
-#     archiver = StageWriter(schema, staging_dir)
-
-#     def process(batch):
-#         coords, values = process_batch(batch, model_inputs)
-#         pred = model.predict_on_batch(values)
-#         archiver.stage_many_coords(coords, pred)
-#     with archiver:
-#         yield process
-
 
 def process_batch(batch, model_inputs, worker_id):
     def extract(v, dim): return v.ravel(
@@ -118,10 +80,10 @@ class GriddedModel():
         on region. 
     """
 
-    def __init__(self, config: Config, alt_model_loader=None, process_model: dict = {}):
+    def __init__(self, config: Config, alt_model_loader=None, process_model: dict = {}, process_output: dict = {}):
         logger.debug("GriddedModel: Starting __init__")
 
-        self.sm = SysMetrics()
+        self.sm = SysMetrics(run_id="gridded-model", run_dir='/ASTG/sw/kraken')
         self.config = config
         self.extent = self.config.extent
         self.region = self.config.region
@@ -137,20 +99,23 @@ class GriddedModel():
         self.preprocess_model = process_model.get('preprocess', None)
         self.postprocess_model = process_model.get('postprocess', None)
 
+        self.postprocess_output = process_output.get('postprocess', None)
+
         logger.debug("GriddedModel: Initializing extent strategy")
         self.extent_strategy = ExtentStrategy(config)
 
         self.alt_model_loader = alt_model_loader
 
-        self.sm.record_model_info(
-            name="GriddedModel",
-            path=getattr(self.config, "model_path", "unknown"),
-            version=getattr(self.config, "model_version", None),
+        self.sm.emit("model_info",
+            model_name=getattr(self.config, "model_dataset_class", "unknown"),
+            model_path=getattr(self.config, "model_path", "unknown"),
+            model_version=getattr(self.config, "model_version", None)
         )
-        self.sm.record_dataset_info(
+        self.sm.emit("dataset_info",
             region=getattr(self.config, "region", None),
             extent=str(getattr(self.config, "extent", None)),
             n_workers=getattr(self.config, "workers", None),
+            variable_depth=getattr(self.config, "variable_depth", None)
         )
 
         # logger.info('Load the model specified by the configuration.')
@@ -169,12 +134,12 @@ class GriddedModel():
         try:
             logger.info("Updating Extents")
 
-            with self.sm.stage("update_extents", stop_gc=False):
+            with self.sm.timed("update_extents"):
                 self.extent = dict(self.extent_strategy.update_extents())
                 logger.debug(f"{self.extent_strategy} new extent: {self.extent}")
 
             # Determine the targeted start and end datetimes
-            with self.sm.stage("resolve_datetime_range"):
+            with self.sm.timed("resolve_datetime_range"):
                 target = self.config.target_dt
                 stamps = [pd.Timestamp(str(t)) for t in np.atleast_1d(target)]
                 assert (len(stamps) <= 2), f'Too many values: target_dt={target}'
@@ -187,14 +152,10 @@ class GriddedModel():
                 # Update the data extent and record the new datetime range
                 dt_s, dt_e = [ts.strftime('%Y-%m-%d %H:%M:%S') for ts in ts_range]
                 dt_extent = {'datetime': [dt_s, dt_e]}
-                self.sm.record_dataset_info(start_dt=dt_s, end_dt=dt_e)
 
-            with self.sm._stopwatch(
-                "dataset_build", 
-                name="dataset_build",
-                extra_metrics=SysMetrics.psutil_metrics(),  # Add this
-                stop_gc=False
-            ):
+                self.sm.emit("datetime_range", start_dt=dt_s, end_dt=dt_e)
+
+            with self.sm.timed("dataset_build"):
                 if not self.is_base_node_type:
                     logger.info("Initializing dataset using Datafile list")
 
@@ -238,12 +199,7 @@ class GriddedModel():
                     self.data, **self.config.postprocess_args)
 
             logger.debug("Caching data")
-            with self.sm._stopwatch(
-                "dataset_caching",
-                name="dataset_caching",
-                extra_metrics=SysMetrics.psutil_metrics(),  # Add this
-                stop_gc=False
-            ):
+            with self.sm.timed("dataset_caching"):
                 self.data.cache(**(self.config.cache_kwargs['train']))
 
                 for df in self.data:
@@ -259,17 +215,17 @@ class GriddedModel():
     def predict(self, data_schema):
         logger.info("Starting prediction phase")
 
-        with self.sm.stage("predict_model_load"):
+        with self.sm.timed("model_load"):
             loader = self.alt_model_loader(self.config.model_path)
             model = loader.load()
 
-            self.sm.record_model_info(
-                name=getattr(model, "name", "tf_model"),
-                path=self.config.model_path,
-                version=getattr(self.config, "model_version", None),
+            self.sm.emit("loaded_model",
+                model_name=getattr(model, "name", "tf_model"),
+                model_path=self.config.model_path,
+                model_version=getattr(self.config, "model_version", None),
             )
 
-        with self.sm.stage("batcher_init"):
+        with self.sm.timed("batcher_init"):
             batch_predict = Batcher(self.data, **{
                 'batch_size': self.config.batch_size,
                 'repeat': self.config.repeat,
@@ -295,40 +251,51 @@ class GriddedModel():
             f'Initialized batch_predict with size: {batch_predict.batch_size}')
 
         try:
-            with self.sm.stage("archiver_open"):
+            with self.sm.timed("archiver_open"):
                 base_name = model.graph.name if not hasattr(
                     self.config, 'output_name') else self.config.archive_kwargs['output_name']
-                output_dir = (os.path.join(
+                output_path = (os.path.join(
                     self.config.archive_kwargs['output_path'], base_name)) + '.zarr'
 
-            logger.info(f'Outputting predictions to {output_dir}')
+            logger.info(f'Outputting predictions to {output_path}')
             with Archiver(data_schema=data_schema,
-                          output_path=output_dir,
+                          output_path=output_path,
                           stage_path=self.config.archive_kwargs['staging_dir'],
                           overwrite=self.config.archive_kwargs['overwrite'],
                           verbose=self.config.archive_kwargs['verbose']) as a:
                 with batch_predict as batcher:
-                    self.sm.record_dataset_info(
+                    self.sm.emit("record_dataset_info",
                         n_workers=batcher.workers,
                         n_rows=getattr(self.config, "batch_size", None),
                     )
-                    
 
-                    with self.sm._stopwatch(
-                        "predict_loop",
-                        name="predict_loop",
-                        extra_metrics=SysMetrics.psutil_metrics(),  # Add this
-                        stop_gc=False
-                    ):
+                    with self.sm.timed("predict_loop"):
                         for i, _ in enumerate(batcher.generator(show_timing=True)):
                             if (i % 2000) == 0:
                                 a.zarr_writer.flush()
 
                 logger.info(
                     f'Successfully completed generating and archiving predictions.')
-                self.sm.finalize(ok=True)
+                logger.info(f"Started output postprocess")
+
+                with self.sm.timed("postprocess_output"):
+                    mask = self.data[0].data.to_dataset('features')[self.config.ocean_mask]
+                    mask = mask.where(mask>=0.5).isel({'datetime': -1}).drop_vars(('datetime'))
+                    post_process_output = (os.path.join(
+                        self.config.archive_kwargs['output_path'], 
+                        f"{base_name}_post_process")) + '.zarr'
+                    data=self.postprocess_output(output_path, mask)
+                    data.chunk('auto').to_zarr(post_process_output, align_chunks=True)
+
+                    shutil.rmtree(output_path)
+                    os.rename(post_process_output, output_path)
+                    logger.info(f"Renamed postprocessed output")
+
+                logger.info(f"Completed output postprocess.")
+                self.sm.emit("run_compete", status="success")
+
                 return True
         except Exception as e:
             logger.exception(f'Could not complete predicting. {e}')
-            self.sm.finalize(ok=False)
+            self.sm.emit("run_complete", status="failed", error=str(e))
             return False
