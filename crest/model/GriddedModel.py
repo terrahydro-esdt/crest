@@ -18,6 +18,10 @@ from crest.utils.sys_metrics import SysMetrics
 from crest.model.ExtentStrategy import ExtentStrategy
 from tensorflow.python.framework import ops
 import tensorflow as tf
+from dask.diagnostics import ProgressBar
+import dask
+import pickle
+import sys
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
@@ -40,7 +44,19 @@ def process_batch(batch, model_inputs, worker_id):
 
 @contextmanager
 def process_batch_full(batcher, model_inputs, loader, schema, model_name, staging_dir):
+    import os
+    import psutil
+    import logging
+    from crest.utils.crest_logger import configure_deploy_logging
 
+    worker_id = batcher.pidx
+    pid = os.getpid()
+    process = psutil.Process(pid)
+
+    configure_deploy_logging(process_name=f"worker_{worker_id}")
+    logger = logging.getLogger("crest")
+
+    logger.debug(f"Worker {worker_id} configuring TensorFlow")
     tf.config.threading.set_intra_op_parallelism_threads(1)
     tf.config.threading.set_inter_op_parallelism_threads(1)
 
@@ -53,7 +69,7 @@ def process_batch_full(batcher, model_inputs, loader, schema, model_name, stagin
     logical_devices = tf.config.list_logical_devices('CPU')
     assert len(logical_devices) == batcher.workers
     worker_id = batcher.pidx
-    print('worker_id:', worker_id)
+    logger.info('worker_id: %s', worker_id)
     with tf.device(f'/device:CPU:{worker_id}'):
         model = loader(model_name).load()
     # Get a Dataset object if a DataArray with a features dim was given
@@ -270,7 +286,9 @@ class GriddedModel():
                     )
 
                     with self.sm.timed("predict_loop"):
-                        for i, _ in enumerate(batcher.generator(show_timing=True)):
+                        for i, _ in enumerate(batcher.generator(show_timing=sys.stderr.isatty())):
+                            if (i % 100) == 0:
+                                logger.info(f"Processed {i} batches")
                             if (i % 2000) == 0:
                                 a.zarr_writer.flush()
 
@@ -278,21 +296,39 @@ class GriddedModel():
                     f'Successfully completed generating and archiving predictions.')
                 logger.info(f"Started output postprocess")
 
-                with self.sm.timed("postprocess_output"):
-                    mask = self.data[0].data.to_dataset('features')[self.config.ocean_mask]
-                    mask = mask.where(mask>=0.5).isel({'datetime': -1}).drop_vars(('datetime'))
+            with self.sm.timed("postprocess_output"):
+                with dask.config.set(scheduler="synchronous", num_workers=24):
+                    forcing = self.data[0].data.to_dataset('features')
+                    mask = forcing[self.config.ocean_mask]
+                    temp = forcing[self.config.temperature]
+                    temp = temp.where(mask>=0.5)
+
+                    if (self.config.temperature_unit == 'K'):
+                        temp = temp - 273.15
+                    elif (not self.config.temperature_unit == 'C'):
+                        raise ValueError('Unknown Temperature Unit')
+
+                    mask = mask.where(mask>=0.5).isel({'datetime': -1}).drop_vars(('datetime')).compute()
+
+                    pickle_path = os.path.join(self.config.archive_kwargs['output_path'], f"{base_name}_post_process.pkl")
+                    with open(pickle_path, 'wb') as f:
+                        pickle.dump((mask, temp), f)
+                    logger.info(f"Saved postprocess inputs to {pickle_path}")
+
                     post_process_output = (os.path.join(
                         self.config.archive_kwargs['output_path'], 
                         f"{base_name}_post_process")) + '.zarr'
-                    data=self.postprocess_output(output_path, mask)
-                    data.chunk('auto').to_zarr(post_process_output, align_chunks=True)
 
-                    shutil.rmtree(output_path)
-                    os.rename(post_process_output, output_path)
-                    logger.info(f"Renamed postprocessed output")
+                    data=self.postprocess_output(output_path, mask, temp)
+                    with ProgressBar():
+                        data.chunk('auto').to_zarr(post_process_output, mode='w', consolidated=True, align_chunks=True)
+
+                shutil.rmtree(output_path)
+                os.rename(post_process_output, output_path)
+                logger.info(f"Renamed postprocessed output")
 
                 logger.info(f"Completed output postprocess.")
-                self.sm.emit("run_compete", status="success")
+                self.sm.emit("run_complete", status="success")
 
                 return True
         except Exception as e:

@@ -90,9 +90,15 @@ class DataMetrics():
             else:
                 metadata_path = os.path.join(metadata_path, 'metadata.json')
 
-            # if (os.path.exists(metadata_path)):
-            #     log.info(f"{metadata_path} already exists.")
-            #     return {data_path: metadata_path}
+            if (os.path.exists(metadata_path)):
+                log.info(f"{metadata_path} already exists.")
+                met = {}
+                with open(metadata_path, 'r') as fp:
+                    met = json.load(fp)
+
+                if (len(met) > 0 and met['date'] == date):
+                    log.info(f"Metadata for {data_path} on {date} already exists and is valid.")
+                    return {data_path: metadata_path}
 
             datamet = DataMetrics()
             dataset, variables, times = datamet.get(data_path, decode_times)
