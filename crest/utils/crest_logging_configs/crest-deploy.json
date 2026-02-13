@@ -30,12 +30,24 @@
   "loggers": {
     "crest": {
       "level": "INFO",
-      "handlers": ["file", "console"],
+      "handlers": [
+        "file",
+        "console"
+      ],
+      "propagate": false
+    },
+    "crest.stdio": {
+      "level": "INFO",
+      "handlers": [
+        "file"
+      ],
       "propagate": false
     }
   },
   "root": {
     "level": "WARNING",
-    "handlers": ["console"]
+    "handlers": [
+      "console"
+    ]
   }
 }

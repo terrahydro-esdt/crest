@@ -4,6 +4,10 @@ import logging
 import os
 import pathlib
 import sys
+import json
+import io
+import re
+from zoneinfo import ZoneInfo
 from enum import Enum
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
 from typing import Optional
@@ -71,9 +75,7 @@ class CrestJSONFormatter(logging.Formatter):
     def _prepare_log_dict(self, record: logging.LogRecord) -> dict[str, any]:
         always = {
             "message": record.getMessage(),
-            "timestamp": dt.datetime.fromtimestamp(
-                record.created, tz=dt.timezone.utc
-            ).isoformat(),
+            "timestamp": dt.datetime.fromtimestamp(record.created, tz=ZoneInfo("America/New_York")).isoformat(),
         }
         if record.exc_info is not None:
             always["exc_info"] = self.formatException(record.exc_info)
@@ -82,7 +84,8 @@ class CrestJSONFormatter(logging.Formatter):
 
         front = {
             key: (
-                always.pop(val, None) if val in always else getattr(record, val, None)
+                always.pop(val, None) if val in always else getattr(
+                    record, val, None)
             )
             for key, val in self.fmt_keys.items()
         }
@@ -94,7 +97,6 @@ class CrestJSONFormatter(logging.Formatter):
                 out[k] = v
         return out
 
-class StreamToLogger(io.TextIOBase):
 
 def logger_setup(
     log_file: str = "crest.log.jsonl",
@@ -229,7 +231,8 @@ def logger_setup(
     logs_dir = pathlib.Path(log_dir)
     logs_dir.mkdir(parents=True, exist_ok=True)
 
-    # print(f"[logger_setup] Using logging config: {config_path} and logs dir: {logs_dir}")
+    app_path = logs_dir / log_file
+    met_path = logs_dir / metrics_file
 
     # Create formatter based on format_type
     if format_type == "json":
@@ -358,7 +361,8 @@ def _parse_log_level(level: str | int | LogLevel) -> int:
             f"Invalid log level: {level}. "
             f"Must be one of: DEBUG, INFO, WARNING, ERROR, CRITICAL"
         )
-    raise TypeError(f"Log level must be str, int, or LogLevel, got {type(level)}")
+    raise TypeError(
+        f"Log level must be str, int, or LogLevel, got {type(level)}")
 
 
 def install_global_exception_logger(logger_name: str = "crest"):
@@ -370,7 +374,6 @@ def install_global_exception_logger(logger_name: str = "crest"):
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
             return
-
         logger = logging.getLogger(logger_name)
         logger.critical(
             "Uncaught exception occurred", exc_info=(exc_type, exc_value, exc_traceback)
@@ -380,56 +383,25 @@ def install_global_exception_logger(logger_name: str = "crest"):
 
     sys.excepthook = log_uncaught_exceptions
 
-def configure_deploy_logging(log_settings_file=None, process_name=None):
-    
-    logger = None
-    try:
-        pid = os.getpid()
-        date_str = dt.datetime.now().strftime("%Y-%m-%d")
 
-        if (log_settings_file and os.path.exists(log_settings_file)):
-            log_settings = {}
-            with open(log_settings_file, 'r') as file:
-                log_settings = yaml.safe_load(file)
+def configure_deploy_logger():
 
-            if process_name:
-                log_file = f"{log_settings['logs_dir']}/{process_name}_{date_str}_{pid}.log.jsonl"
-            else:
-                log_file = f"{log_settings['logs_dir']}/crest_{date_str}_{pid}.log.jsonl"
+    logger_setup(
+        log_file="terrahydro.log.jsonl",
+        metrics_file="terrahydro.metrics.jsonl",
+        console=True,
+        log_level="INFO",
+        console_level="INFO",
+        log_dir="/efs/thdro/logs",
+        format_type="json",
+        module_levels={
+            "crest.deploy": "DEBUG",
+            "crest.utils.crest_logger": "DEBUG"
+        },
+        clear_handlers=True,
+        rotate=True,
+        max_bytes=5 * 1024 * 1024,  # 5MB
+        backup_count=3,
+    )
 
-            logger = logger_setup(
-                config_path=log_settings["config_path"],
-                logs_dir=log_settings["logs_dir"],
-                env_vars={
-                    "LOG_FILE": log_file
-                },
-                redirect_stdio=bool(log_settings["redirect_stdio"])
-            )
-                
-            install_global_exception_logger("crest")
-        else:
-
-            default_log_dir = pathlib.Path("/efs/thdro/logs")    
-            default_log_dir.mkdir(parents=True, exist_ok=True)
-
-            logs_dir = default_log_dir / f"{date_str}"
-            logs_dir.mkdir(parents=True, exist_ok=True)
-
-            logger = logger_setup(config_path="/ASTG/sw/kraken/terrahydro/crest/crest/utils/crest_logging_configs/crest-deploy.json", 
-                                  logs_dir=logs_dir,
-                                  redirect_stdio=True)
-        
-            install_global_exception_logger("crest")
-    except Exception as e:
-
-        import traceback
-        import sys
-
-        if logger is None:
-            print(f"Failed to set up logger: {e}", file=sys.stderr)
-            traceback.print_exc(file=sys.stderr)
-        else:
-            logger.exception(f'Failed setting up logger {e}')
-        raise e
-        
-    return logger
+    install_global_exception_logger(logger_name="crest.deploy")
