@@ -44,19 +44,6 @@ def process_batch(batch, model_inputs, worker_id):
 
 @contextmanager
 def process_batch_full(batcher, model_inputs, loader, schema, model_name, staging_dir):
-    import os
-    import psutil
-    import logging
-    from crest.utils.crest_logger import configure_deploy_logging
-
-    worker_id = batcher.pidx
-    pid = os.getpid()
-    process = psutil.Process(pid)
-
-    configure_deploy_logging(process_name=f"worker_{worker_id}")
-    logger = logging.getLogger("crest")
-
-    logger.debug(f"Worker {worker_id} configuring TensorFlow")
     tf.config.threading.set_intra_op_parallelism_threads(1)
     tf.config.threading.set_inter_op_parallelism_threads(1)
 
@@ -69,7 +56,6 @@ def process_batch_full(batcher, model_inputs, loader, schema, model_name, stagin
     logical_devices = tf.config.list_logical_devices('CPU')
     assert len(logical_devices) == batcher.workers
     worker_id = batcher.pidx
-    logger.info('worker_id: %s', worker_id)
     with tf.device(f'/device:CPU:{worker_id}'):
         model = loader(model_name).load()
     # Get a Dataset object if a DataArray with a features dim was given
@@ -287,8 +273,6 @@ class GriddedModel():
 
                     with self.sm.timed("predict_loop"):
                         for i, _ in enumerate(batcher.generator(show_timing=sys.stderr.isatty())):
-                            if (i % 100) == 0:
-                                logger.info(f"Processed {i} batches")
                             if (i % 2000) == 0:
                                 a.zarr_writer.flush()
 
@@ -310,10 +294,10 @@ class GriddedModel():
 
                     mask = mask.where(mask>=0.5).isel({'datetime': -1}).drop_vars(('datetime')).compute()
 
-                    pickle_path = os.path.join(self.config.archive_kwargs['output_path'], f"{base_name}_post_process.pkl")
-                    with open(pickle_path, 'wb') as f:
-                        pickle.dump((mask, temp), f)
-                    logger.info(f"Saved postprocess inputs to {pickle_path}")
+                    # pickle_path = os.path.join(self.config.archive_kwargs['output_path'], f"{base_name}_post_process.pkl")
+                    # with open(pickle_path, 'wb') as f:
+                    #     pickle.dump((mask, temp), f)
+                    # logger.info(f"Saved postprocess inputs to {pickle_path}")
 
                     post_process_output = (os.path.join(
                         self.config.archive_kwargs['output_path'], 
