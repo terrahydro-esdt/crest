@@ -1293,7 +1293,6 @@ class HierarchalTensorGraph(TensorGraph):
                 for key,val in edge_inputs.items():
                     for k,v in val.items():
                         table.add_row([key,k,v],divider=False)
-            print(table)
 
         # Parent
         node_table(self)

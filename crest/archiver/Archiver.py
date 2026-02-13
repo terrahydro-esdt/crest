@@ -6,7 +6,9 @@ from .Writer import Writer
 from pathlib import Path
 import xarray as xr
 import numpy as np
+import logging
 
+log = logging.getLogger(__name__)
 
 class Archiver(Writer):
     """ Allows writing batches of data to a zarr on disk.
@@ -117,7 +119,7 @@ class Archiver(Writer):
         # A sample can be written multiple times (equaling the average over all
         # its writes), so the total may be > actual number of items in the zarr
         if self.verbose: 
-            print(f'{self.output_path}: Wrote {self.batch_count:,} batches ' +
+            log.debug(f'{self.output_path}: Wrote {self.batch_count:,} batches ' +
                   f'and {rows:,} total samples')
         self.batch_count = 0
 
@@ -156,6 +158,6 @@ class Archiver(Writer):
         if (self.batch_count % self.write_every) == 0:
             rows = self.zarr_writer.flush(max_pq)
             if self.verbose:
-                print(f'\nWrote {rows:,} samples to {self.output_path} ' +
+                log.info(f'\nWrote {rows:,} samples to {self.output_path} ' +
                       f'| Total: {self.zarr_writer.total_rows:,}')
         return self.zarr_writer.total_rows
