@@ -30,10 +30,12 @@ class DigitalReplicaEngine():
             self.config = config
 
         self.model_loader = kwargs.get('model_loader', None)
+        self.database_path = kwargs.get('database_path', None)
         self.process_dataset = kwargs.get('process_dataset', None)
         self.process_model = kwargs.get('process_model', None)
         self.process_output = kwargs.get('process_output', None)
         self.data_schema_adapter = kwargs.get('data_schema_adapter', None)
+        self.benchmarking = kwargs.get('benchmarking', None)
 
         log.info(
             'Create the directory required to store all out-going data.')
@@ -46,9 +48,11 @@ class DigitalReplicaEngine():
         log.info(f'Initialize Gridded Model to initiate an update.')
         self.gridModel = GriddedModel(
             self.config, 
+            database_path=self.database_path,
             alt_model_loader=self.model_loader, 
             process_model=self.process_model, 
-            process_output=self.process_output)
+            process_output=self.process_output,
+            benchmarking=self.benchmarking)
 
     def reset_config(self, new_config: Config | str):
         """ Set self.config to different configuration. 
