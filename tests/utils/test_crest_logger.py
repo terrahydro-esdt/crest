@@ -55,6 +55,7 @@ def cleanup_env_vars():
 class TestParseLogLevel:
 
     """ See https://docs.python.org/3.12/library/logging.html#logging-levels """
+
     def test_parse_string_levels(self):
         assert _parse_log_level('DEBUG') == logging.DEBUG
         assert _parse_log_level('INFO') == logging.INFO
@@ -117,7 +118,8 @@ class TestLoggerSetupBasic:
         assert crest_logger.level == logging.DEBUG
 
     def test_log_level_warning(self, temp_log_dir):
-        logger_setup(log_level=LogLevel.WARNING, log_dir=temp_log_dir, console=False)
+        logger_setup(log_level=LogLevel.WARNING,
+                     log_dir=temp_log_dir, console=False)
 
         crest_logger = logging.getLogger('crest')
         assert crest_logger.level == logging.WARNING
@@ -128,8 +130,8 @@ class TestLoggerSetupBasic:
         crest_logger = logging.getLogger('crest')
         # Should only have file handler, not stream handler
         stream_handlers = [h for h in crest_logger.handlers
-                          if isinstance(h, logging.StreamHandler)
-                          and not isinstance(h, logging.FileHandler)]
+                           if isinstance(h, logging.StreamHandler)
+                           and not isinstance(h, logging.FileHandler)]
         assert len(stream_handlers) == 0
 
 
@@ -336,8 +338,8 @@ class TestClearHandlers:
         crest_logger = logging.getLogger('crest')
         # Should have only one file handler, not two
         file_handlers = [h for h in crest_logger.handlers
-                        if isinstance(h, logging.FileHandler)]
-        assert len(file_handlers) == 1
+                         if isinstance(h, logging.FileHandler)]
+        assert len(file_handlers) == 2
 
     def test_clear_handlers_false_keeps_handlers(self, temp_log_dir):
         logger_setup(log_dir=temp_log_dir, console=False, clear_handlers=True)
@@ -422,7 +424,8 @@ class TestLogLevelEnum:
         assert LogLevel.CRITICAL.value == logging.CRITICAL
 
     def test_enum_in_logger_setup(self, temp_log_dir):
-        logger_setup(log_level=LogLevel.ERROR, log_dir=temp_log_dir, console=False)
+        logger_setup(log_level=LogLevel.ERROR,
+                     log_dir=temp_log_dir, console=False)
 
         crest_logger = logging.getLogger('crest')
         assert crest_logger.level == logging.ERROR

@@ -101,6 +101,7 @@ class CrestJSONFormatter(logging.Formatter):
 def logger_setup(
     log_file: str = "crest.log.jsonl",
     metrics_file: str = "metrics.jsonl",
+    error_file: str = "error.jsonl",
     console: bool = True,
     log_level: Optional[str | int | LogLevel] = None,
     console_level: Optional[str | int | LogLevel] = None,
@@ -122,6 +123,8 @@ def logger_setup(
         Name of the application log file.
     metrics_file : str, default="metrics.jsonl"
         Name of the metrics log file.
+    error_file : str, default="errors.jsonl"
+        Name of the errors log file.
     console : bool, default=True
         Enable console output to stderr.
     log_level : str | int | LogLevel, optional
@@ -282,6 +285,25 @@ def logger_setup(
     fh_app.setFormatter(formatter)
     crest.addHandler(fh_app)
 
+    # Error-only file handler
+    if error_file:
+        err_path = logs_dir / error_file
+        if rotate:
+            if rotate_when:
+                fh_err = TimedRotatingFileHandler(
+                    err_path, when=rotate_when, backupCount=backup_count, encoding="utf-8"
+                )
+            else:
+                fh_err = RotatingFileHandler(
+                    err_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+                )
+        else:
+            fh_err = logging.FileHandler(err_path, mode="a", encoding="utf-8")
+
+        fh_err.setLevel(logging.ERROR)
+        fh_err.setFormatter(formatter)
+        crest.addHandler(fh_err)
+
     # Console handler
     if console:
         ch = logging.StreamHandler(sys.stderr)
@@ -386,13 +408,16 @@ def install_global_exception_logger(logger_name: str = "crest"):
 
 def configure_deploy_logger():
 
+    hostname = os.getenv('COMPUTERNAME') or os.getenv('HOSTNAME') or 'local'
+
     logger_setup(
         log_file="terrahydro.log.jsonl",
         metrics_file="terrahydro.metrics.jsonl",
+        error_file="terrahydro.error.jsonl",
         console=True,
         log_level="INFO",
         console_level="INFO",
-        log_dir="/efs/thdro/logs",
+        log_dir=f"/efs/thdro/logs/{hostname}",
         format_type="json",
         module_levels={
             "crest.deploy": "DEBUG",

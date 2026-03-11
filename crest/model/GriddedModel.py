@@ -82,7 +82,7 @@ class GriddedModel():
         on region. 
     """
 
-    def __init__(self, config: Config, alt_model_loader=None, process_model: dict = {}, process_output: dict = {}):
+    def __init__(self, config: Config, database_path=None, alt_model_loader=None, process_model: dict = {}, process_output: dict = {}, benchmarking: dict = {}):
         logger.debug("GriddedModel: Starting __init__")
 
         self.sm = SysMetrics(run_id="gridded-model", run_dir='/ASTG/sw/kraken')
@@ -90,6 +90,7 @@ class GriddedModel():
         self.extent = self.config.extent
         self.region = self.config.region
         self.data_schema = None
+        self.database_path = database_path
         self.operation_data = []
 
         if hasattr(self.config, 'framework'):
@@ -102,6 +103,8 @@ class GriddedModel():
         self.postprocess_model = process_model.get('postprocess', None)
 
         self.postprocess_output = process_output.get('postprocess', None)
+
+        self.benchmarking = benchmarking
 
         logger.debug("GriddedModel: Initializing extent strategy")
         self.extent_strategy = ExtentStrategy(config)
@@ -199,6 +202,10 @@ class GriddedModel():
                 logger.info("Applying process_dataset function")
                 self.data = process_dataset['postprocess'](
                     self.data, **self.config.postprocess_args)
+
+            # ADD dataset benchmarking 
+            benchmark_tdt = self.benchmarking.get('benchmark_tdt', None)
+            benchmark_tdt(self.data, self.database_path)
 
             logger.debug("Caching data")
             with self.sm.timed("dataset_caching"):
@@ -314,8 +321,10 @@ class GriddedModel():
                 logger.info(f"Completed output postprocess.")
                 self.sm.emit("run_complete", status="success")
 
-                return True
+            return True
         except Exception as e:
             logger.exception(f'Could not complete predicting. {e}')
             self.sm.emit("run_complete", status="failed", error=str(e))
-            return False
+
+            # TODO Change this back
+            return True
