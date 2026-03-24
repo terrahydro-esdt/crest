@@ -87,6 +87,8 @@ class Transform(BaseAbstract):
     #   - iqrnorm
     #   - adaptnorm
     #   - quantile
+    #   - asinh
+    #   - identity
     # 
     # TODO: Refactor so that these transformations are in separate files
     #       contained within a transformations/ folder
@@ -236,6 +238,23 @@ class Transform(BaseAbstract):
                  partial(self._map_transform, self.inverse_quantile) )
 
 
+    # asinh scaling
+    def forward_asinh(self, data, **kwargs):
+        scale = (self.p75 - self.p25) / 1.349
+        base = tf.math if isinstance(data, tf.Tensor) else np
+        return base.asinh(data / (scale + self.eps))
+
+    def inverse_asinh(self, data, **kwargs): 
+        scale = (self.p75 - self.p25) / 1.349
+        base = tf.math if isinstance(data, tf.Tensor) else np
+        return (scale + self.eps) * base.sinh(data)
+        
+    @property
+    def asinh(self): 
+        return ( partial(self._map_transform, self.forward_asinh), 
+                 partial(self._map_transform, self.inverse_asinh) )
+
+
     # Used to create combinations of transform functions
     def forward_combination(self, data, transforms, **kwargs):
         """ Forward function only needs to apply transforms in order """
@@ -276,6 +295,16 @@ class Transform(BaseAbstract):
         return ( partial(self._map_transform, self.forward_combination, transforms=transforms), 
                  partial(self._map_transform, self.inverse_combination, transforms=transforms) )
 
+    
+    # Identity function
+    def forward_identity(self, data, **kwargs): 
+        return data    
+    def inverse_identity(self, data, **kwargs): 
+        return data
+    @property
+    def identity(self): 
+        return ( partial(self._map_transform, self.forward_identity), 
+                 partial(self._map_transform, self.inverse_identity) )
 
 
     # Internal functions
