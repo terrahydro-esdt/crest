@@ -404,29 +404,3 @@ def install_global_exception_logger(logger_name: str = "crest"):
         original_hook(exc_type, exc_value, exc_traceback)
 
     sys.excepthook = log_uncaught_exceptions
-
-
-def configure_deploy_logger():
-
-    hostname = os.getenv('COMPUTERNAME') or os.getenv('HOSTNAME') or 'local'
-
-    logger_setup(
-        log_file="terrahydro.log.jsonl",
-        metrics_file="terrahydro.metrics.jsonl",
-        error_file="terrahydro.error.jsonl",
-        console=True,
-        log_level="INFO",
-        console_level="INFO",
-        log_dir=f"/efs/thdro/logs/{hostname}",
-        format_type="json",
-        module_levels={
-            "crest.deploy": "DEBUG",
-            "crest.utils.crest_logger": "DEBUG"
-        },
-        clear_handlers=True,
-        rotate=True,
-        max_bytes=5 * 1024 * 1024,  # 5MB
-        backup_count=3,
-    )
-
-    install_global_exception_logger(logger_name="crest.deploy")
