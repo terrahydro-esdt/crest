@@ -248,6 +248,42 @@ class RegionalMaskGenerator():
             logger.exception(f'Failed to generate mask: {e}')
             raise e
 
+    def get_extent(self):
+        """ Generate the extent of the mask in terms of the latitude and longitude 
+        coordinates.
+
+        Returns
+        -------
+        dict
+            A dictionary with the keys 'latitude' and 'longitude', each containing a list of the minimum and maximum values for the respective coordinate. For example: 
+            {
+                'latitude': [min_lat, max_lat],
+                'longitude': [min_lon, max_lon]
+            }
+        """
+        if self.mask is None:
+            raise ValueError('Mask needs to be initialized to get extent of the mask.')
+
+        try:
+            masked_indices = np.argwhere(self.mask)
+            min_row, min_col = masked_indices.min(axis=0)
+            max_row, max_col = masked_indices.max(axis=0)
+
+            # self.transform maps (col, row) → (lon, lat)
+            min_lon, max_lat = self.transform * (min_col, min_row)
+            max_lon, min_lat = self.transform * (max_col, max_row)
+
+            extent = {
+                'latitude':  [min_lat, max_lat],
+                'longitude': [min_lon, max_lon]
+            }
+
+            logger.info(f'Extent of the mask: {extent}')
+            return extent
+        except Exception as e:
+            logger.exception(f'Failed to get extent of the mask: {e}')
+            raise e
+
     def gen_mask_boundary(self, width: int, height: int):
         """ Generates a fixed resolution binary mask based on the 
         width and height specified. 

@@ -301,22 +301,22 @@ class GriddedModel():
 
                     mask = mask.where(mask>=0.5).isel({'datetime': -1}).drop_vars(('datetime')).compute()
 
-                    # pickle_path = os.path.join(self.config.archive_kwargs['output_path'], f"{base_name}_post_process.pkl")
-                    # with open(pickle_path, 'wb') as f:
-                    #     pickle.dump((mask, temp), f)
-                    # logger.info(f"Saved postprocess inputs to {pickle_path}")
+                    pickle_path = os.path.join(self.config.archive_kwargs['output_path'], f"{base_name}_post_process.pkl")
+                    with open(pickle_path, 'wb') as f:
+                        pickle.dump((mask, temp), f)
+                    logger.info(f"Saved postprocess inputs to {pickle_path}")
 
                     post_process_output = (os.path.join(
                         self.config.archive_kwargs['output_path'], 
                         f"{base_name}_post_process")) + '.zarr'
 
-                    data=self.postprocess_output(output_path, mask, temp)
+                    data=self.postprocess_output(output_path, mask, temp, **self.config.postprocess_output_args)
                     with ProgressBar():
                         data.chunk('auto').to_zarr(post_process_output, mode='w', consolidated=True, align_chunks=True)
 
-                shutil.rmtree(output_path)
-                os.rename(post_process_output, output_path)
-                logger.info(f"Renamed postprocessed output")
+                # shutil.rmtree(output_path)
+                # os.rename(post_process_output, output_path)
+                # logger.info(f"Renamed postprocessed output")
 
                 logger.info(f"Completed output postprocess.")
                 self.sm.emit("run_complete", status="success")

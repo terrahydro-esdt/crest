@@ -25,6 +25,8 @@ import dask
 
 from crest.base import BaseAbstract
 from crest.utils import S3Path, Stopwatch
+from crest.data.loading.RegionalMaskGenerator import RegionalMaskGenerator
+
 from .Block import Block
 from .Blockset import Blockset
 from .backend import get_backend
@@ -33,10 +35,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Allow libraries like gdal, rasterio, and opencv to be missing
-try:                
-    from .RegionalMaskGenerator import RegionalMaskGenerator
-except ImportError: 
-    RegionalMaskGenerator = None
     
 # Bool type which allows numpy bools as well
 Bool = Union[bool, np.bool_]
@@ -193,8 +191,6 @@ class Datafile(BaseAbstract):
 
         if (not self.region is None):
             # Raise the original ImportError by attempting import again
-            if RegionalMaskGenerator is None:
-                from .RegionalMaskGenerator import RegionalMaskGenerator
             self.rmg = RegionalMaskGenerator(self.region)
 
         # Store initialization parameter names for pickling
