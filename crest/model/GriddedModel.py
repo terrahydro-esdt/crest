@@ -326,5 +326,4 @@ class GriddedModel():
             logger.exception(f'Could not complete predicting. {e}')
             self.sm.emit("run_complete", status="failed", error=str(e))
 
-            # TODO Change this back
-            return True
+            return False

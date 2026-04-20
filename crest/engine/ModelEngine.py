@@ -1,19 +1,22 @@
-from crest.model.GriddedModel import GriddedModel
-from crest.configuration.Config import Config
 import os
 import logging
+import traceback
+
+from crest.model.GriddedModel import GriddedModel
+from crest.configuration.Config import Config
+from crest.data.loading.Dataset import Dataset
+from crest.engine.Engine import Engine
 
 log = logging.getLogger(__name__)
 
-
-class DigitalReplicaEngine():
-    """ Digital Replica Engine performs an update on a specified model.
+class ModelEngine(Engine):
+    """ CREST Engine performs an update on a specified model.
         The a path to the model archive must be provided within the config file.
         The update of the model is performed with the data specified in the config. 
     """
 
     def __init__(self, config: str | Config, **kwargs):
-        """ Initializes the DigitalReplicaEngine. 
+        """ Initializes the ModelEngine. 
 
         Parameters
         ----------
@@ -21,7 +24,7 @@ class DigitalReplicaEngine():
             Path to the YAML format configuration file that helps to configure the digital
             replica engine and the gridded model. 
         """
-        log.info(f'Initializing DigitalReplicaEngine')
+        log.info(f'Initializing ModelEngine')
 
         log.info(f'Load configuration.')
         if (isinstance(config, str)):
@@ -31,11 +34,27 @@ class DigitalReplicaEngine():
 
         self.model_loader = kwargs.get('model_loader', None)
         self.database_path = kwargs.get('database_path', None)
-        self.process_dataset = kwargs.get('process_dataset', None)
-        self.process_model = kwargs.get('process_model', None)
-        self.process_output = kwargs.get('process_output', None)
-        self.data_schema_adapter = kwargs.get('data_schema_adapter', None)
-        self.benchmarking = kwargs.get('benchmarking', None)
+
+        self.process_dataset = kwargs.get('process_dataset', {
+        'preprocess': self.preprocess_dataset,
+        'postprocess': self.postprocess_dataset,
+        })
+
+        self.process_model = kwargs.get('process_model', {
+            'preprocess': self.preprocess_model,
+            'postprocess': self.postprocess_model,
+        })
+
+        self.process_output = kwargs.get('process_output', {
+            'postprocess': self.postprocess_output,
+        })
+
+        self.data_schema_adapter = kwargs.get(
+            'data_schema_adapter', self.data_schema_adapter)
+        
+        self.benchmarking = kwargs.get('benchmarking', {
+            'benchmark_tdt': self.benchmark_targetdt,
+        })
 
         log.info(
             'Create the directory required to store all out-going data.')
@@ -77,7 +96,7 @@ class DigitalReplicaEngine():
                 self.config = new_config
 
             self.gridModel = GriddedModel(self.config)
-
+            return True
         except Exception as e:
             log.exception(f'Could not set configuration for DRE. {e=}')
             return False
@@ -132,9 +151,33 @@ class DigitalReplicaEngine():
             if self.data_schema_adapter is not None:
                 log.info(f'Adapting dataset schema.')
                 data_schema = self.data_schema_adapter(data)
+            else:
+                data_schema = data
 
-            log.info(f'Update DigitalReplicaEngine')
+            log.info(f'Update ModelEngine')
             return self.gridModel.predict(data_schema)
-        except:
-            log.exception('Could not complete casting.')
+        except Exception as e:
+            traceback.print_stack()
+            log.exception(f'Could not complete casting. {e}')
             return False
+        
+    def benchmark_targetdt(self, data: Dataset, database_path: str):
+        pass
+    
+    def preprocess_dataset(self, **kwargs):
+        raise NotImplementedError(f'{type(self).__name__} must implement preprocess_dataset')
+
+    def postprocess_dataset(self, ds: Dataset, **kwargs):
+        return ds
+    
+    def preprocess_model(self, **kwargs):
+        raise NotImplementedError(f'{type(self).__name__} must implement preprocess_model')
+    
+    def postprocess_model(self, **kwargs):
+        raise NotImplementedError(f'{type(self).__name__} must implement postprocess_model')
+    
+    def postprocess_output(self, **kwargs):
+        raise NotImplementedError(f'{type(self).__name__} must implement postprocess_output')
+
+    def data_schema_adapter(self, data: Dataset):
+        raise NotImplementedError(f'{type(self).__name__} must implement data_schema_adapter')
