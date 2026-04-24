@@ -310,7 +310,10 @@ class GriddedModel():
                         self.config.archive_kwargs['output_path'], 
                         f"{base_name}_post_process")) + '.zarr'
 
-                    data=self.postprocess_output(output_path, mask, temp, **self.config.postprocess_output_args)
+                    data = self.postprocess_output(
+                        output_path, mask, temp,
+                        **(self.config.postprocess_output_args or {})
+                    )
                     with ProgressBar():
                         data.chunk('auto').to_zarr(post_process_output, mode='w', consolidated=True, align_chunks=True)
 
