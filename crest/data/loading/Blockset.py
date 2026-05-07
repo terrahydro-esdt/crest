@@ -1,10 +1,11 @@
 from collections.abc import Collection, Sequence
+from numpy.random import Generator
 from functools import cached_property, partial
 from typing import Union
 from typing import Callable
 
-import dask.dataframe as dd
 import dask.array as da 
+import xarray as xr
 import numpy as np 
 import logging
 import numbers
@@ -44,6 +45,7 @@ class Blockset(BaseSet):
         logger  : Union[logging.Logger, None] = None,
         timing  : bool = True,
         shuffle : bool = False,
+        copied  : bool = False,
     ):
         self.container = [getattr(b, '__call__', lambda: b)() for b in blocks]
         self.logger  = logger or logging.getLogger('Blockset')
@@ -54,11 +56,12 @@ class Blockset(BaseSet):
         self.dtype = np.dtype([(f'Data_{i}', b.dtype) for i,b in enumerate(self)])
 
         # Set block count for all blocks
-        for i, block in enumerate(self.container):
-            setattr(block, 'block_count', len(self.container))
-            setattr(block, 'block_index', i)
-            if self.timing: 
-                setattr(block, 'logger', self.logger)
+        if not copied:
+            for i, block in enumerate(self.container):
+                setattr(block, 'block_count', len(self.container))
+                setattr(block, 'block_index', i)
+                if self.timing: 
+                    setattr(block, 'logger', self.logger)
 
 
     def __repr__(self) -> str:
@@ -74,16 +77,95 @@ class Blockset(BaseSet):
             # 'silent'  : {'time': 0.05} if self.timing else True, 
         } | kwargs))
 
+    
+    def summaries(self, 
+        features       : list | None = None,
+        valid_percents : dict | None = None,
+        drop_datafiles : list | None = None,
+        check_valid    : bool = True,
+    ) -> xr.DataArray | None:
+        """ If all blocks are valid, returns a dataset of all summaries.
 
+        Parameters
+        ----------
+        features : list | None
+            A list of features to create summary statistics for. If None, all
+            available features are used. If multiple blocks contain the same
+            feature name, the feature from the last block will be kept by
+            default. If the feature from a specific block is needed instead,
+            a feature can be specified as f'{feature_name}@{block_index}' to
+            choose which block to select it from (i.e. blockset[block_index]).
+        valid_percents : dict[str, dict[str, float]] | None
+            One item of the Batcher.valid_percents list, representing a mapping
+            of {Block name: {coordinate: valid percent}}. See the docstring of
+            Batcher for further discussion.
+        drop_datafiles : list[str] | None 
+            One item of the Batcher.drop_datafiles list, representing a list
+            of the names or indices of Blocks which should be excluded when 
+            calculating the summaries for this Blockset. See the docstring 
+            of Batcher for further discussion.        
+        check_valid : bool
+            If True (default), the set of blocks remaining (after applying any
+            given valid_percents and drop_datafiles) are checked to ensure they
+            all contain some non-missing data. If any blocks are invalid (i.e.
+            entirely missing) then no samples can be constructed from the 
+            blockset and so this function will return None. If summaries are 
+            desired regardless, pass `check_valid=False` to skip this check.
+
+        Returns
+        -------
+        xr.DataArray | None
+            If all valid blocks have non-missing data or `check_valid=False`
+            is given, an xr.DataArray object of all blocks' summary statistics
+            with the coordinates ['features', 'statistics'] is returned;
+            otherwise, no valid samples can be constructed from this blockset
+            and so None is returned.
+            
+        """
+        # Create a new Blockset object which excludes the specified Blocks
+        drop = drop_datafiles or []
+        drop+= [i for i,b in enumerate(self) if not b.feature_subset(features or [])]
+        self = self._exclude(drop or [], features)
+        
+        # Set new valid percent configurations
+        for key, vp in (valid_percents or {}).items():
+            for block in self._partition([key])[0]:
+                block.set_valid_percents(vp)
+
+        # If checking validity, return None if any blocks are entirely missing
+        if not check_valid or self.is_valid(fast=True):
+            summary = self.summary(features).map_blocks(xr.DataArray.as_numpy)
+            summary = xr.concat(summary, dim='features', join='outer')
+            return summary.drop_duplicates('features', keep='last')
+        
+            # indices = xr.Variable('block_index', range(len(self.container)))
+            # summary = xr.concat(self.summary(features), indices)
+            # return summary.drop_duplicates('features', keep='last')
+
+    
+    def get_feature(self, feature: str) -> xr.Dataset:
+        """ Get an xarray dataset containing the requested feature """
+        subsets = self.feature_subset(feature)                           
+        assert(sum(map(bool, subsets)) == 1), \
+            f'Exactly one block should contain {feature=}: {subsets}'
+        
+        for contains, block in zip(subsets, self):
+            if contains:
+                return block.dataset[[feature]]
+                
+
+                
     def find_matches(self, 
         task_bytes     : Number = 1e9, 
         task_samples   : int  | None = None,
         features       : list | None = None,
         valid_percents : dict | None = None,
         drop_datafiles : list | None = None,
+        mask_features  : dict | None = None,
         seed           : int  | None = None,
+        rng            : Generator | None = None,
         verbose        : bool = False,
-        rng                   = None,
+        method         : str  = 'multi',
     ) -> da.Array:
         """Find all valid samples when matching up Blocks in this Blockset.
         
@@ -116,15 +198,28 @@ class Blockset(BaseSet):
             Batcher for further discussion.
         drop_datafiles : list[str] | None 
             One item of the Batcher.drop_datafiles list, representing a list of
-            the names of Blocks which should be excluded when calculating the
-            valid samples of this Blockset. See the docstring of Batcher for
-            further discussion.
+            the names or indices of Blocks which should be excluded when 
+            calculating the valid samples of this Blockset. See the docstring 
+            of Batcher for further discussion.  
+        mask_features : dict[str, (float, float)] | None
+            If given, the features contained in the dict are masked based on 
+            their respective (low, high) values such that only values inside
+            the given bucket bounds remain (low <= value < high). Through this,
+            a Blockset can be made to generate samples that contain features
+            only in a certain range - thus providing a mechanism to uniformly 
+            sample selected partitions of the feature space over multiple calls
+            of this function.
         seed    : int | None 
-            Random seed.
+            Random seed.     
+        rng : Generator | None
+            Numpy random generator to use.
         verbose : bool
             Adjust the logger verbosity level to DEBUG, and log all timing 
             benchmarks (even if Blockset was initialized with timing=False).
-            
+        match_method : str
+            Method to use when finding matching coordinates between data grids.
+            See `crest.utils.find_neighbors` docstring for more information.
+
         Returns
         -------
         dask.Array
@@ -137,41 +232,29 @@ class Blockset(BaseSet):
             self.logger.setLevel(logging.DEBUG)
             self.timing = True
 
+        # Create a new Blockset object which excludes the specified Blocks
+        self = self._exclude(drop_datafiles or [], features)
+        
+        # Set new valid percent configurations
+        for key, vp in (valid_percents or {}).items():
+            for block in self._partition([key])[0]:
+                block.set_valid_percents(vp)
+
+        # Set feature masks
+        if len(mask_features or {}):
+            self.logger.info(f'Using {mask_features=}')
+            self.set_feature_masks(mask_features)
+            
         # Create meta/dtype information for dask
         meta = np.empty(0, dtype=self.dtype)
-
-        # Create a new Blockset object which excludes the specified Blocks
-        if drop_datafiles is not None:
-            self = self._exclude(drop_datafiles, features)
-
-        # Set new valid percent configurations
-        if valid_percents is not None:
-            for key, vp in valid_percents.items():
-                for i, block in enumerate(self):
-                    if (key==i if isinstance(key,int) else key in block.label):
-                        block.set_valid_percents(vp)
 
         # Benchmark timing for data loading / neighbor finding
         with self.benchmark('find_matches') as timer:
             timer.message += ' | 100% of time spent loading data'
 
-            # Sort by sparsity, assuming higher values are more likely to fail
-            by_sparsity = sorted(self, key=lambda b:b.sparsity, reverse=True)
-
-            # Fast return when there are no valid windows for a block
-            with self.benchmark('fast_invalid_check'):
-                for block in by_sparsity:
-                    if block.fast_invalid_check:
-                        self.logger.debug(f'\t{block} failed fast_invalid_check')
-                        return da.from_array(meta)
-
-            # Return when there are no valid windows for a block
-            with self.benchmark('valid_windows.size'):
-                for block in by_sparsity:
-                    if not block.valid_windows.size:
-                        self.logger.debug(f'\t{block} failed valid_windows.size')
-                        return da.from_array(meta)
-
+            # Perform a fast check of whether samples could possibly be created
+            if not self.is_valid():
+                return da.from_array(meta)
             loading_time = time.time() - timer.start['time']
 
             # Find neighboring points between coordinate grids for the valid window
@@ -180,9 +263,11 @@ class Blockset(BaseSet):
                 matches, counts = find_neighbors(
                     self.valid_coords, 
                     self.valid_resolution,
+                    self.is_required,
                     grid_labels = [str(b) for b in self],
                     axis_labels = [b.dims for b in self],
-                    num_samples = task_samples or -1,
+                    num_samples = task_samples or 0,
+                    method  = method,
                     logger  = self.logger if self.timing else None,
                     shuffle = self.shuffle,
                     debug   = False,
@@ -195,8 +280,8 @@ class Blockset(BaseSet):
             timer.message = timer.message.replace('100', f'{loading_pct:.0f}')
 
         # Undo the valid_percents modification(s)
-        if valid_percents is not None:
-            self.reset_valid_percents()
+        # if valid_percents is not None:
+        #     self.reset_valid_percents()
 
         # for block in self:
         #     block.__dict__.pop('valid', None)
@@ -221,6 +306,7 @@ class Blockset(BaseSet):
         }
 
         # try:
+        #     import dask.dataframe as dd
         #     return dd.from_map(self._parse, matches, lengths, **kwargs
         #         ).to_dask_array(lengths=list(lengths), meta=meta)
         # # Newer dask version does not have token keyword
@@ -325,18 +411,50 @@ class Blockset(BaseSet):
         return matches, divisions, cartesian
 
 
+    def _partition(self, names: list[str | int]) -> (list, list):
+        """ Split blocks into [(in names), (not in names)] """
+        select = lambda i, b, n: (n==i) if isinstance(n,int) else (n in b.label)
+        within = lambda i,block: any(map(lambda n: select(i, block, n), names))
+        inside = [block for i,block in enumerate(self) if     within(i, block)]
+        not_in = [block for i,block in enumerate(self) if not within(i, block)]
+        return inside, not_in
+        
+        
     def _exclude(self, names: list[str | int], features) -> 'Blockset':
         """ Create a new Blockset object that excludes the specified Blocks """
-        blocks = Blockset([], self.logger, self.timing, self.shuffle)
-        select = lambda i, b, n: (n==i) if isinstance(n,int) else (n in b.label)
-        remove = lambda i,block: any(map(lambda n: select(i, block, n), names))
-
         # Remember both the kept and dropped blocks, plus any dropped features
-        keep = [block for i, block in enumerate(self) if not remove(i, block)]
-        drop = [block for i, block in enumerate(self) if     remove(i, block)]
-        setattr(blocks, 'container', keep)
-        setattr(blocks, 'dropped',   drop)
-        setattr(blocks, 'dropped_features', [b.feature_subset(features) for b in drop])
-        setattr(blocks, 'dtype', self.dtype)
-        assert(len(blocks)), f'All Blocks excluded from {self} using {names}'
-        return blocks
+        drop, keep = self._partition(names)
+        drop_block = [b.copy() for b in drop]
+        keep_block = [b.copy() for b in keep]
+        
+        blockset = Blockset(keep_block, self.logger, self.timing, self.shuffle, True)
+        blockset.dropped = drop_block
+        blockset.dropped_features = [b.feature_subset(features) for b in drop]
+        blockset.dtype = self.dtype
+        assert(len(blockset)), f'All Blocks excluded from {self} using {names}'
+        return blockset
+
+
+    def is_valid(self, fast: bool=False) -> bool:
+        """ Verifies that all blocks have at least some non-missing data """
+        # Sort by sparsity, assuming higher values are more likely to fail
+        by_sparsity = sorted(self, key=lambda b:b.sparsity, reverse=True)
+
+        # Fast return when there are no valid windows for a block
+        with self.benchmark('fast_invalid_check'):
+            for block in by_sparsity:
+                if block.fast_invalid_check:
+                    self.logger.debug(f'\t{block} failed fast_invalid_check')
+                    return False
+                
+        # Skip the full check for any actual valid windows
+        if fast: return True
+        # print(f'is_valid: {self}:')
+        with self.benchmark('valid_windows.size'):
+            for block in by_sparsity:
+                # print(f'\t{block=} {block.is_required=} {block.valid_windows.size=}')
+                if block.is_required and not block.valid_windows.size:
+                    self.logger.debug(f'\t{block} failed valid_windows.size')
+                    return False
+        return True
+        

@@ -19,9 +19,4 @@ class FutureSampler(NonzeroSampler):
             config = min(self.configs)
             time.sleep(0.1)
         if not self.exit_flag():
-            index = self.random.choice( config.nonzero )
-            return [[index, self.blocks[index]]]
-
-    def get_block(self, config):
-        index = self.random.choice( config.nonzero )
-        return [[index, self.blocks[index]]]
+            return self.get_block(config)

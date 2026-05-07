@@ -1,6 +1,6 @@
 import dill
 import tensorflow as tf
-from ...model import Node
+from ...model.Node import Node
 
 class InitialState(tf.keras.Layer):
     def __init__(self,units):
@@ -91,23 +91,3 @@ class LSTMCell(Node):
         _,[h,c] = self._lstmcell(inp,(h,c))
 
         return dict(zip(self.state_names,[h,c]))
-
-    def encode(self,type='dill',**kwargs):
-        """ Returns serialized dict """
-        self.build()
-        encode = super().encode()
-        encode.pop('outputs')
-        encode.pop('node')
-        encode.pop('attributes')
-        encode['units'] = dill.dumps(self.units,**kwargs)
-        encode['_lstmcell'] = dill.dumps(self._lstmcell,**kwargs)
-        return encode
-    
-    @classmethod
-    def decode(cls,encode,type='dill',**kwargs) -> 'LSTMCell':
-        """ decodes the result of encode """
-        decode = {k:dill.loads(v,**kwargs) for k,v in encode.items()}
-        _lstmcell = decode.pop('_lstmcell')
-        instance = cls(**decode)
-        instance._lstmcell = _lstmcell
-        return instance

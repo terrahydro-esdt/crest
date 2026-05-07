@@ -54,7 +54,8 @@ def test_archiver():
                     val = {'f1': np.stack([v.to_array(['f1']).flatten() for v in batch], axis=0).flatten()}
                     archiver.archive(idx, val)
 
-        written = xr.open_zarr(zarr)       
+        # Without mask_and_scale=False, int read as float due to NaN fill value
+        written = xr.open_zarr(zarr, mask_and_scale=False)
         assert(list(written.coords) == list(original.coords))
         for d in original.coords:
             assert((written[d] == original[d]).all())

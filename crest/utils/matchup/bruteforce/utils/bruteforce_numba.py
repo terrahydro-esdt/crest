@@ -28,10 +28,10 @@ INPUT_TYPES = [f32, f64, i32, i64][:2]
 
 
 @nb.njit([
-    UniTuple(i32, 2)(fx[:], fx[:], fx[:], fx[:], fx[:], fx[:])
+    UniTuple(i32, 2)(fx[:], fx[:], fx[:], fx[:], fx[:], fx[:], boolean)
     for fx in INPUT_TYPES
 ], cache=True, nogil=True)
-def check(x, xrl, xrr, y, yrl, yrr):
+def check(x, xrl, xrr, y, yrl, yrr, use_locus):
     """ lambda a,b,c,x,y,z: ((b+a)/2 <= y <= (c+b)/2) or ((y+x)/2 <= b <= (z+y)/2) 
         
         Returns
@@ -43,23 +43,29 @@ def check(x, xrl, xrr, y, yrl, yrr):
     """
     # count = 0
     for i in range(len(x)):
-        # count += 1
-        if (y[i]-yrl[i]) > x[i]:
-            # count += 1
-            if (x[i]-xrl[i]) > y[i]:
-                return i, 0#, count
-            # count += 1
-            if y[i] > (x[i]+xrr[i]):
-                return i, 1#, count
+        if use_locus:
+            if (x[i]-xrl[i]) > (y[i]+yrr[i]):
+                return i, 0
+            if (y[i]-yrl[i]) > (x[i]+xrr[i]):
+                return i, 1
         else:
             # count += 1
-            if x[i] > (y[i]+yrr[i]):
+            if (y[i]-yrl[i]) > x[i]:
                 # count += 1
                 if (x[i]-xrl[i]) > y[i]:
                     return i, 0#, count
                 # count += 1
                 if y[i] > (x[i]+xrr[i]):
                     return i, 1#, count
+            else:
+                # count += 1
+                if x[i] > (y[i]+yrr[i]):
+                    # count += 1
+                    if (x[i]-xrl[i]) > y[i]:
+                        return i, 0#, count
+                    # count += 1
+                    if y[i] > (x[i]+xrr[i]):
+                        return i, 1#, count
 
     return -1, -1#, count
 
@@ -173,10 +179,10 @@ def create_skiplist(array, res_l, res_r):
 
 
 @nb.njit([
-    i32[:,:](fx[:,:], fx[:,:], fx[:,:], fx[:,:], fx[:,:], fx[:,:], boolean[:], pb_type)
+    i32[:,:](fx[:,:], fx[:,:], fx[:,:], fx[:,:], fx[:,:], fx[:,:], boolean[:], boolean, pb_type)
     for fx in INPUT_TYPES
 ], cache=True, parallel=True, nogil=True)
-def bruteforce_original(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
+def bruteforce_original(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, use_locus, progress=None):
     """ Brute-force method to find neighbors within left/right distance tolerance.
     
     Note that this method *requires* a1 and a2 to be lexicographically sorted,
@@ -259,7 +265,7 @@ def bruteforce_original(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
             b2l = a2l[ix2] if is_dynamic2 else a2l_statics
             b2r = a2r[ix2] if is_dynamic2 else a2r_statics
 
-            invalid_dim, above = check(b1, b1l, b1r, b2, b2l, b2r)
+            invalid_dim, above = check(b1, b1l, b1r, b2, b2l, b2r, use_locus)
             invalid_dim += steps[invalid_dim]
             # if debug:
             #     print(f'\t\t{b1}  vs  {b2}')
@@ -347,10 +353,10 @@ def bruteforce_original(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
 
 
 @nb.njit([
-    UniTuple(i32, 3)(DictType(i32, ListType(i32)), i32, i32, UniTuple(fx[:,:],3), UniTuple(fx[:,:],3), i32[:,:], i32[:], boolean)
+    UniTuple(i32, 3)(DictType(i32, ListType(i32)), i32, i32, UniTuple(fx[:,:],3), UniTuple(fx[:,:],3), i32[:,:], i32[:], boolean, boolean)
     for fx in INPUT_TYPES
 ], cache=True, nogil=True)
-def loop(matches, ix1, start, a1lr, a2lr, skip, steps, swapped):
+def loop(matches, ix1, start, a1lr, a2lr, skip, steps, swapped, use_locus):
     """ Core bruteforce loop """
     def get_index(i, alr):
         a, l, r = alr
@@ -371,7 +377,7 @@ def loop(matches, ix1, start, a1lr, a2lr, skip, steps, swapped):
         n_loops += 1
         
         b2, b2l, b2r = get_index(ix2, a2lr)
-        invalid_dim, above = check(b1, b1l, b1r, b2, b2l, b2r)
+        invalid_dim, above = check(b1, b1l, b1r, b2, b2l, b2r, use_locus)
         invalid_dim += steps[invalid_dim]
 
         if (invalid_dim != 0) and not new:
@@ -447,10 +453,10 @@ def bruteforce_setup(a1, a2, a1l, a1r, a2l, a2r, all_nan_col):
 
 
 @nb.njit([
-    i32[:,:](fx[:,:], fx[:,:], fx[:,:], fx[:,:], fx[:,:], fx[:,:], boolean[:], pb_type)
+    i32[:,:](fx[:,:], fx[:,:], fx[:,:], fx[:,:], fx[:,:], fx[:,:], boolean[:], boolean, pb_type)
     for fx in INPUT_TYPES
 ], cache=True, nogil=True)
-def bruteforce_single(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
+def bruteforce_single(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, use_locus, progress=None):
     """ Brute-force method to find neighbors within left/right distance tolerance.
     
     Note that this method *requires* a1 and a2 to be lexicographically sorted,
@@ -476,7 +482,7 @@ def bruteforce_single(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
     ix1 = start = 0 
 
     while ix1 < len(a1):
-        start, mc, lc = loop(matches, ix1, start, a1lr, a2lr, skip2, steps, False)
+        start, mc, lc = loop(matches, ix1, start, a1lr, a2lr, skip2, steps, False, use_locus)
         n_match = n_match + mc
         ix1 = ix1 + 1
 
@@ -494,10 +500,10 @@ def bruteforce_single(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
 
 
 @nb.njit([
-    i32[:,:](fx[:,:], fx[:,:], fx[:,:], fx[:,:], fx[:,:], fx[:,:], boolean[:], pb_type)
+    i32[:,:](fx[:,:], fx[:,:], fx[:,:], fx[:,:], fx[:,:], fx[:,:], boolean[:], boolean, pb_type)
     for fx in INPUT_TYPES
 ], cache=True, nogil=True)
-def bruteforce_double(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
+def bruteforce_double(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, use_locus, progress=None):
     """ Same as bruteforce_single, but adaptively switches back and forth 
         between the two arrays. This speeds up the overall method by allowing
         both arrays to contribute towards skipping forward indices. 
@@ -523,7 +529,7 @@ def bruteforce_double(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
         n_loop1 = 0
         for _ in range(max(1, int(reps1))):
             if start2 < len(a1):
-                start1, mc, lc = loop(matches, start2, start1, a1lr, a2lr, skip2, steps, False)
+                start1, mc, lc = loop(matches, start2, start1, a1lr, a2lr, skip2, steps, False, use_locus)
                 n_match = n_match + mc
                 n_loop1 = n_loop1 + lc
                 start2  = start2 + 1
@@ -533,7 +539,7 @@ def bruteforce_double(a1, a2, a1l, a1r, a2l, a2r, all_nan_col, progress=None):
             n_loop2 = 0
             for _ in range(max(1, int(reps2))):
                 if start1 < len(a2):
-                    start2, mc, lc = loop(matches, start1, start2, a2lr, a1lr, skip1, steps, True)
+                    start2, mc, lc = loop(matches, start1, start2, a2lr, a1lr, skip1, steps, True, use_locus)
                     n_match = n_match + mc
                     n_loop2 = n_loop2 + lc
                     start1  = start1 + 1

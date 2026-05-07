@@ -8,18 +8,15 @@ from pathlib import Path
 import tensorflow as tf
 from tensorflow.keras.layers import Dense,Dropout,Layer,LSTM,Lambda
 from tensorflow.keras import Sequential
-from tensorflow import TensorSpec,cast,stack,squeeze,concat
+from tensorflow import TensorSpec
 from tensorflow.keras.utils import set_random_seed
-from tensorflow.keras.metrics import MeanSquaredError
 
 from crest.data_server.DataServer import DataServer
 from crest.model.Node import Node
 from crest.model.Model import Model
-from crest.data.loading import StructuredDataset,Dataset,Datafile
+from crest.data.loading import StructuredDataset,Dataset
 from crest.data import Batcher
-from crest.base import BaseNode
-from crest.data.transform import Transform
-
+from crest.tests.model.SoilMoistureModel import SoilMoistureModel
 
 @pytest.mark.integtest
 def test_soil_moisture_model():
@@ -34,73 +31,27 @@ def test_soil_moisture_model():
     # Copy data to local directory from data server
     ROOT_PATH = Path(DataServer.load('soil_moisture',os.getcwd()))
 
-    # Define data attributes
-    features = {
-        'ERA5'       : ['cape', 'cp', 'csfr','cvh', 'cvl', 'e', 'es',
-                        'fal','lai_hv', 'lai_lv', 'msdwlwrf', 'msdwswrf',
-                        'pev', 'sd','skt','smlt','sp', 'sro','slhf',
-                        'sshf','ssro','stl1', 'stl2', 'stl3', 'stl4',
-                        't2m','tp','u10', 'v10', 'z'],
-        'Irrigation' : ['Actual', 'Equipped', 'GroundWater', 
-                        'Non-Conventional', 'SurfaceWater'],
-        'Soil'       : ['Clay_frac', 'Sand_frac', 'Silt_frac'],
-        'SMAP'       : ['soil_moisture']
-    }
-
-    # Input and output features
-    INP = features['ERA5'] + features['Soil'] + features['Irrigation']
-    OUT = features['SMAP'] 
-
-    # Define soil moisture model 
-    class SoilMoistureModel(BaseNode):
-        inputs = {
-            'ERA5' : {k : {'datetime' : None, 'latitude' : 1, 'longitude' : 1} for k in features['ERA5']},
-            'StaticAttributes.zarr/Irrigation' : {k : {'latitude' : 1, 'longitude' : 1} for k in features['Irrigation']},
-            'StaticAttributes.zarr/Soil' : {k : {'latitude' : 1, 'longitude' : 1} for k in features['Soil']},
-        }
-
-        outputs = {'SMAP.zarr' : {'soil_moisture' : {'datetime' : 1, 'latitude' : 1, 'longitude' : 1}}}
-                
-        def __init__(self,stats):
-            transforms = Transform(stats,by_feature={'*' : 'logexp'})
-            super().__init__(transforms.standardize)
-            self._temporal = LSTM(units=256, name='temporal')
-            self._head = Dense(1, activation='relu')
-
-        def call(self,X,training=False):
-            era5 = stack(list(X['ERA5'].values()), axis=-1)
-            era5 = squeeze(era5, axis=[2,3])
-            x = self._temporal(era5)
-            soil = stack(list(X['StaticAttributes.zarr/Soil'].values()), axis=-1)
-            soil = squeeze(cast(soil, dtype=float), axis=[1,2])
-            irrigation = stack(list(X['StaticAttributes.zarr/Irrigation'].values()), axis=-1)
-            irrigation = squeeze(cast(irrigation, dtype=float), axis=[1,2])
-            x = concat([x, soil, irrigation], axis=-1)
-            return {'soil_moisture' : self._head(x)}
-
     # Training data
     extent_train = {'SMAP': {'extent' : {'datetime': ['2015-05-14 00:00:00', '2015-05-29 23:00:01']}},
                 'ERA5': {'extent' : {}},
                 'Soil': {'extent' : {}},
                 'Irrigation': {'extent' : {}}
                 }
+    
+    sources = {'ERA5' : 'ERA5.zarr', 
+               'Irrigation' : 'StaticAttributes.zarr/Irrigation', 
+               'Soil' : 'StaticAttributes.zarr/Soil',
+               'SMAP' : 'SMAP.zarr'
+               }
 
-    dataset_train = Dataset.from_models(
-            verbose=False, **{
+    dataset_train = Dataset.from_models( **{
+            'verbose'    : False,
             'models'     : [SoilMoistureModel],
             'database_folder' : ROOT_PATH,
             'variable_depths' : {'datetime': (335, 0)},
-            'datafile_kwargs' : extent_train 
+            'datafile_kwargs' : extent_train,
+            'sources' : sources
             })
-
-    batch_train = Batcher(dataset_train, **{
-        'batch_size' : 10,
-        'features'   : [INP , OUT],
-        'repeat'     : True,
-        'workers'    : 0,
-        'prefetch'   : False,
-        'seed'       : 46
-    })
 
     # Testing data / validation
     extent_test = {'SMAP': {'extent' : {'datetime': [np.datetime64('2015-05-30 00:00:00'), np.datetime64('2015-05-30 23:00:01')]}},
@@ -109,17 +60,37 @@ def test_soil_moisture_model():
                     'Irrigation': {'extent' : {}}
                     }
 
-    dataset_test = Dataset.from_models(
-            verbose=False, **{
-            'models'     : [SoilMoistureModel],
+    dataset_test = Dataset.from_specs(**{
+            'verbose' : False,
+            'io_specs'     : [SoilMoistureModel.inputs_spec,SoilMoistureModel.outputs_spec],
             'database_folder' : ROOT_PATH,
             'variable_depths' : {'datetime': (335, 0)},
-            'datafile_kwargs' : extent_test
+            'datafile_kwargs' : extent_test,
+            'sources' : sources
             })
+    
+#   # Create soil moisture model 
+    stats = dataset_train.summaries()
+    sm = SoilMoistureModel(stats)
+    sm.build()
+
+    sm.summary
+    INP = list(sm.inputs.keys())
+    OUT = list(sm.outputs.keys())
+
+    # Test model
+    batch_train = Batcher(dataset_train, **{
+        'batch_size' : 10,
+        'features'   : [INP,OUT],
+        'repeat'     : True,
+        'workers'    : 0,
+        'prefetch'   : False,
+        'seed'       : 46
+    })
 
     batch_valid = Batcher(dataset_test, **{
         'batch_size' : 10,
-        'features'   : [INP , OUT],
+        'features'   : [INP,OUT],
         'repeat'     : True,
         'prefetch'   : False,
         'workers'    : 0,
@@ -135,36 +106,41 @@ def test_soil_moisture_model():
         'shuffle'    : False
     })
 
-        
-    # Get stats
-    stats = xr.concat(dataset_train.summary, dim='features')
-    stats = stats.drop_duplicates('features', keep='last').compute()
+       
+    X  = batch_test.__next__()[0] 
+    result = sm(X)
 
-    # Create HTG
-    sm = SoilMoistureModel(stats)
-
+    # Check encode/decode works
+    os.environ['PYTHONHASHSEED'] = str(812)
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
+    set_random_seed(seed)
+    encode = sm.encode()
+    decode = sm.decode(encode) 
+    check = decode(X)
+    assert any(tf.math.equal(check['SMAP>>soil_moisture'],result['SMAP>>soil_moisture']))
+     
+    model = Model(sm)
+    
     # Create model and fit
-    model = Model(sm.graph)
-
     model.compile(**{
         'optimizer' : 'Adam', 
         'loss'      : [sm.losses],
         'metrics'      : [sm.loss]
     })
 
-    with batch_train as train, batch_valid as valid:
-        model.fit(
-            train, 
-            epochs=1, 
-            validation_data=valid,
-            steps_per_epoch=2, 
-            validation_steps=9)
+    weights = model.save_weights("sm.weights.h5")
+    model = Model(sm)
+    model.load_weights('sm.weights.h5')
+    check = model(X)
+    assert any(tf.math.equal(check['SMAP>>soil_moisture'],result['SMAP>>soil_moisture']))
 
-    # Evaluate
-    with batch_test as test:
-        model.evaluate(test,steps=9,return_dict=True)
-    
-    # Clean up
+    model.save("soil_moisture.crest")
+    loaded = model.load('soil_moisture.crest')
+    check = loaded(X)
+    assert any(tf.math.equal(check['SMAP>>soil_moisture'],result['SMAP>>soil_moisture']))
+
+    # Clean 
     shutil.rmtree(ROOT_PATH)
 
 @pytest.mark.integtest

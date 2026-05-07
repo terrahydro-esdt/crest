@@ -1,10 +1,11 @@
-from collections.abc import Collection, Callable, Sequence
+from collections.abc import Collection, Sequence
+from collections import defaultdict as dd
 from functools import cached_property, reduce
 from itertools import starmap
 from numbers import Number, Integral as Int
-from logging import Logger 
 from typing import Union 
 
+import dask.dataframe as df
 import dask.array as da 
 import bottleneck as bn
 import xarray as xr
@@ -84,7 +85,8 @@ class Block(BaseAbstract):
         block_index   : int   = 0,
         label         : str   = '',
         sparsity      : float = 0.,
-        coord_vecs : Collection = [],
+        coord_vecs    : Collection = [],
+        key_label     : str | None = None
     ):
         self._data    = data
         self._coords  = coords
@@ -96,13 +98,14 @@ class Block(BaseAbstract):
         self.original_dims = original_dims
         self._resolution   = resolution
         self._valid_mask   = valid_mask
-        self.window_depth  = window_depth
+        self._window_depth = window_depth
         self.valid_percent = valid_percent
         self.invalid_value = invalid_value
         self.allow_repeats = allow_repeats
         self.block_count   = block_count
         self.block_index   = block_index
         self.coord_vecs = coord_vecs
+        self.key_label = key_label
         
         # Shape sanity checks
         arrays = [coords, inbound_mask, overlap_mask]
@@ -111,12 +114,37 @@ class Block(BaseAbstract):
         assert(set(map(len, shapes)) == {len(dims)}), [shapes, dims]
 
         # Sparse data should already be filtered so it contains only valid data
-        # if self.sparse and len(self.invalid_value):
+        # if self.is_sparse and len(self.invalid_value):
         #     raise Exception('Sparse data should already be filtered')
             
 
     def __repr__(self) -> str:
         return f'Block[{self.label}]'
+
+    
+    def copy(self):
+        blk = Block(        
+            data = self._data,
+            coords = self._coords,
+            inbound_mask = self._inbound,
+            overlap_mask = self._overlap,
+            dims = self.dims,
+            label = self.label,
+            sparsity = self.sparsity,
+            original_dims = self.original_dims,
+            resolution = self._resolution,
+            valid_mask = self._valid_mask,
+            window_depth = self._window_depth,
+            valid_percent = self.valid_percent,
+            invalid_value = self.invalid_value,
+            allow_repeats = self.allow_repeats,
+            block_count = self.block_count,
+            block_index = self.block_index,
+            coord_vecs = self.coord_vecs,
+            key_label = self.key_label,
+        )
+        blk.__dict__.update(self.__dict__)
+        return blk
 
 
     @cached_property
@@ -129,25 +157,63 @@ class Block(BaseAbstract):
             'silent'  : not hasattr(self, 'logger'),
         } | kwargs))
 
+        
+    @property
+    def is_required(self) -> bool:
+        """ Whether this block is required to form a valid sample """
+        return np.prod(list(self.valid_percent.values())) > 0
 
+    
+    @property
+    def is_sparse(self) -> bool:
+        """ Return True if data is a sparse object """
+        data = self._data if isinstance(self._data,da.Array) else self._data[0]
+        return hasattr(type(data._meta), 'todense')
+
+
+    @property
+    def is_uniform(self) -> bool:
+        """ Return True if the coordinate grid is uniform """
+        return not isinstance(self._resolution[0], da.Array)
+        
+    
+    @property
+    def features(self) -> list[str]:
+        """ Return the list of available features """
+        return self.original_dims[1]
+
+        
     @property
     def data(self) -> np.ndarray:
         """ Only compute dask data array upon first use """
         with self.benchmark(f'data'):
-            # if self.sparse: raise Exception(f'\n\n{self._data[0].dask}\n\n')
             if isinstance(self._data, da.Array):
                 return self._data.compute()
             return np.concatenate(da.compute(*[d for d in self._data]), axis=-1)
 
+    
     @cached_property
     def sparse_data(self):
         return self.data
+
+    
+    @property
+    def dataset(self) -> xr.Dataset:
+        """ Create an xarray dataset from the data and coordinates """
+        flat = [(self.dims, v[..., 0]) for v in self._data]
+        data = dict(zip(self.features, flat))
+        return xr.Dataset(data, coords=dict(zip(self.dims, self.coord_vecs)))
+
         
     @cached_property
     def coords(self) -> np.ndarray:
         """ Only compute dask coords array upon first use """
-        if self.sparse and len(self.coord_vecs):
-            return np.stack([cv[w].compute() for cv,w in zip(self.coord_vecs, self.sparse_data[..., 0].coords)], axis=-1)
+        if self.is_sparse and len(self.coord_vecs):
+            index = np.isfinite(self.sparse_data).all(-1).coords
+            # print(f'\t{self.data.shape=} {self.sparse_data.shape=} {self.sparse_data.coords.shape=} {[c.shape for c in self.coord_vecs]=} {index.shape=}')
+            if not index.size: self.interactive()
+            coord = [c[i].compute() for c, i in zip(self.coord_vecs, index)]
+            return np.stack(coord, axis=-1)
         with self.benchmark(f'coords {self._coords.shape}'):
             return self._coords.compute()
 
@@ -168,14 +234,6 @@ class Block(BaseAbstract):
     def resolution(self) -> list:
         """ Resolutions only need computed when non-uniform """
         return [getattr(r, 'compute', lambda: r)() for r in self._resolution]
-
-
-    @cached_property
-    def valid_mask(self) -> np.ndarray:
-        if self._valid_mask is not None:
-            with self.benchmark(f'valid {self._valid_mask.shape} {self._valid_mask.nbytes:,} bytes'):
-                return self._valid_mask.compute()
-        return ~self.invalid()
 
 
     @cached_property
@@ -215,17 +273,30 @@ class Block(BaseAbstract):
         return {dim: i for i, dim in enumerate(self.dims)}
     
 
-    @cached_property
+    @property
+    def window_depth(self) -> dict[str, (Int, Int)]:
+        """ Window sizes for each dimension: {dim: (n_left, n_right)} """
+        return {dim: self._window_depth.get(dim, (0,0)) for dim in self.dims}
+        
+        
+    @property
     def window_total(self) -> dict[str, Int]:
-        """ Window total size per dimension """
-        return {dim: 1+d.sum() for dim, d in self.window_depth.items()}
+        """ Total size for each dimension: {dim: 1 + n_left + n_right} """
+        return {dim: 1+sum(d) for dim, d in self.window_depth.items()}
 
 
+    @property
+    def uses_window(self) -> bool:
+        """ False if the requested window contains only a single element """
+        return any(size > 1 for size in self.window_total.values())
+        
+    
     @property
     def valid_windows_sparse(self):
         """ Determine valid sample window indices for sparse data """
         # If no window is requested, we can just use the sparse coords directly
-        if sum([np.sum(v) for v in self.window_depth.values()]+[0]) == 0:
+        if not self.uses_window:
+            return np.isfinite(self.sparse_data).all(-1).coords
             return self.sparse_data.coords[:-1]
 
         # Note that the sparse API isn't fully solidified - there are a few
@@ -239,7 +310,7 @@ class Block(BaseAbstract):
             keys, percent = keys_pct
             
             # Get the required number of elements for a valid window
-            n_total = np.prod([self.window_total.get(k, 1) for k in keys])
+            n_total = np.prod([self.window_total[k] for k in keys])
             windows = [slice(-s, e+1) for e, s in self.window_depth.values()]
 
             # Expand the indices to be broadcastable with the N-d window
@@ -263,7 +334,11 @@ class Block(BaseAbstract):
         # Remove indices outside of coordinate bounds (except virtual)
         # inbound = np.isfinite(self.coords)
         # inbound|= np.isnan(self.coords).all(tuple(range(self.ndim)))
-        return valid
+        depth = np.array([self.window_depth[k] for k in self.dims])
+        lower = (data.coords.T - depth[:, 0]) < 0
+        upper = (data.coords.T + depth[:, 1]) >= data.shape
+        outer = (lower | upper).any(1)
+        return valid & ~outer
         # return data.coords[:, valid][:-1]# & inbound.all(-1).flatten()][:-1].T
         # return valid & inbound.all(-1).flatten()
 
@@ -271,7 +346,7 @@ class Block(BaseAbstract):
     @cached_property
     def valid_windows(self) -> np.ndarray:#[Int]:
         """ Determine indices for all valid sample windows in the block """
-        if self.sparse: return self.valid_windows_sparse
+        if self.is_sparse: return self.valid_windows_sparse
 
         def moving_sum(invalid: np.ndarray, keys_pct: tuple) -> np.ndarray:
             """ Fast moving sum using bottleneck """
@@ -279,14 +354,14 @@ class Block(BaseAbstract):
 
             keys, percent = keys_pct
             
-            n_total = np.prod([self.window_total.get(k, 1) for k in keys])
+            n_total = np.prod([self.window_total[k] for k in keys])
             maximum = int((1-percent) * n_total)
 
             # Multiple axes can be used to define a combined valid percent 
             # e.g. {(ax1, ax2): 0.8} -> combination of the two must have 80% valid
             for exp, key in enumerate(keys):
                 axis = self.axes[key]
-                size = self.window_total.get(key, 1)
+                size = self.window_total[key]
 
                 if size > invalid.shape[axis]:
                     raise Exception(f'{self}: Block dimension "{key}" with ' +
@@ -351,8 +426,8 @@ class Block(BaseAbstract):
     @property
     def valid_coords(self) -> np.ndarray:
         """ Coordinate values for the valid locations """
-        if self.sparse:
-            if sum([np.sum(v) for v in self.window_depth.values()]+[0]) == 0:
+        if self.is_sparse:
+            if not self.uses_window:
                 return self.coords
             coords = self.coords
             if hasattr(coords, 'todense'):
@@ -365,7 +440,8 @@ class Block(BaseAbstract):
     @property
     def valid_data(self) -> np.ndarray:
         """ Center data values for the valid locations """
-        if self.sparse:
+        if self.is_sparse:
+            # If no window is requested, the sparse data is already filtered
             if sum([np.sum(v) for v in self.window_depth.values()]+[0]) == 0:
                 return self.sparse_data.data.reshape(-1, self.sparse_data.data.shape[-1])
             n_dims = self._data.shape[-1]
@@ -379,40 +455,110 @@ class Block(BaseAbstract):
         """ Resolution for valid locations, parsing left/right if necessary """
         if self.is_uniform: 
             return np.array(self.resolution)
-        assert(not self.sparse)
+        assert(not self.is_sparse), f'{self.resolution=}'
         res = [r[v] for r,v in zip(self.resolution, self.valid_windows)]
         return np.stack(res, axis=1)
 
 
     @cached_property
+    def valid_mask(self) -> np.ndarray:
+        if self._valid_mask is not None:
+            with self.benchmark(f'valid_mask {self._valid_mask.shape} {self._valid_mask.nbytes:,} bytes'):
+                return self._valid_mask.compute()
+        return ~self.invalid()
+
+
+    @cached_property
     def fast_invalid_check(self) -> bool:
         """ Quick verification: returns True if no valid data exists """
-        # If a dimension can have 0% exist and still be valid, don't check
-        if min(self.valid_percent.values()) > 0:
-            if self.sparse:
-                n = self.sparse_data.data.size
-                if n and any(t > 1 for t in self.window_total.values()):
-                    return not self.valid_windows.any()
-                # if not n:
-                #     self.__dict__.pop('sparse_data', None)
-                return n == 0
-            return not self.valid_mask.any()
-            # return self.invalid( self._data[..., 0].compute() ).all()
-        return False
+        # If any dimension can have 0% existing and still be valid, don't check
+        if not self.is_required:
+            return False
 
+        # TODO: this is_sparse block isn't necessary; valid_mask should(?) work
+        if self.is_sparse:
+            n = self.sparse_data.data.size
+            if n and self.uses_window:
+                return not self.valid_windows.any()
+            return n == 0
+        return not self.valid_mask.any()
 
-    @property
-    def sparse(self) -> bool:
-        """ Return True if data is a sparse object """
-        data = self._data if isinstance(self._data,da.Array) else self._data[0]
-        return hasattr(type(data._meta), 'todense')
+    
+    def summary(self, features: list[str] | None = None) -> xr.DataArray:
+        """ Return summary statistics for data """
+        features = self.feature_subset(features or self.features)
+        data = self.dataset[features]
 
-
-    @property
-    def is_uniform(self) -> bool:
-        """ Return True if the coordinate grid is uniform """
-        return not isinstance(self._resolution[0], da.Array)
-
+        quantiles = list(range(1, 100))#[2, 10, 25, 50, 75, 90, 98]
+        perc_keys = [f'p{q}'.replace('p50', 'median') for q in quantiles]
+        stat_keys = ['mean', 'std', 'min', 'max', 'null']
+        all_stats = stat_keys + perc_keys
+        
+        if not features:
+            return xr.DataArray(np.empty((0, len(all_stats))), coords={
+                'features': [], 'statistics': all_stats}).chunk(-1)
+        
+        # Splitting large chunks seems to sometimes result in KeyError in dask
+        with dask.config.set(**{'array.slicing.split_large_chunks': False}):
+            # Include in the summary stats any coordinates requested as features
+            for coord in data.coords:
+                if (coord in features) and (coord != 'datetime'):
+                    coords = {c: data[c] for c in data.coords if c != coord}
+                    data[f'{coord}_f'] = data[coord].astype('float32')
+                    data[f'{coord}_f'] = data[[f'{coord}_f']] \
+                        .expand_dims(**coords)[f'{coord}_f'] \
+                        .transpose(*list(data.dims)) \
+                        .chunk(data.chunksizes)
+                    
+            # Slightly different handling required for sparse data
+            if self.is_sparse:
+                def calc(values):
+                    # Explicitly apply functions per-block to avoid densifying
+                    blocks = values.data.to_delayed().ravel()
+                    
+                    # Ensure there's always at least one element to avoid errors
+                    delays = [dask.delayed(np.append)(b.data, [np.nan]) for b in blocks]
+                    series = [dask.delayed(pd.Series)(b) for b in delays]
+                    
+                    # Fake array sizes so dask doesn't complain
+                    length = [1] * len(series)
+                    arrays = df.from_delayed(series).to_dask_array(lengths=length)
+                    # Alternatively: values.data.map_blocks(lambda b: b.data[:,None,None])
+    
+                    # Similar to dense summary, but use dask operations directly
+                    extra = dd(int, {'null' : lambda x: values.size-da.sum(da.isfinite(x))})
+                    coord = xr.Variable('statistics', stat_keys) 
+                    value = lambda k: getattr(da, f'nan{k}', extra[k])(arrays).astype('float32')
+                    toset = lambda k: xr.DataArray(value(k))
+                    stats = xr.concat(map(toset, stat_keys), coord).to_dataset('statistics')
+                    stats[perc_keys] = da.percentile(arrays, quantiles, internal_method='tdigest')
+                    return stats.to_array('statistics')
+                stats = data.apply(calc)
+    
+            # Dense summary computation relies mostly on xarray operations
+            else:
+                extra = dd(int, {'null' : lambda: data.isnull().sum(dtype='int64')})
+                coord = xr.Variable('statistics', stat_keys) 
+                value = lambda k: getattr(data, k, extra[k])().to_array('features')
+                stats = xr.concat(map(value, stat_keys), coord).to_dataset('statistics')
+    
+                # Compute percentiles as a group for efficiency
+                stats[perc_keys] = xr.apply_ufunc(
+                    lambda x: da.percentile(x.ravel(), quantiles, internal_method='tdigest'),
+                    data, **{
+                        'dask'             : 'allowed',
+                        'input_core_dims'  : [list(data.dims)],
+                        'output_core_dims' : [['statistics']],
+                    }).to_array('features').to_dataset('statistics')
+                stats = stats.to_array('statistics').to_dataset('features')
+                
+            stats = stats.rename({
+                f'{c}_f':c for c in data.coords if f'{c}_f' in stats})
+            stats = stats.to_array('features')
+            stats['statistics'] = stats['statistics'].astype(str)
+            stats['features'] = stats['features'].astype(str)
+            return stats.chunk(-1)
+        
 
     def set_valid_percents(self, valid_percent: dict):
         """ Set a new valid_percent after formatting correctly """
@@ -431,6 +577,19 @@ class Block(BaseAbstract):
         self.valid_percent = formatted
 
 
+    def set_feature_masks(self, feature_masks: dict):
+        """ Mask the requested features so only values within a bin remain """
+        assert(isinstance(self._data, list)) # Need to modify valid_mask to handle zarr features
+
+        for feature in self.feature_subset(list(feature_masks)):
+            lo,hi = feature_masks[feature]
+            index = self.features.index(feature)
+            value = self._data[index]
+            valid = (value >= lo) & (value < hi)
+            self._valid_mask &= valid
+            self._data[index] = da.where(valid, value, np.nan)
+
+        
     def reset_valid_percents(self):
         if getattr(self, '_original_valid_percent', None) is not None:
             self.valid_percent = self._original_valid_percent
@@ -512,8 +671,8 @@ class Block(BaseAbstract):
             dtypes = {keys[k]: dtypes[k] for k in available[mask]}
 
             # Create arrays for the left and total window depths
-            lower = np.array([self.window_depth[k][0]    for k in self.dims])
-            total = np.array([self.window_total.get(k,1) for k in self.dims])
+            lower = np.array([self.window_depth[k][0] for k in self.dims])
+            total = np.array([self.window_total[k]    for k in self.dims])
             shape = tuple(s for s,d in zip(total, self.dims) if d in orig_dims)
             ndims = len(self.dims)
 
@@ -554,16 +713,19 @@ class Block(BaseAbstract):
         orig_dims = ['features'] + [d for d in orig_dims if d != 'features']
 
         # Create arrays for the left and total window depths
-        lower = np.array([self.window_depth[k][0]    for k in self.dims])
-        total = np.array([self.window_total.get(k,1) for k in self.dims])
+        lower = np.array([self.window_depth[k][0] for k in self.dims])
+        total = np.array([self.window_total[k]    for k in self.dims])
         ndims = len(self.dims)
         shape = tuple(s for s,d in zip(total, self.dims) if d in orig_dims)
 
         # Initialize the final result dict with all globally applicable values
         keep_dims = [f for f in self.dims if f in orig_dims] + ['features']
-        xr_kwargs = {'dims': orig_dims, 'requested_features': req_features} | (
-            {'attrs' : {'resolution': dict(zip(self.dims, self.resolution))}}
-            if self.is_uniform else {})
+        xr_kwargs = {
+            'dims' : orig_dims, 
+            'key_label' : self.key_label,
+            'requested_features' : req_features, 
+        } | ({'attrs' : {'resolution': dict(zip(self.dims, self.resolution))}}
+                if self.is_uniform else {})
         
         def cast_dtype(key: str, value: np.ndarray) -> np.ndarray:
             """ Cast the given value array back to its original dtype """
@@ -578,23 +740,33 @@ class Block(BaseAbstract):
             return coord[(0,)*(coord.ndim-axis-2)+(slice(None),)+(0,)*axis].T
 
         def gen_xr_dict(data: np.ndarray, *coords: np.ndarray) -> dict:
-            """ Generate the xr.Dataset dict for given data/coord windows """            
+            """ Generate the xr.Dataset dict for given data/coord windows """  
             return { 'data'   : list(map(cast_dtype, features, data)), 
                      'coords' : dict(zip(keep_dims, coords)) | {
-                        'features': features} } | xr_kwargs
+                    'features': features} } | dict(xr_kwargs)
+
+        nan_matches = ~np.isfinite(matches)
 
         # If this was a dropped Block, use just NaN array placeholders
-        if empty:
+        if empty or nan_matches.all():
             data = np.nan * np.zeros((len(features),)+shape, 'float32')
             coords = [np.nan * np.zeros(s, 'float32') for s in shape]
-            return [gen_xr_dict(data, *coords)]
+            values = [gen_xr_dict(data, *coords)]
+            if empty:
+                return values  
+            return [values * len(np.atleast_1d(idx)) for idx in matches]
 
+        # Replace any NaN matches with -1 to select last item
+        matches[nan_matches] = -1
+        matches = matches.astype(int)
+
+        # Get all unique match indices and drop any -1 values
         ravel   = lambda v: getattr(v, 'ravel', lambda: v)()
-        indices = tuple(np.unique([j for i in matches for j in ravel(i)]))
+        indices = tuple(np.unique([j for i in matches for j in ravel(i) if j != -1]).astype(int))
         samples = len(indices)
 
         # Calculate the lower and upper bounds for each window dimension
-        if not self.sparse:
+        if not self.is_sparse:
             center = np.array(self.valid_windows)[:, indices, None]
             center-= lower[:, None, None].astype(center.dtype)
             bounds = [left + np.arange(size, dtype=center.dtype) for left, size in zip(center, total)]
@@ -611,13 +783,13 @@ class Block(BaseAbstract):
         get_ix = lambda i: self._data[..., i] if is_arr else self._data[i]
 
         # Sparse data matches require different handling than dense arrays
-        if self.sparse:
+        if self.is_sparse:
             indices = list(indices)
             
-            # If a window is requesting along at least one dimension, we need
+            # If a window is requested along at least one dimension, we need
             # to construct a flattened grid of indices to pull from the 'dense'
             # COO object representation (as advanced indexing isn't available)
-            if any(t > 1 for k,t in self.window_total.items()): 
+            if self.uses_window: 
 
                 # Gather window centers, add dimensions to allow broadcasting
                 newdim = tuple(range(ndims))
@@ -639,12 +811,24 @@ class Block(BaseAbstract):
                 data = self.sparse_data[window]
                 data = data.reshape(shapes + [len(features)]).todense()
 
+                # Remove any virtual dimensions
+                idxs = [slice(None)] * data.ndim
+                for i, d in enumerate(self.dims, 1):
+                    if d not in keep_dims:
+                        idxs[i] = 0
+                data = data[tuple(idxs)]
+
             # If no window is requested, we can just pull directly out of the
             # sparse representation rather than requiring dense materialization
             else:
-                data = np.stack([self.sparse_data[..., i].data[indices] for i in range(len(features))], axis=-1)
-                data = data.reshape((len(indices),1,1,1, len(features)))
-                coords = self.coords[indices][:,None,None,None]
+                if self.sparse_data.data.size:
+                    data = np.stack([self.sparse_data[..., i].data[indices] for i in range(len(features))], axis=-1)
+                    data = data.reshape((samples,)+shape+(len(features),))
+                    coords = self.coords[indices].reshape((samples,)+shape+(len(self.dims),))
+                else:
+                    data = np.nan * np.zeros((samples,)+shape+(len(features),), 'float32') 
+                    coords = np.nan * np.zeros((samples,)+shape+(len(self.dims),), 'float32') 
+                
         else:
             data   = da.compute(*[dask.delayed(get_ix(i))[windows] for i in range(n_feat)])
             data   =   np.stack(data, -1).reshape((samples,)+shape+(len(features),))
@@ -665,10 +849,16 @@ class Block(BaseAbstract):
 
         # Extract final window dictionaries to use for Sample initialization 
         windows = dict(zip(indices, map(gen_xr_dict, data, *coord_vectors)))
+        if nan_matches.any():
+            val = windows[indices[0]]
+            windows[-1] = val | {
+                'data': [v*np.nan for v in val['data']],
+                'coords': {k:((np.ones_like(v, dtype='float32')*np.nan).astype(v.dtype) if k!='features' else v) for k,v in val['coords'].items()},
+            }
         return [[windows[i] for i in np.atleast_1d(idx)] for idx in matches]
 
 
-    def feature_subset(self, features: Sequence | None) -> list[str] | None:
+    def feature_subset(self, features: Sequence|None = []) -> list[str] | None:
         """ Return a list of the features that can be provided by this Block.
         
         Parameters
@@ -680,12 +870,15 @@ class Block(BaseAbstract):
             returned by the pipeline, but can be ignored by this function
             aside from the un-nesting process. See the `features` keyword
             docstring in `Batcher` for additional information on nesting.
+            If an empty list is given, all available features are returned;
+            if None is given, None is returned. 
         
         Returns
         -------
         list[str]
             The subset of features that this Block can provide, returned as
-            a (flat) list of strings.
+            a (flat) list of strings. Note that this list includes coordinate
+            dimension names as well as data feature names.
         
         """
 

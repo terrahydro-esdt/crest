@@ -427,3 +427,101 @@ def test_recurrent_renaming():
     result = htg({'x_1': np.array([[1, 2, 3]])})
     assert(np.any(result['s_1'].numpy() == np.array([[1],[3],[6]])))
 
+def test_key_labels():
+    def f(X):
+        return X 
+
+    node = Node(**{
+        'name' : 'labels',
+        'node' : lambda x : f(x),
+        'inputs' : {'ifs>>x' : 1, 
+                    'ifs>>y' : 1 , 
+                    'era5>>x' : 1, 
+                    'y' : 1
+                    },
+        'outputs' : {'ifs>>x' : 1, 
+                    'ifs>>y' : 1,
+                    'era5>>x' : 1, 
+                    'y' : 1
+                    },
+    })
+
+    htg = HierarchalTensorGraph('labels')
+    htg.add_edge('input',node)
+    htg.add_edge(node,'output',labels='ifs')
+    res = htg({'ifs>>x' : 1, 
+               'ifs>>y' : 2, 
+               'era5>>x' : 3,
+               'y' : 4}
+               )
+    assert res == {'ifs>>x' : 1, 'ifs>>y' : 2}
+    
+    htg.remove_edge(node,'output')
+    htg.add_edge(node,'output',labels='era5')
+    res = htg({'ifs>>x' : 1, 
+               'ifs>>y' : 2, 
+               'era5>>x' : 3,
+               'y' : 4}
+               )
+    assert res == {'era5>>x' : 3}
+    
+    htg.remove_edge(node,'output')
+    htg.add_edge(node,'output',labels=['ifs','era5'])
+    res = htg({'ifs>>x' : 1, 
+               'ifs>>y' : 2, 
+               'era5>>x' : 3,
+               'y' : 4}
+               )
+    assert res == {'ifs>>x' : 1, 'ifs>>y' : 2, 'era5>>x' : 3}
+    
+    htg.remove_edge(node,'output')
+    htg.add_edge(node,'output',features=['y'],labels=['ifs'])
+    res = htg({'ifs>>x' : 1, 
+               'ifs>>y' : 2, 
+               'era5>>x' : 3,
+               'y' : 4}
+               )
+    assert res == {'ifs>>x' : 1, 'ifs>>y' : 2, 'y' : 4}
+
+    # Test grouped inputs 
+    def f(X):
+        return {**X['ifs'],**X['era5']}
+
+    node = Node(**{
+        'name' : 'groups',
+        'node' : lambda x : f(x),
+        'inputs' : {'ifs>>x' : 1, 
+                    'ifs>>y' : 1 , 
+                    'era5>>z' : 1, 
+                    't' : 1
+                    },
+        'outputs' : {'x':1, 'y':2, 'z':3},
+        **{'grouped_inputs' : True}
+    })
+
+    res = node({'ifs>>x' : 1, 
+               'ifs>>y' : 2, 
+               'era5>>z' : 3,
+               't' : 4}
+               )
+    htg = HierarchalTensorGraph('groups')
+    htg.add_edge('input',node)
+    htg.add_edge(node,'output')
+    res = htg({'ifs>>x' : 1, 
+               'ifs>>y' : 2, 
+               'era5>>z' : 3,
+               't' : 4}
+               )
+    assert res == {'x': 1, 'y': 2, 'z': 3}
+
+def test_registry():
+
+    class Child(HierarchalTensorGraph):
+        registry_name = 'Children' 
+        pass
+
+    class Baby(Child):
+        pass
+
+    assert(Child.registry_name == 'Children')
+    assert(Baby.registry_name == 'Baby')

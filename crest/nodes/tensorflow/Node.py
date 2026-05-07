@@ -5,59 +5,30 @@ from functools import cached_property, partial, reduce
 from operator import and_
 from abc import abstractmethod
 from typing import Union
+import dill
 
-import matplotlib.pyplot as plt
-import tensorflow as tf
+import matplotlib.pyplot as plt 
+import tensorflow as tf 
 import seaborn as sns
 import numpy as np
-import tlz
-import json
-import os
-import importlib
-import logging
+import tlz 
 
 from crest.utils import classproperty, plot_to_array
 from crest.base import BaseAbstract
 from crest.model import HierarchalTensorGraph as HTG
-from crest.model.Node import Node
+from crest.model.IOSpec import IOSpec
 
-logger = logging.getLogger(__name__)
-
-
-# BaseNode.inputs/outputs type annotation. These two dictionaries should
-# follow the format of:
-# { '<SOURCE>' :         # String indicating where features are found
-#   { '<FEATURE>' :      # String indicating features that are needed
-#     { '<COORDINATE>' : # String indicating coordinate dimensions, with either:
-#       total            # - int, giving the total size of windows along this coordinate
-#     | None             # - None, indicating windows can be any size (can be set as a model hyperparameter)
-#     | (left, right)    # - Collection of two integers, defining left/right window extent (total=left+right+1)
-# } } }
-#
-# _coord_type defines the inner coordinate dictionary annotation
-COORD_TYPE = dict[str, Collection[int] | int | None]
-
-# IO_TYPE defines the full inputs/outputs annotation
-IO_TYPE = dict[str, dict[str, COORD_TYPE]]
-
-
-def _serialize_callable(obj):
-    if callable(obj):
-        return obj.__name__ if hasattr(obj, '__name__') else str(obj)
-    return obj
-
-
-class BaseTFNode(BaseAbstract):
-    """BaseNode provides a template for machine learning models to inherit from. 
+class Node(HTG,BaseAbstract):
+    """ Node provides a template for machine learning models to inherit from. 
 
     Notes
     -----
-    Any Model(BaseNode) definition must define Model.inputs and Model.outputs, 
+    Any HTG(Node) definition must define Model.inputs_spec and Model.outputs_spec, 
     i.e. class-level dictionary attributes. These dictionaries define the input
     and output shapes for features coming into, and going out of, the model. 
     BaseNode objects will then automatically have input_spec and output_spec 
     attributes defined, allowing the specs to be directly passed into any 
-    HierarchalTensorGraph definition. As well, if forward and inverse normalization
+    HierarchalTensorGraph definition. As well, if forward/inverse normalization
     functions are given to the Model upon initialization, pre- and post-
     processing nodes will be added to the Model, which will normalize and 
     de-normalize the inputs and outputs of the Model, respectively.
@@ -89,7 +60,7 @@ class BaseTFNode(BaseAbstract):
         can be given to use as a different normalization procedure than the 
         feature normalization.
     debug          : bool
-        Determines whether y_true and y_pred statistics should be printed on each
+        Determines whether y_true/y_pred statistics should be printed on each
         batch inside the loss wrapper (default: False). Note this has no effect
         if no *normalize functions are given, or transform_loss=False. 
     plot_scatter   : bool
@@ -99,25 +70,26 @@ class BaseTFNode(BaseAbstract):
         the training process.
 
     """
-    inputs: IO_TYPE
-    outputs: IO_TYPE
+    registry_name = "TFNode"
 
     def __init__(self, 
+        name            : str | None = None, 
         normalize      = (), #: Union[tuple[Callable, Callable], 'Transform'] = (), 
         loss           : str | Callable | dict[str, str | Callable | dict] = 'mse',
         transform_loss : bool | tuple[Callable, Callable] = True,
         debug          : bool = False,
         plot_scatter   : bool = False,
+        use_raw_pred   : bool = True,
     ):
+        super().__init__(name or self.__name__)
         self.normalize      = getattr(normalize, 'by_feature', normalize)
         self.loss           = loss
         self.debug          = debug
         self.transform_loss = transform_loss
-        self.plot_scatter = plot_scatter
-
-    @property
-    def __name__(self) -> str:
-        return self.__class__.__name__
+        self.plot_scatter   = plot_scatter
+        self.use_raw_pred   = use_raw_pred
+        self._inputs_spec = getattr(self,'inputs_spec')
+        self._outputs_spec = getattr(self,'outputs_spec')
 
     @abstractmethod
     def call(self, X: dict[str, tf.Tensor], training: bool) -> dict[str, tf.Tensor]:      
@@ -125,87 +97,55 @@ class BaseTFNode(BaseAbstract):
             as input a dictionary of {feature name: Input Tensor}, and
             returns a dictionary of {output feature: Output Tensor}. """
         raise NotImplementedError(f'{self}.call() must be implemented')
-    
-    @cached_property
-    def node(self) -> 'Node':
-        return Node(**{
-            'node': _NodeWrap(self, f'{self}-call'),
-            'name': f'{self}',
-            'inputs': self.input_spec,
-            'outputs': self.output_spec,
-        })
 
     @cached_property
-    def graph(self) -> 'HierarchalTensorGraph':
-        """ Create the default base node graph object """
-        htg = HTG(f'{self}')
-        htg.add_edge('input',self.node)
-        htg.add_edge(self.node,'output')
-        return htg
+    def _node(self) -> 'Node':
+        from crest.model import Node
+        return Node(**{
+            'node': _NodeWrap(self,f'{self.name}-call'),
+            'name': f'{self.name}-Node',
+            'inputs': self.inputs_spec,
+            'outputs': self.outputs_spec,
+            'grouped_inputs' : True
+        })
 
     @property
     def losses(self) -> dict[str, Callable]:
         """ Return a dictionary of losses, one per output feature """
-        def get_loss(loss): return (loss if not isinstance(loss, (str, dict))
-                                    else tf.keras.losses.get(loss))
+        get_loss = lambda loss: (loss if not isinstance(loss, (str, dict))
+                                      else tf.keras.losses.get(loss))
 
         # Allow loss specification via config dict (see tf.keras.losses.get)
         if isinstance(self.loss, dict) and ('class_name' not in self.loss):
             losses = {k: get_loss(loss) for k, loss in self.loss.items()}
         else:
-            losses = {k: get_loss(self.loss) for k in self.output_spec}
-
+            losses = {k: get_loss(self.loss) for k in self._outputs}
+            
+        raw_preds = (lambda: self._raw_model_out) if self.use_raw_pred else None
         wrap_loss = partial(loss_wrapper, **{
-            'scope': f'{self}',
-            'transform': getattr(self, 'loss_transformer', None),
-            'postprocess': getattr(self, 'postprocess', None),
-            'plot_scatter': self.plot_scatter,
-            'debug': self.debug,
+            'scope'        : f'{self.name}',
+            'transform'    : getattr(self, 'loss_transformer', None),
+            'postprocess'  : getattr(self, 'postprocess', None),
+            'plot_scatter' : self.plot_scatter,
+            'debug'        : self.debug,
+            'y_pred_raw'   : raw_preds,
         })
 
         # Create a wrapper for loss functions to enable masking NaN
-        # targets/predictions, and applying different normalization
+        # targets/predictions, and applying different normalization 
         return dict(zip(losses, map(wrap_loss, losses, losses.values())))
-
-    @classproperty
-    def input_spec(cls) -> dict[str, tf.TensorSpec]:
-        """ Convert input shape dictionary into TensorSpec objects """
-        return cls._generate_spec(cls.inputs)
-
-    @classproperty
-    def output_spec(cls) -> dict[str, tf.TensorSpec]:
-        """ Convert output shape dictionary into TensorSpec objects """
-        return cls._generate_spec(cls.outputs)
-
-    @staticmethod
-    def _generate_spec(io_shapes_spec: IO_TYPE) -> dict[str, tf.TensorSpec]:
-        """ Generate a TensorSpec dict from the given input/output config """
-
-        def parse(coord_shapes: COORD_TYPE) -> list[int | None]:
-            """ Convert window extent tuple to total shape """
-            if not len(coord_shapes):
-                return [None]
-            # Handle left/right extent being used, and order by coordinate key
-            def get_total(s): return sum(
-                s)+1 if isinstance(s, Collection) else s
-            _, ordered = zip(
-                *sorted(coord_shapes.items(), key=lambda kv: kv[0]))
-            return [None] + list(map(get_total, ordered))
-
-        return {feature: tf.TensorSpec(shape=parse(coord_shapes), name=feature)
-                for source, feature_shapes in io_shapes_spec.items()
-                for feature,  coord_shapes in feature_shapes.items()}
-
+    
     def _add_data_transform(self):
+        from crest.model import Node
         """ Add pre-/post-processing functions to the graph """
-        assert (getattr(self, 'preprocess', None) is None), \
+        assert(getattr(self, 'preprocess', None) is None), \
             f'Should only call {self}._add_data_transform once'
 
         # Define the pre- and postprocessing transformers
         self.preprocess, self.postprocess = self.normalize
 
         # Set the loss transformer if it was requested to be used
-        if self.transform_loss is True:
+        if self.transform_loss is True: 
             self.loss_transformer = self.preprocess
 
         # Otherwise, if separate forward/inverse loss transformers were given,
@@ -213,40 +153,30 @@ class BaseTFNode(BaseAbstract):
         elif self.transform_loss:
             self.loss_transformer, self.postprocess = self.transform_loss
 
-        preprocess = _NodeWrap(self.preprocess,  f'{self}-preprocess')
-        call_output = _NodeWrap(self,             f'{self}-call')
-        postprocess = _NodeWrap(self.postprocess, f'{self}-postprocess')
-
-        i_spec = self.input_spec
-        o_spec = self.output_spec
+        preprocess = _NodeWrap(self.preprocess,f'{self.name}-preprocess')
+        postprocess = _NodeWrap(self.postprocess,f'{self.name}-postprocess')
 
         # Instantiate graphs for each node to define input/output specs
-        from crest.model import HierarchalTensorGraph as HTG
-        preprocess = Node(preprocess,  'preprocess',   i_spec, i_spec)
-        model = Node(call_output, f'{self}.call', preprocess.outputs, o_spec)
-        postprocess = Node(postprocess, 'postprocess',
-                          model.outputs, model.outputs)
-
-        # Reset graph so that it isn't a base node
-        self.graph.node = self.graph
-        self.graph.inputs = preprocess.inputs
-        self.graph.outputs = postprocess.outputs
+        preprocess = Node(preprocess, self._node.inputs, self._node.inputs, 'preprocess')
+        postprocess = Node(postprocess,self._node.outputs,self._node.outputs, 'postprocess')
 
         # Add new edges for pre-/post-processing
-        self.graph.add_edges_from([
+        self.remove_edge('input',self._node)
+        self.remove_edge(self._node,'output')
+        self.add_edges_from([
             ('input', preprocess),
-            (preprocess, model),
-            (model, postprocess),
+            (preprocess, self._node),
+            (self._node, postprocess),
             (postprocess, 'output'),
         ])
 
-    def _call(self, X, training=False):
+    def _call(self, X, training=True):
         """ Wraps self.call to provide data parsing / shape validation """
         # Group features by source
-        Z = getattr(X, 'copy', lambda: X)()
-        Y = {source: {k: Z.pop(k) for k, coords in features.items()}
-             for source, features in self.inputs.items()}
-        X = Z | Y
+        #Z = getattr(X, 'copy', lambda: X)()
+        #Y = {source: {k: Z.pop(k) for k, coords in features.items()} 
+        #        for source, features in self.inputs.items()}
+        #X = Z | Y
 
         for source, features in X.items():
             if isinstance(features, dict):
@@ -255,10 +185,10 @@ class BaseTFNode(BaseAbstract):
 
                 # One-hot encode various class features
                 X[source] = self.convert_onehot(features, {
-                    'landcover_class_0': (17, None),
-                    'slt': (7, None),
-                    'tvl': (20, [0, 1, 6, 8, 9, 10, 12, 15, 16, 19]),
-                    'tvh': (20, [2, 3, 4, 5, 17, 18]),
+                    'landcover_class_0' : (17, None),
+                    'slt' : (7, None),
+                    'tvl' : (20, [0, 1, 6, 8, 9, 10, 12, 15, 16, 19]),
+                    'tvh' : (20, [2, 3, 4, 5, 17, 18]),
                 })
 
         # Wrap output(s) with output_spec dictionary if not already
@@ -266,89 +196,89 @@ class BaseTFNode(BaseAbstract):
         if not isinstance(out, (dict, list, tuple)):
             out = [out]
         if isinstance(out, (list, tuple)):
-            if len(out) != len(self.output_spec):
-                raise Exception(f'Expected {len(self.output_spec)} outputs'
-                                + f' from {self}, but received {len(out)} value(s)')
-            out = dict(zip(self.output_spec.keys(), out))
+            if len(out) != len(self._outputs):
+                raise Exception(f'Expected {len(self._outputs)} outputs'
+                        + f' from {self}, but received {len(out)} value(s)')
+            out = dict(zip(self._outputs.keys(), out))
 
         def match_shape(feature):
-            """ Match output shapes to the respective output_spec shape """
+            """ Match output shapes to the respective outputs shape """
             # TODO: Handle case where tgt_shape has internal dimensions sized 1
             #       e.g. tgt_shape=(64,1,4,4) will cause this to fail even if
             #            the given out tensor has the same shape initially, as
             #            it will be squeezed and reshaped to (64,4,4,1)
-            squeezed = tf.squeeze(out[feature])
-            tgt_shape = self.output_spec[feature].shape
+            squeezed  = tf.squeeze(out[feature])
+            tgt_shape = self.outputs[feature].tf.shape
             rank_diff = tgt_shape.rank-tf.rank(squeezed)
             extra_dim = tf.ones(tf.math.abs(rank_diff), dtype=tf.int32)
             new_shape = tf.concat([tf.shape(squeezed), extra_dim], 0)
-            matched = tf.reshape(squeezed, shape=new_shape)
+            matched   = tf.reshape(squeezed, shape=new_shape)
             return tf.ensure_shape(matched, tgt_shape)
 
         # Ensure output shapes match their output spec shape
         return dict(zip(out, map(match_shape, out)))
 
-    def __call__(self, X):
-        """ Calling a BaseNode passes input through its graph """
-        return self.graph(getattr(X, 'copy', lambda: X)())
-
     def __init_subclass__(cls, *args, **kwargs):
         """ Verifies child classes defined inputs/outputs dictionaries """
-        super().__init_subclass__()
-        for key in ['inputs', 'outputs']:
-            cls.verify_type(getattr(cls, key, None), IO_TYPE, f'{cls}.{key}')
+        for key in ['inputs_spec', 'outputs_spec']:
+            if not hasattr(cls,key):
+                raise ValueError(f'Subclasses of {Node.__class__} must define {key} of type IOSpec')
+        cls.verify_type(getattr(cls, key, None), IOSpec, f'{cls}.{key}')
+        super().__init_subclass__(*args,**kwargs)
 
-    def __post_init__(self):
+    def build(self):
         """ Called after object initialization to ensure all 
-            keras/tensorflow objects are already added to this object """
-        super().__post_init__()
+            keras/tensorflow objects are already added to this object """       
+
+        # Base graph / no transform
+        self.add_edge('input',self._node)
+        self.add_edge(self._node,'output')
 
         # If normalization functions were given, add pre-/post-processing
         if len(self.normalize):
             count = len(self.normalize) == 2
             funcs = all(map(callable, self.normalize))
-            assert (count and funcs), f'Arguments to {self} should be two ' + \
+            assert(count and funcs), f'Arguments to {self} should be two ' + \
                 'callables which define forward and inverse transformations'
             self._add_data_transform()
 
-        # Set the loss transformer if only it was given
+        # Set the loss transformer only if it was given  
         elif not isinstance(self.transform_loss, bool):
 
             # Allow just a single transformer to be given (rather than
             # requiring both forward/inverse, since inverse is not used)
             if isinstance(self.transform_loss, (list, tuple)):
                 self.loss_transformer = self.transform_loss[0]
-            else:
-                self.loss_transformer = self.transform_loss
-            assert (callable(self.loss_transformer))
+            else: self.loss_transformer = self.transform_loss
+            assert(callable(self.loss_transformer))
 
-        # self.normalize needs to be set if transform_loss = True
-        elif self.transform_loss:
-            raise Exception('Cannot transform loss if no functions are given')
+        # self.normalize needs to be set if transform_loss = True 
+        elif self.transform_loss: 
+            raise Exception('Cannot transform loss if no functions are given') 
 
         # Verify output features can actually be transformed, since
         # the loss transformer will have no effect otherwise
         if hasattr(self, 'loss_transformer'):
-            unable = [f for f in self.output_spec if not getattr(
+            unable = [f for f in self._outputs if not getattr(
                 self.loss_transformer, 'can_transform', lambda f: True)(f)]
-
+            
             if unable:
                 lt = self.loss_transformer
                 error = f'{self} requested loss transformation, but '
                 error+= f'{getattr(lt, "__name__", lt)} cannot transform'
                 solve = f'Ensure {unable} are in the stats DataArray used to '
-                solve += f'initialize Transformer; or, set transform_loss=False'
+                solve+= f'initialize Transformer; or, set transform_loss=False'
 
                 # If no outputs can be transformed, raise an exception
-                if len(unable) == len(self.output_spec):
+                if len(unable) == len(self._outputs):
                     raise Exception(f'{error} any of the outputs!\n{solve}')
 
-                # Otherwise just log a warning
-                logger.warning(f'{error} some outputs: {unable}\n{solve}')
+                # Otherwise just print a warning
+                print(f'WARNING: {error} some outputs: {unable}\n{solve}')
 
     def convert_onehot(self, X: dict, onehot_classes: dict) -> dict:
         """ One-hot encode the given class features. 
-
+        
         Parameters
         ----------
         X : dict
@@ -370,7 +300,7 @@ class BaseTFNode(BaseAbstract):
             The original data source dictionary, minus any features that were
             contained in onehot_classes, plus the new one-hot encoded features
             for any that were available (formatted 'feature_classnum').
-
+        
         """
         for feature, (total_cls, include_cls) in onehot_classes.items():
             if feature in X:
@@ -381,6 +311,7 @@ class BaseTFNode(BaseAbstract):
                 for i in include_cls or range(total_cls):
                     X[f'{feature}_{i}'] = onehot[..., i]
         return X
+
 
     def convert_coords(self, X: dict) -> dict:
         """ Reshape coordinates to be stackable alongside other features """
@@ -393,16 +324,16 @@ class BaseTFNode(BaseAbstract):
         # implemented in the future.
         if coord_shape.shape[0] != 4: return X
 
-        ndt, nlt, nln = coord_shape[1], coord_shape[2], coord_shape[3]
+        ndt,nlt,nln = coord_shape[1], coord_shape[2], coord_shape[3]
         for name in coord_names:
             if name in X:
 
                 # Tile coordinate features into 3d cube
                 coordinate = X.pop(name)
                 tiles, idx = {
-                    'datetime': ([1, 1, nlt, nln], [slice(None), slice(None), None, None]),
-                    'latitude': ([1, ndt, 1, nln], [slice(None), None, slice(None), None]),
-                    'longitude': ([1, ndt, nlt, 1], [slice(None), None, None, slice(None)]),
+                    'datetime'  : ([1, 1, nlt, nln], [slice(None), slice(None), None, None]),
+                    'latitude'  : ([1, ndt, 1, nln], [slice(None), None, slice(None), None]),
+                    'longitude' : ([1, ndt, nlt, 1], [slice(None), None, None, slice(None)]),
                 }[name]
 
                 if name == 'datetime':
@@ -413,8 +344,8 @@ class BaseTFNode(BaseAbstract):
                         coord_secs = tf.math.floormod(coord_secs, sec_in_day)
     
                         with tf.name_scope(''):
-                            tf.summary.histogram(f'{self}-call/datetime_{mult}_laststep', coord_secs[:, -1])
-                            tf.summary.histogram(f'{self}-call/datetime_{mult}_lastsample', coord_secs[-1])
+                            tf.summary.histogram(f'{self.name}-call/datetime_{mult}_laststep', coord_secs[:, -1])
+                            tf.summary.histogram(f'{self.name}-call/datetime_{mult}_lastsample', coord_secs[-1])
     
                         # Convert to radians
                         coord_rads = tf.cast(coord_secs * 2 * np.pi / sec_in_day, tf.float32)
@@ -424,76 +355,31 @@ class BaseTFNode(BaseAbstract):
                             sin_cos_dt = getattr(tf.math, name)(coord_rads)
     
                             with tf.name_scope(''):
-                                tf.summary.histogram(f'{self}-call/datetime_{mult}_laststep_{name}', sin_cos_dt[:, -1])
-                                tf.summary.histogram(f'{self}-call/datetime_{mult}_lastsample_{name}', sin_cos_dt[-1])
+                                tf.summary.histogram(f'{self.name}-call/datetime_{mult}_laststep_{name}', sin_cos_dt[:, -1])
+                                tf.summary.histogram(f'{self.name}-call/datetime_{mult}_lastsample_{name}', sin_cos_dt[-1])
                             X[f'{name}_{mult}'] = tf.tile(sin_cos_dt[idx], tiles)
                 else: X[name] = tf.tile(coordinate[idx], tiles)
         return X
+    
+    def encode(self,type='dill',**kwargs):
+        self.build()
 
-    # def to_json(self) -> str:
-    #     """ Serialize the BaseNode instance to JSON """
-    #     config = {
-    #         'class_name': self.__class__.__name__,
-    #         'module': self.__class__.__module__,
-    #         'inputs': self.inputs,
-    #         'outputs': self.outputs,
-    #         'loss': _serialize_callable(self.loss),
-    #         'transform_loss': tuple(map(_serialize_callable, self.transform_loss)) if isinstance(self.transform_loss, (tuple, list)) else self.transform_loss,
-    #         'normalize': tuple(map(_serialize_callable, self.normalize)) if self.normalize else None,
-    #         'debug': self.debug,
-    #         'plot_scatter': self.plot_scatter,
-    #     }
-    #     return json.dumps(config)
+        # Add __init__ args
+        encode = {k:dill.dumps(v,**kwargs) for k,v in self.config.items()}
+        encode = encode | {'_inputs_spec': self._inputs_spec.encode()}
+        encode = encode | {'_outputs_spec': self._outputs_spec.encode()}
+        # Add io specs
+        return encode
 
-    # def from_json(cls, json_str: str) -> 'BaseNode':
-    #     """ Deserialize a BaseNode instance from a JSON string """
-    #     config = json.loads(json_str)
-
-    #     # Dynamically import class
-    #     module = importlib.import_module(config['module'])
-    #     class_ = getattr(module, config['class_name'])
-
-    #     # Reconstruct any standard loss functions or callables
-    #     def resolve(obj):
-    #         if isinstance(obj, str):
-    #             try:
-    #                 return getattr(tf.keras.losses, obj)
-    #             except AttributeError:
-    #                 try:
-    #                     return globals()[obj]
-    #                 except KeyError:
-    #                     return obj  # fallback
-    #         return obj
-
-    #     loss = resolve(config['loss'])
-    #     normalize = tuple(
-    #         map(resolve, config['normalize'])) if config['normalize'] else ()
-    #     transform_loss = config['transform_loss']
-    #     if isinstance(transform_loss, (list, tuple)):
-    #         transform_loss = tuple(map(resolve, transform_loss))
-    #     else:
-    #         transform_loss = resolve(transform_loss)
-
-    #     return class_(
-    #         *normalize,
-    #         loss=loss,
-    #         transform_loss=transform_loss,
-    #         debug=config['debug'],
-    #         plot_scatter=config['plot_scatter']
-    #     )
-
-    # def save(self, path: str) -> None:
-    #     """Save the node configuration to a JSON file."""
-    #     os.makedirs(os.path.dirname(path), exist_ok=True)
-    #     with open(path, 'w') as f:
-    #         f.write(self.to_json())
-
-    # @classmethod
-    # def load(cls, path: str) -> 'BaseNode':
-    #     """Load a node configuration from a JSON file."""
-    #     with open(path, 'r') as f:
-    #         return cls.from_json(f.read())
-
+    @classmethod
+    def decode(cls,encode,type='dill',**kwargs):
+        _inputs_spec = encode.pop('_inputs_spec')
+        _outputs_spec = encode.pop('_outputs_spec')
+        decode = {k:dill.loads(v,**kwargs) for k,v in encode.items()}
+        obj = cls(**decode)
+        obj._inputs_spec = _inputs_spec
+        obj._outputs_spec = _outputs_spec
+        return obj
 
 class _NodeWrap(tf.keras.layers.Layer):
     """ Wraps a callable / object in a keras layer, adding any internal 
@@ -515,8 +401,7 @@ class _NodeWrap(tf.keras.layers.Layer):
             The name which should be assigned to this layer, which will
             default to the name of the passed object if nothing is passed.
 
-    """
-
+    """  
     def __init__(self, obj: Callable, name: str = ''):
         super().__init__(name=name or getattr(obj, 'name', str(obj)))
 
@@ -525,12 +410,15 @@ class _NodeWrap(tf.keras.layers.Layer):
         for k, v in obj.__dict__.items():
             if any(name in str(type(v)) for name in keywords):
                 setattr(self, k, v)
-
+        
         self.obj = obj
         self.obj_name = getattr(obj, '__name__', repr(obj))
 
-    def __repr__(self):
+    def __repr__(self): 
         return repr(self.obj)
+    
+    def build(self, input_shape):
+        super().build(input_shape)
 
     @property
     def __name__(self):
@@ -541,18 +429,21 @@ class _NodeWrap(tf.keras.layers.Layer):
         with tf.name_scope(''):
             with tf.name_scope(self.name):
                 self._add_histograms(X, 'input')
+                if 'args' in kwargs and 'kwargs' in kwargs:
+                    args, kwargs = kwargs['args'], kwargs['kwargs']
                 out = getattr(self.obj, '_call', self.obj)(X, *args, **kwargs)
+                getattr(self.obj, '__self__', self.obj)._raw_model_out = out
                 self._add_histograms(out, 'output', desc=self.obj_name)
 
             # Add histograms for all weights
-            for w in self.weights:
-                tf.summary.histogram(w.name, w)
+            for w in self.weights: 
+                tf.summary.histogram(f'{self.obj_name}_{w.path}', w, description=w.name)
         return out
 
     def get_config(self):
         return super().get_config() | {
-            'obj': self.obj,
-            'obj_name': self.obj_name}
+            'obj'      : self.obj, 
+            'obj_name' : self.obj_name}
 
     @classmethod
     def from_config(cls, config):
@@ -560,25 +451,33 @@ class _NodeWrap(tf.keras.layers.Layer):
 
     def _add_histograms(self, X, scope: str, desc: str | None = None):
         """ Log the given X dict/tensor(s) histograms under the given scope """
+
+        #TODO: make recursive
         if isinstance(X, dict):
-            for k, v in X.items():
-                label = k.replace('@', '.') + f'/{scope}'
-                tf.summary.histogram(label, tf.identity(v), description=desc)
-        else:
-            tf.summary.histogram(scope, tf.identity(X), description=desc)
+            for key,value in X.items():
+                if isinstance(value,dict): 
+                    for k, v in value.items():
+                        label = k.replace('@', '.') + f'/{scope}'
+                        tf.summary.histogram(label, tf.identity(v), description=desc)
+                else:
+                    label = key.replace('@', '.') + f'/{scope}'
+                    tf.summary.histogram(label, tf.identity(value), description=desc)
+        else: tf.summary.histogram(scope, tf.identity(X), description=desc) 
+
 
 
 def loss_wrapper(
-    feature: str,
-    loss_func: Callable,
-    scope: str = '',
-    transform: Callable | None = None,
-    postprocess: Callable | None = None,
-    plot_scatter: bool = False,
-    debug: bool = False,
+    feature      : str, 
+    loss_func    : Callable, 
+    scope        : str = '',
+    transform    : Callable | None = None, 
+    postprocess  : Callable | None = None,
+    y_pred_raw   : Callable | None = None,
+    plot_scatter : bool = False,
+    debug        : bool = False,
 ) -> Callable:
     """ Wrapper for loss functions to enable NaN handling and normalization.
-
+    
     Notes
     -----
     This wrapper assumes that the loss function it is wrapping will be 
@@ -626,7 +525,7 @@ def loss_wrapper(
         def mask_nans(*arrs) -> tuple:
             """ Mask the union of NaN indices for given arrays """
             # Extract feature value if a dict is given, then mask NaNs
-            arrs = [a[feature] if isinstance(a, dict) else a for a in arrs]
+            arrs = [a[feature] if isinstance(a, dict) else a for a in arrs]               
             mask = reduce(and_, map(tf.math.is_finite, arrs))
             return tuple((tf.boolean_mask(a, mask) for a in arrs))
 
@@ -649,10 +548,9 @@ def loss_wrapper(
         # Preprocess the target if we want to calculate normalized loss
         if transform is not None:
             y_true = transform({feature: y_true})
-            y_pred = transform({feature: y_pred})
+            y_pred = (y_pred_raw or (lambda: transform({feature: y_pred})))()
 
-            arrs = [a[feature] if isinstance(a, dict) else a for a in [
-                y_true, y_pred]]
+            arrs = [a[feature] if isinstance(a, dict) else a for a in [y_true, y_pred]]               
             mask = reduce(and_, map(tf.math.is_finite, arrs))
             flag = tf.math.reduce_any(mask)
 
@@ -667,35 +565,30 @@ def loss_wrapper(
         # return tf.cond(zero, lambda: 0., lambda: tf.reduce_mean(loss))
         return tf.cond(flag, lambda: tf.reduce_mean(loss), lambda: 0.)
 
+
     # Defines various logging functionality in a separate helper method
     def logging(scope: str, arrs: dict, do_scatter=plot_scatter) -> None:
         """ Output debug logs, scatter plots, histograms """
-
+        
         def scatter(y1: np.ndarray, y2: np.ndarray, **kwargs) -> np.ndarray:
             """ Create scatter plot and return the image as a numpy array """
-            ys = y1, y2 = y1.flatten(), y2.flatten()
-            try:
-                r2 = linregress(*ys)[2] ** 2  # pyright: ignore
-            except:
-                r2 = np.nan
-            try:
-                R2 = r2_score(*ys)
-            except:
-                R2 = np.nan
+            ys = y1,y2 = y1.flatten(), y2.flatten()
+            try:    r2 = linregress(*ys)[2] ** 2 # pyright: ignore
+            except: r2 = np.nan
+            try:    R2 = r2_score(*ys)
+            except: R2 = np.nan
 
             # Write the plot image to the array variable
             with plot_to_array() as array:
                 # Scatter plot with KDE contours
-                sns.jointplot(x=y2, y=y1).plot_joint(sns.kdeplot,
-                                                     color='r', zorder=1, levels=6, alpha=0.7)
-
+                sns.jointplot(x=y2, y=y1).plot_joint(sns.kdeplot, 
+                    color='r', zorder=1, levels=6, alpha=0.7)
+                
                 # 1:1 diagonal line
-                plt.axline((0, 0), slope=1, ls='--',
-                           color='k', alpha=0.5, zorder=2)
+                plt.axline((0,0), slope=1,ls='--',color='k',alpha=0.5,zorder=2)
 
-                # Plot labels
-                plt.ticklabel_format(
-                    style='sci', axis='both', scilimits=(-2, 3))
+                # Plot labels 
+                plt.ticklabel_format(style='sci',axis='both',scilimits=(-2,3))
                 plt.ylabel(kwargs.get('y1_label', 'y_true'), fontsize=14)
                 plt.xlabel(kwargs.get('y2_label', 'y_pred'), fontsize=14)
                 plt.title('  '.join([
@@ -714,16 +607,15 @@ def loss_wrapper(
         # Print various statistics for debugging
         if debug:
             align = max(map(len, arrs))
-
-            def stats(y): return [(k, getattr(tf, k)(y)) for k in [
+            stats = lambda y: [(k, getattr(tf, k)(y)) for k in [
                 'shape', 'reduce_min', 'reduce_max', 'reduce_mean']]
-            tf.print(f'\n\n{scope}:', *[output
-                                        for k, arr in arrs.items()
-                                        for output in [f'\n{k:>{align}}'] + stats(arr)])
+            tf.print(f'\n\n{scope}:', *[ output
+                for k, arr in arrs.items()
+                for output in [f'\n{k:>{align}}'] + stats(arr) ])
 
-        with tf.name_scope(scope.replace("@", ".")):
+        with tf.name_scope(scope.replace("@",".")):
             # Log array histograms to tensorboard
-            for k, v in arrs.items():
+            for k, v in arrs.items(): 
                 tf.summary.histogram(k, v)
 
         with tf.name_scope(f'scatter/{scope.replace("@",".")}'):
@@ -731,7 +623,7 @@ def loss_wrapper(
             if do_scatter: 
                 (k1, k2, *_), (y1, y2, *_) = zip(*arrs.items())
                 image = lambda label, *y, **kw: tf.summary.image(label,
-                                                                 tf.numpy_function(partial(scatter, **kw), y, tf.uint8))
+                    tf.numpy_function(partial(scatter, **kw), y, tf.uint8))
                 image('image', y1, y2, y1_label=k1, y2_label=k2)
 
     return calculate_loss

@@ -30,7 +30,11 @@ class S3Path(FSMap):
     def __getattr__(self, attr):
         """ All other attributes are pulled from the underlying FSMap """
         return getattr(self.mapper, attr)
-        
+
+    def __reduce__(self):
+        """ Ensure S3Path object is pickled rather than just the FSMap """
+        return type(self), (self.mapper,)
+    
     @property
     def path(self) -> Path:
         """ Return a Path object representing the S3 path """

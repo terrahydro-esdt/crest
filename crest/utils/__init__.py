@@ -2,7 +2,9 @@ from .classproperty    import classproperty
 from .chunk_dict       import chunk_dict
 from .ensure_with      import ensure_with
 from .find_neighbors   import find_neighbors
+from .induce_bins      import induce_bins
 from .interactive      import interactive
+from .limit_calls      import limit_calls
 from .Metrics          import Metrics
 from .optimize_blocks  import optimize_blocks
 from .partial_product  import partial_product

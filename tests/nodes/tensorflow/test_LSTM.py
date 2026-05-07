@@ -31,7 +31,6 @@ def test_LSTM():
     assert(np.any(list(map(lambda x,y: x == y,
                           list(res.values()),ans))))
 
-
     # Test when passing an Input tensor
     _sm = LSTM('sm',inputs={'era5' : (features,), 'smap' :
                            (features,)},units=units)

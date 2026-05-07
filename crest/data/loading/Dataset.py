@@ -9,6 +9,7 @@ from pathlib import Path
 from numbers import Number, Integral as Int 
 from logging import Logger 
 from typing import Union 
+import re
 from pprint import pprint
 
 import cloudpickle as pkl
@@ -20,7 +21,10 @@ import logging
 import io 
 
 from crest.utils import Stopwatch, optimize_blocks, S3Path
-from crest.base import BaseSet, BaseNode
+from crest.base import BaseSet
+from crest.nodes.tensorflow import Node as TFNode
+from crest.model import HierarchalTensorGraph
+from crest.model import IOSpec
 from .Datafile import Datafile
 from .Blockset import Blockset
 
@@ -89,9 +93,12 @@ class Dataset(BaseSet):
 
 
     def summaries(self, compute=True, keep='last') -> xr.DataArray:
-        """Gather summary statistics of all component Datafiles """
+        """ Gather summary statistics of all component Datafiles """
         summary = self.summary.map_blocks(xr.DataArray.as_numpy)
-        summary = xr.concat(summary, dim='features')
+        summary = xr.concat(summary, dim='features', join='outer')
+        # for s,label in zip(summary,self.key_label):
+        #     s['features'] = [f'{label}>>{k}' for k in list(s.features.values)]
+        # summary = xr.concat(summary, dim='features')
         summary = summary.drop_duplicates('features', keep=keep)
         if compute:
             with ProgressBar():
@@ -99,6 +106,16 @@ class Dataset(BaseSet):
                 summary = summary.compute() 
         return summary
 
+
+    def get_feature(self, feature: str) -> xr.DataArray:
+        """ Return an xr.DataArray containing the requested feature's data """
+        available = []
+        for array in self.data:
+            if feature in array.features:
+                return array.sel(features=feature, drop=True)
+            available.append(array.features)
+        else: raise ValueError(f'{feature=} not found: {available=}')
+            
 
     def align(self, a: str, *b, n=20):
         """ Helper used to align log text """
@@ -117,6 +134,7 @@ class Dataset(BaseSet):
         log_level   : Union[int, None] = None,
         save_path   : Union[str, Path, None] = None,
         cache_path  : Union[Path, S3Path, None] = None,
+        overwrite   : bool = False,
     ):# -> da.Array | Iterator[Delayed]:
         """Generate the dask array containing all valid samples.
 
@@ -170,7 +188,13 @@ class Dataset(BaseSet):
             None is given, the default level set by the logger is used.  
         save_path : str | Path | None
             Save the generated sample array to a pickle file at the given path.
-
+        cache_path : Path | S3Path | None
+            Cache the generated blocks at the given path. Caching blocks is
+            distinct from caching Datafiles, as this parameter saves data in
+            the format used by the Batcher in order to speed up batching.
+        overwrite : bool
+            Whether the cache_path blocks should be overwritten, if they exist. 
+            
         Returns
         -------
         dask.array.Array | list[dask.delayed.Delayed]
@@ -192,10 +216,14 @@ class Dataset(BaseSet):
         for c in self.container:
             log_txt += f'\n\n{c.data}'
         log_txt += f'\n\n{dat_sep}\n\nPreparing data...\n'
+        redirect = redirect_stdout# if cache_path is None else nullcontext
 
+        # if cache_path is not None and verbose:
+        #     self.logger.info(log_txt)
+            
         # Capture stdout to log appropriately
         try:     
-            with redirect_stdout(io.StringIO()) as buffer:
+            with redirect(io.StringIO()) as buffer:
                 # Ensure all Datafiles are aware of all dimensions
                 # i.e. create virtual dimensions where necessary
                 self.ensure_dims( set.union(*map(set, self.dims)) )
@@ -215,6 +243,7 @@ class Dataset(BaseSet):
                     shuffle     = shuffle,
                     return_objs = return_objs,
                     cache_path  = cache_path,
+                    overwrite   = overwrite,
                 )
         except: 
             verbose = True
@@ -222,7 +251,9 @@ class Dataset(BaseSet):
 
         finally: 
             # Log the accumulated text prior to starting block computation
-            if verbose: self.logger.info(log_txt + buffer.getvalue() + log_sep)
+            # if verbose: 
+            message = (log_txt+buffer.getvalue())# if cache_path is None else ''
+            self.logger.info(message + log_sep)
 
         # Find all samples in parallel across the created blocksets
         if compute:
@@ -326,6 +357,7 @@ class Dataset(BaseSet):
         shuffle     : bool = False,
         return_objs : bool = False,
         cache_path  : Union[Path, S3Path, None] = None,
+        overwrite   : bool = False,
     ) -> Union[list, None]:
         """Block data into the requested configuration.
 
@@ -508,14 +540,13 @@ class Dataset(BaseSet):
         prepped = self.apply_overlap(
             optimize   = optimize, 
             cache_path = cache_path, 
+            overwrite  = overwrite,
             _map   = [overlap],    # Map Datafiles to the overlaps
             _delay = not optimize, # Compute only if optimizing
         )
         create_set = partial(Blockset, logger=self.logger, shuffle=shuffle)
         blocksets  = map(dask.delayed(create_set), zip(*prepped, strict=True))
-        get_return = lambda bs, obj=return_objs: bs if obj else bs.find_matches
-        return list(map(get_return, blocksets))
-
+        return [b if return_objs else b.find_matches for b in blocksets]
 
 
     def autochunk(self, 
@@ -600,7 +631,7 @@ class Dataset(BaseSet):
         
         labels = list(zip(*self.dims, strict=True))
         coords = [self._typed_data.ix[c].values for c in labels]
-        depths = [self.window_total.ix[c] for c in labels]
+        depths = [self.block_minim.ix[c] for c in labels]
         chunks = list(zip(*map(uniform_chunks, blocks, coords, depths)))
         blocks = {tuple(map(len, c)) for c in chunks}
         assert(len(blocks) == 1), blocks
@@ -656,8 +687,8 @@ class Dataset(BaseSet):
 
     def cache(self, 
         numblocks  : Collection[int], 
-        overwrite  : bool = False, 
         cache_dir  : Union[Path, str, FSMap, S3Path] = 'Cache',
+        overwrite  : bool = False, 
         verbose    : bool = False,
         fast_check : bool = False,
     ) -> 'Dataset':
@@ -699,9 +730,8 @@ class Dataset(BaseSet):
         elif isinstance(cache_dir, FSMap):
             cache_dir = S3Path(cache_dir)
 
-        cpath = lambda df: cache_dir.joinpath(df.name, f'{df.config_hash}.zarr')
-        paths = list(map(cpath, self))
-        if not (fast_check and all(p.exists() for p in paths)):
+        paths = [cache_dir.joinpath(df.cache_name) for df in self]
+        if overwrite or not (fast_check and all(p.exists() for p in paths)):
             with Stopwatch(f'Cached {len(self)} Datafiles at {cache_dir}'):
 
                 # # Shift target block midpoints between two blocks so overlaps
@@ -730,30 +760,127 @@ class Dataset(BaseSet):
         # Reinitialize Datafiles with their cached data
         # Anything handled by the cache (e.g. extent) can be dropped
         else: 
-            if verbose: print(f'All caches already exist ({fast_check=})')
-            self.reset(extent={},preprocessors=[],_kwmap={'location': paths})
+            self.logger.info(f'All caches already exist ({fast_check=})')
+            self.reset(**{
+                '_kwmap'        : {'location': paths},
+                'region'        : None,
+                'extent'        : {}, 
+                'preprocessors' : [],
+            })
         return self
 
-
-
+    
     @classmethod
-    def from_models(cls, 
-        models          : Collection[BaseNode],
+    def from_models(cls,
+        models          : Collection[HierarchalTensorGraph],
         database_folder : Union[Path, str, FSMap, S3Path, None] = None,
         variable_depths : dict[str, Union[Int, Collection[Int]]] = {},
         datafile_kwargs : dict[Union[str, Path], dict] = {},
         verbose         : bool = False,
         find_location   : Callable | None = None,
+        sources         : dict | None = None
+    ) -> 'Dataset':
+        """ Create a Dataset by inferring required parameters from HTGs.
+
+        Creates list of IOSpecs from models and uses Dataset.from_specs.
+
+        Parameters
+        ----------
+        models          : Collections[HierarchalTensorGraph]
+            Collection of classes which inherit from HTG (or 
+            their respective instantiated objects).
+        database_folder : Path | str | FSMap | S3Path
+            Path to the folder in which the zarr databases are stored. If a
+            location defined by the model is not itself a resolvable path to
+            the zarr database, the location is searched for in this folder.
+        variable_depths : dict[str, Int | Collection[Int]]
+            Models may sometimes allow a variable dimension size (represented
+            as a None value in the shape definition) along certain axes - e.g.
+            a temporal dimension can have any length when using an LSTM since 
+            the model will compress all timesteps into its internal state.
+            However, when reading the data from a database in that scenario,
+            we need to know how many timesteps to actually read. To allow for
+            this, the `variable_depths` parameter indicates the concrete window
+            depth that should be used by this Dataset - thus enabling the model
+            to still use Datasets which might have different sizes along the 
+            variable dimension, but defining it concretely for this specific 
+            Dataset object. The format is the same as `window_depths` for 
+            Datafile, i.e. keys represent the dimension name, and values should
+            either be a tuple of two ints representing (left size, right size);
+            or a single int which represents the same value being used for both
+            the left and right. For example, variable_depths={'datetime':(3,0)}
+            would indicate a window with three timesteps prior to the center 
+            value, and 0 timesteps after - then used by this method during 
+            Dataset creation to substitute any model feature shape definitions 
+            that use {'datetime': None, ...}. 
+        datafile_kwargs : dict[str | Path, dict]
+            Any additional keyword arguments that should be used when creating
+            the Datafile objects, where the dict keys are the name of the 
+            Datafile to which the respective values should be passed; e.g. 
+            datafile_kwargs = {'SMAP': {'preprocessors': [backfill, coarsen]}}.
+            Note the character '*' can be used as a special key to signify that
+            the respective value kwargs dict should be given to all datafiles,
+            e.g. {'*':{'extent': ...}} uses the given extent for all Datafiles.
+            Also note there are multiple formats that will be accepted when 
+            specifying the Datafile name (datafile_kwargs keys): a string that
+            indicates the folder name without its extension (e.g. 
+            f'{database_folder}/{name}.zarr'); the full folder name with any 
+            extension included (e.g. f'{database_folder}/{name}'); the full 
+            path to the database (either as a string or a Path object), in 
+            which case `database_folder` parameter will not be used.
+        verbose         : bool
+            Whether to print information on the Datafiles being created.
+
+        Returns
+        -------
+        Dataset
+            A Dataset object which contains all data specified in io_specs of the given htgs.
+
+        """
+
+        io_specs = []
+        for m in models:
+            for key in ['inputs', 'outputs']:
+                val = getattr(m, key)
+
+                # Handle Node-like API
+                if isinstance(val, property):
+                    val = getattr(m, f'{key}_spec')
+                io_specs.append(val)
+                
+        if not io_specs:
+            raise ValueError("Model(s) do not contain inputs_spec or outputs_spec")
+        
+        return Dataset.from_specs( 
+            io_specs, 
+            database_folder,
+            variable_depths,
+            datafile_kwargs,
+            verbose,         
+            find_location,
+            sources,
+        )
+
+    
+    @classmethod
+    def from_specs(cls, 
+        io_specs        : list[IOSpec],
+        database_folder : Union[Path, str, FSMap, S3Path, None] = None,
+        variable_depths : dict[str, Union[Int, Collection[Int]]] = {},
+        datafile_kwargs : dict[Union[str, Path], dict] = {},
+        verbose         : bool = False,
+        find_location   : Callable | None = None,
+        sources         : dict | None = None
     ) -> 'Dataset':
         """ Create a Dataset by inferring required parameters from BaseNodes.
 
-        BaseNode models (classes or objects) contain the information necessary
+        IOSpec(s) contain the information necessary
         to infer Datafile locations, features, and windows. Using these and any
         other given parameters, construct and return a Dataset object.
 
         Parameters
         ----------
-        models          : Collection[BaseNode]
+        io_specs        : list[IOSpec]
             Collection of classes which inherit from crest.base.BaseNode (or 
             their respective instantiated objects).
         database_folder : Path | str | FSMap | S3Path
@@ -801,9 +928,14 @@ class Dataset(BaseSet):
         Returns
         -------
         Dataset
-            A Dataset object which contains all data necessary for the models.
+            A Dataset object which contains all data specified in io_specs.
 
         """
+
+        # Make sure it's a list
+        if not isinstance(io_specs,list):
+            io_specs = [io_specs]
+
         universal_kwargs = datafile_kwargs.pop('*', {})
         unused_df_kwargs = unused = set(list(datafile_kwargs))
 
@@ -812,7 +944,7 @@ class Dataset(BaseSet):
         elif isinstance(database_folder, FSMap):
             database_folder = S3Path(database_folder)
 
-        def get_kwargs(source) -> dict:
+        def get_kwargs(source, label: str | None = None) -> dict:
             """ Get any kwargs from datafile_kwargs which matches source """
             path = Path(source) if isinstance(source, str) else source
             
@@ -821,14 +953,13 @@ class Dataset(BaseSet):
                 options = [path, path.stem, path.name, path.as_posix()]
             else: options = [path]
 
-            for option in options:
+            for option in [label] + options:
                 if option in datafile_kwargs:
                     unused_df_kwargs.difference_update({option})
                     return universal_kwargs | datafile_kwargs[option]
             return universal_kwargs
 
-
-        def get_location(model, source, find):
+        def get_location(io_spec, source, find):
             """ Get the zarr location from the given source, checking
                 a number of ways the location could be specified. """
             if find is not None: return find(source)
@@ -846,7 +977,7 @@ class Dataset(BaseSet):
                 dfkw = get_kwargs(path) or get_kwargs(source)
                 path = dfkw.get('location', path)
                 path = Path(path) if isinstance(path, str) else path
-                if not hasattr(path, 'exists'): return path
+                if not hasattr(path, 'exists'): return source, path
 
             # Also check for *folders* if extension was excluded
             if not path.exists() and isinstance(path, Path):
@@ -854,18 +985,18 @@ class Dataset(BaseSet):
                 dirs = lambda p: list(filter(Path.is_dir, glob(p)))
                 path = ((dirs(path) or dirs(Path(source))) + [path])[0]
 
-            assert(path.exists()), f'Unknown location for {model}: {source}'
-            return path
+            assert(path.exists()), f'Unknown location for {io_spec}: {source}'
+            return source, path
 
 
-        def shape_key(model, feature, shape) -> tuple[(str, (Int, Int))]:
+        def shape_key(io_spec, feature, shape) -> tuple[(str, (Int, Int))]:
             """ Create a dictionary key from the given shape, replacing None
                 shape size with variable_depths value where possible, and 
                 formatting each size as a two-tuple: (left, right). """
             key = []
             for k, v in sorted(shape.items(), key=lambda kv: kv[0]):
                 if v is None:
-                    assert(k in variable_depths), f'Model {model} needs the '+\
+                    assert(k in variable_depths),f'Spec {io_spec} needs the '+\
                         f'feature {feature} with shape {shape}, but no value'+\
                         f' was given for variable_depths to replace {k} = None'
                     v = variable_depths[k]
@@ -895,17 +1026,19 @@ class Dataset(BaseSet):
                 else: shape_features[key].add(dim)
 
 
-        def create_datafile(location, window_depth, feature_set) -> Datafile:
+        def create_datafile(source, location, window_depth, feature_set) -> Datafile:
             """ Create a Datafile object with the given parameters """
             # Remove any @ specifiers for the features
-            remove_at = lambda f: f.split('@')[0]
+            # Format: feature@source or source>>feature
+            remove_at = lambda f: f.split('@')[0].split('>>')[-1]
 
             # Collect all parameters and create Datafile
             df_kwargs = {
                 'location'     : location,
                 'features'     : sorted(map(remove_at, feature_set)),
                 'window_depth' : dict(window_depth),
-            } | get_kwargs(location)
+                'key_label'    : source
+            } | get_kwargs(location, source)
 
             if verbose:
                 print(f'\nCreating Datafile for {location.stem} with kwargs:')
@@ -917,41 +1050,39 @@ class Dataset(BaseSet):
         # {ERA5: {(None, 3, 3): ['skt', 'sp', ...]}}
         features    = dd(lambda: dd(set))
         coordinates = dd(lambda: dd(set))
-        for model in models:
+        for io in io_specs:
+            
+            # Examine each source (zarr database) the io_spec needs
+            for label, specs in io.items():
+                
+                # If source in sources get location
+                source = (sources or {}).get(label, label)
+                location = get_location(io, source, find_location)
 
-            # Check input and output shape definitions for the model
-            for io in [model.inputs, model.outputs]:
+                # Group features by their requested window shape
+                for feature, shape in specs.get('coord_shapes', specs).items():
+                    key = (dim,size), *_ = shape_key(io, feature, shape)
 
-                # Examine each source (zarr database) the model needs
-                for source, feature_shapes in io.items():
-                    location = get_location(model, source, find_location)
-
-                    # Group features by their requested window shape
-                    for feature, shape in feature_shapes.items():
-                        key = (dim,size), *_ = shape_key(model, feature, shape)
-
-                        # Include coordinate features with other features later
-                        if (len(key) == 1) and (dim == feature):
-                            coordinates[location][size].add(dim)
-                        else: features[location][key].add(feature)
+                    # Include coordinate features with other features later
+                    if (len(key) == 1) and (dim == feature):
+                        coordinates[location][size].add(dim)
+                    else: features[location][key].add(feature)
 
         # Group coordinate features with other features of the same size 
         for location, coord in coordinates.items():
             [*starmap(partial(add_coord, features[location]), coord.items())]
-
+        
         # Collate all Datafile kwargs and create the Datafile objects
-        dfs = [ create_datafile(location, window_depth, feature_set)
+        dfs = [ create_datafile(*location, window_depth, feature_set)
                  for location, size_features in features.items()
                  for window_depth, feature_set in size_features.items() ]
-    
+
         # Warn if any datafile_kwargs were unused
         if len(unused): print(f'WARNING unused datafile_kwargs: {unused}')
         if verbose: print(f'Dataset with {len(dfs)} Datafiles:\n   {dfs}')
         return Dataset(dfs)
 
-
-
-
+        
 def uniform_chunks(
     bins : int, 
     data : list[np.ndarray], 

@@ -1,5 +1,6 @@
 import logging
 import warnings
+import re
 from functools import cached_property,wraps
 from functools import cache
 from typing import Union
@@ -32,8 +33,8 @@ class HierarchalTensorGraph(TensorGraph):
         The attributes of the HTG. Defaults:
         'recurrent' : False,
         'return_seq' : False,
-        'initialization' : None,
         'roll_out' : None,
+        'built' : None
 
     Examples
     --------
@@ -61,7 +62,7 @@ class HierarchalTensorGraph(TensorGraph):
         return logging.getLogger(__name__)
 
     def __new__(cls,*args,**kwargs):
-        obj = super().__new__(cls)
+        obj = super().__new__(cls,*args,**kwargs)
 
         # Wrap build function
         og_build = obj.build
@@ -69,20 +70,34 @@ class HierarchalTensorGraph(TensorGraph):
         @wraps(og_build)
         def build_wrapper(*args,**kwargs):
 
-            # If not subclass do nothing
+            # If not subclass do nothin
             if not obj.is_subclass:
                 return
 
             # If already built, return
             if obj.attributes['built']:
                 return
-
+            
             og_build(*args,**kwargs)
             obj.attributes['built'] = True
 
         # Set new build function 
         obj.build = build_wrapper
 
+        # Set config to __init__ params
+        def set_config(obj,*args,**kwargs):
+            sig = inspect.signature(obj.__init__)
+            config = {}
+            config.update(sig.parameters)
+            if 'kwargs' in config:
+                config.pop('kwargs')
+            keys = list(config.keys())
+            for i in range(len(args)):
+                config[keys[i]] = args[i]
+            config.update(kwargs)
+            obj._config = config
+
+        set_config(obj,*args,**kwargs)
         return obj
 
     def __init__(self,name: str,**attr):
@@ -91,15 +106,18 @@ class HierarchalTensorGraph(TensorGraph):
         self.node = self
         self.graph = NetworkXGraph()
         self.output = []
-        self.inputs = {}
-        self.outputs ={}
+        self._inputs = {}
+        self._outputs ={}
+        self._inputs_spec = None
+        self._outputs_spec = None
 
         # Default attributes for nodes
         self.attributes = {
             'recurrent' : False,
             'return_seq' : False,
             'roll_out' : None,
-            'built' : None
+            'built' : None,
+            'grouped_inputs' : False
         }
 
         if self.is_subclass:
@@ -115,16 +133,28 @@ class HierarchalTensorGraph(TensorGraph):
     # Automatically register all subclasses
     # Runs once per subclass creation
     def __init_subclass__(cls,*args,**kwargs):
-
         # Set subclass to true
         cls.is_subclass = True
 
-        # Set default registry name to class name
-        basename = inspect.getmro(cls)[1].__name__
+        # If registry name is the same as the parent
+        # set to class name by default
+        basename = inspect.getmro(cls)[1].registry_name
         if cls.registry_name == basename:
             cls.registry_name = cls.__name__
 
         cls.registry.register(cls)
+
+    @property
+    def inputs(self):
+        return self._inputs
+    
+    @property
+    def outputs(self):
+        return self._outputs
+
+    @property
+    def config(self):
+        return self._config
 
     def initial_state(self,X):
         message = f'HierarchalTensorGraph  = {self.name} must implement '
@@ -173,17 +203,13 @@ class HierarchalTensorGraph(TensorGraph):
         """ Serialization """
         self.build()
 
-        encode = {
-            'name' : dill.dumps(self.name,**kwargs),
-            'edges' : dill.dumps(list(self.edges(data=True)),**kwargs)
-        }
+        # Save the __init__ args
+        encode = {k:dill.dumps(v,**kwargs) for k,v in self.config.items()}
 
-        attributes = {}
-        for k,v in self.attributes.items():
-            attributes[k] = dill.dumps(v,**kwargs)
-        encode['attr'] = attributes
+        # Save the edges
+        encode['edges'] = dill.dumps(list(self.edges(data=True)),**kwargs)
 
-        # Collect the json dicts of nodes
+        # Collect the nodes
         encode['nodes'] = []
         for name, node in self.nodes.items():
             if not name in ['input', 'output']:
@@ -206,16 +232,9 @@ class HierarchalTensorGraph(TensorGraph):
 
         edges = dill.loads(encode.pop('edges'),**kwargs)
 
-        attributes = {}
-        for k,v in encode.pop('attr').items():
-            attributes[k] = dill.loads(v,**kwargs)
-
         decode = {k : dill.loads(v,**kwargs) for k,v in encode.items()} 
 
         htg = cls(**decode)
-
-        # Set attributes
-        htg.attributes = attributes
 
         if not htg.graph.is_empty:
             return htg
@@ -227,6 +246,8 @@ class HierarchalTensorGraph(TensorGraph):
         for e in edges:
             s, t, a = e
             htg.add_edge(s, t, **a)
+        
+        htg.attributes['built'] = True
 
         return htg
 
@@ -510,27 +531,22 @@ class HierarchalTensorGraph(TensorGraph):
             raise ValueError(message)
 
         edge = self.graph.edges[s,t] 
+
         # Remove features from input
         if s == 'input':
-
-            # If features were selected across edge
-            if edge['features']:
-                for i in edge['features']:
-                    self.inputs.pop(i)
-            else:
-                for i in self[t].inputs.keys():
-                    self.inputs.pop(i)
+            # Apply edge mapping
+            X = self[t].inputs
+            X = self._edge_mapping(X,s,t)
+            for k in X:
+                self._inputs.pop(k)
 
         # Remove features from output
         if t == 'output':
-
-            # If features were selected across edge
-            if edge['features']:
-                for i in edge['features']:
-                    self.outputs.pop(i)
-            else:
-                for i in self[s].outputs.keys():
-                    self.outputs.pop(i)
+            # Apply edge mapping
+            X = self[s].outputs
+            X = self._edge_mapping(X,s,t)
+            for k in X:
+                self._outputs.pop(k)
 
         # Remove edge
         self.graph.remove_edge(s,t)    
@@ -579,6 +595,7 @@ class HierarchalTensorGraph(TensorGraph):
                  rollout_axis: Union[int, None] = None,
                  rename: dict[str,str] = {},
                  features: list[str] | str = [],
+                 labels: list[str] | str = [],
                  **attr
                  ):
         """
@@ -590,12 +607,14 @@ class HierarchalTensorGraph(TensorGraph):
 
         source : str, Callable, HierarchalTensorGraph
              The source from which to begin the edge
-
         target : str, Callable, HierarchalTensorGraph
              The sink from which to end the edge
-
         rename : dict[str,str]
             Dictionary to rename incoming keys with items = name : new_name
+        features : str | list[str]
+            A list of features to select
+        labels : str | list[str]
+            A list of labels to select
 
         Raises
         ------
@@ -630,6 +649,7 @@ class HierarchalTensorGraph(TensorGraph):
             'rollout_axis': rollout_axis,
             'rename' : rename,
             'features' : features if isinstance(features,list) else [features],
+            'labels' : labels if isinstance(labels,list) else [labels]
         }
 
         source = self.get_node(source)
@@ -733,7 +753,7 @@ class HierarchalTensorGraph(TensorGraph):
                             X.pop(k)
 
                 for k,v in X.items():
-                    self.inputs[k] = v
+                    self._inputs[k] = v
 
             # Build output spec
             if target.name == 'output': 
@@ -742,7 +762,7 @@ class HierarchalTensorGraph(TensorGraph):
 
                 # Add keys to outputs
                 for k,v in X.items():     
-                    self.outputs[k] = v
+                    self._outputs[k] = v
 
     def add_edges_from(self, ebunch: list):
         """
@@ -945,7 +965,7 @@ class HierarchalTensorGraph(TensorGraph):
     def find_and_select(self, X: dict, io: str | None = None) -> dict:
         """
         Flattens input/output and finds and selects the inputs/outputs
-        specified in self.inputs/outputs.
+        specified in self._inputs/outputs.
 
         Parameters
         ----------
@@ -984,11 +1004,9 @@ class HierarchalTensorGraph(TensorGraph):
                 # exact matches
                 if name in X.keys():
                     x[name] = X[name]
-                    continue
 
                 if isinstance(name, str) and (name,) in X.keys():
                     x[name] = X[(name,)]
-                    continue
 
                 # if not exact, look for a match in the last name in tuple keys
                 nm = name
@@ -1017,19 +1035,19 @@ class HierarchalTensorGraph(TensorGraph):
 
         # Renaming and selecting inputs
         if io == 'input':
-            if not self.inputs:
+            if not self._inputs:
                 return X
 
             # flatten/convert to tuples
             x = dict([i for i in flatten_dict(X, ())])
 
-            if self.inputs:
-                x = _find_and_select(self.inputs, x)
+            if self._inputs:
+                x = _find_and_select(self._inputs, x)
 
         # Renaming and selecting outputs
         if io == 'output':
             self.output = None  # Clear cached output
-            if not self.outputs:
+            if not self._outputs:
                 self.output = X.copy()  # Set node output
                 return X
 
@@ -1037,8 +1055,8 @@ class HierarchalTensorGraph(TensorGraph):
             x = dict([i for i in flatten_dict(X, ())])
 
             # select
-            if self.outputs:
-                x = _find_and_select(self.outputs, x)
+            if self._outputs:
+                x = _find_and_select(self._outputs, x)
                 self.output = x.copy()
 
         return x
@@ -1069,22 +1087,78 @@ class HierarchalTensorGraph(TensorGraph):
         edge = self.graph.edges[source,target]
         _X = X.copy()
 
+        # Keys to pop out
+        keep = []
+
         # Select from incoming features
         if edge['features']:
-            for i in edge['features']:
-                if not i in _X:
-                    message = f'Cannot select feature = {i} on edge {(source,target)}. '
+            for k in edge['features']:
+                if not k in _X:
+                    message = f'Cannot select feature = {k} on edge {(source,target)}. '
                     message += f'Available keys are: {list(_X.keys())}'
-                    raise ImproperTensorGraphError(message)
+                    warnings.warn(message)
+                else:
+                    keep.append(k)
 
-            _X = { k : v for k,v in _X.items() if k in edge['features']}
+        # Select labels
+        lbls = []
+        if edge['labels']:
+            for k in _X:
+                # If it does not  have label remove it
+                if '>>' in k:
+                    label = k.split('>>')[0]
+                    lbls.append(label)
+                    if label in edge['labels']:
+                        keep.append(k)
+        
+        if keep: 
+            for k in X.keys():
+                if k not in keep:
+                    _X.pop(k)
+
+        # Warn when labels are specified that are not present    
+        lbls = list(set(lbls))
+        missing_labels = [k for k in edge['labels'] if k not in lbls]
+        if missing_labels:
+                message = f'Cannot select label(s) = {missing_labels} on edge {(source,target)}. '
+                message += f'Available lables are: {lbls}'
+                warnings.warn(message)
 
         # Rename features after selection if needed
         if edge['rename']:
             _X = self.find_and_replace(edge['rename'], _X)
 
         return _X
+    
+    def _group_labeled_inputs(self,X):
+        """ 
+        Creates a nested dictionary based on group labels. For example,
+        {'label_1>>x' : 1, 'y' : 2, 'label_1>>z' : 3, 'label_2>>t' : 4}
+        will be passed as:
+        {'label_1' : {'x' : 1,'z' : 3}, 'y' : 2, label_2 : {'z' : 4}}
 
+        """
+
+        if not self.attributes['grouped_inputs']:
+            return X
+
+        # Get list of all labels
+        labels = []
+        for k in X:
+            if '>>' in k:
+                labels.append(k.split('>>')[0])
+
+        labels = list(set(labels))
+        
+        grouped = {k : {} for k in labels}
+        for k,v in X.items():
+            if '>>' in k:
+                label,key = k.split('>>')
+                grouped[label][key] = v
+            else:
+                grouped[k] = v
+
+        return grouped
 
     def __call__(self, X: dict) -> dict:
         """Propagate the given input through the graph.
@@ -1136,26 +1210,13 @@ class HierarchalTensorGraph(TensorGraph):
 
         _X = self.find_and_select(X, 'input')
 
-        # Removes 'input' or 'output' nesting of keys
-        def flatten(d):
-            # find 'input' or 'output' items that are dicts
-            keys = [k for k in ['input', 'output']
-                    if k in d and isinstance(d[k], dict)]
-
-            # If found, flatten
-            if keys:
-                return [d.update(d.pop(k, {})) for k in ['input', 'output']] and d
-
-            # otherwise, return original
-            return d
-
         # Basenode call
         if self.is_basenode:
-            return self.find_and_select(self.node(flatten(_X)), 'output')
+            return self.find_and_select(self.node(self._group_labeled_inputs(_X)), 'output')
 
         # Recursive case: traverse graph in reverse, from output to input
         def nodes(name):
-            return dict( self.graph.in_edges(name))  # All input nodes
+            return dict(self.graph.in_edges(name))  # All input nodes
 
         def search(name, depth):
             output_dict = {}
@@ -1189,7 +1250,8 @@ class HierarchalTensorGraph(TensorGraph):
                     outputs.append(output_dict | rollout_values)
 
                 # Collect recurrent final output
-                var = [flatten(self[name](o or _X)) for o in outputs]
+                #var = [flatten(self[name](o or _X)) for o in outputs]
+                var = [self[name](o or _X) for o in outputs]
 
                 var_map = {k: [{x: y for x, y in o[k].items() if hasattr(
                     y, '__len__') or y is not None} if isinstance(o[k], dict) 
@@ -1215,6 +1277,7 @@ class HierarchalTensorGraph(TensorGraph):
                     if isinstance(collect,dict):
                         for m,n in collect.items():
                             if return_seq:
+                                #TODO: should not have tf functions here
                                 collect[m] = tf.stack(n)
                             else:
                                 collect[m] = v[-1]
@@ -1229,7 +1292,6 @@ class HierarchalTensorGraph(TensorGraph):
 
         # can loop through and define
         for node in self.nodes:
-            # if not hasattr(self[node], 'roll_out'):
             if not self[node].attributes['roll_out']:
                 for input_node in nodes(node):
                     if self.graph.edges[input_node, node]['rollout_axis'] is not None:
@@ -1238,7 +1300,7 @@ class HierarchalTensorGraph(TensorGraph):
                         self[input_node].attributes['roll_out'] = Recurrence(
                             self, input_node, traverse, _X, rollout_axis)
 
-        return self.find_and_select(flatten(dict(map(traverse, self.sinks))), 'output')
+        return self.find_and_select(dict(map(traverse, self.sinks)), 'output')
 
     # Should not have tensorflow in here but ...
     def test(self,seed=0):
@@ -1246,7 +1308,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         rng = np.random.default_rng(seed)
         X = {}
-        for k,v in self.inputs.items():
+        for k,v in self._inputs.items():
             X[k] = rng.random(v.shape,dtype=v.dtype)
 
         return X,self(X)
@@ -1438,7 +1500,7 @@ class HierarchalTensorGraph(TensorGraph):
     #     target_node = self._get_node(target)
 
     #     # get source outputs
-    #     tmp_output = source_node.outputs if not source == 'input' else self.inputs
+    #     tmp_output = source_node.outputs if not source == 'input' else self._inputs
     #     tmp_output = self.get_outputs(self._get_parent(source)) if (
     #         '.' in source and not '.' in target) else tmp_output
 
@@ -1462,7 +1524,7 @@ class HierarchalTensorGraph(TensorGraph):
     #         source_outputs = tmp_outputs
 
     #     # get target inputs
-    #     tmp_input = target_node.inputs if not target == 'output' else self.outputs
+    #     tmp_input = target_node.inputs if not target == 'output' else self._outputs
 
     #     # convert target input format to list of labels
     #     if isinstance(tmp_input, dict):
@@ -1620,6 +1682,10 @@ class HierarchalTensorGraph(TensorGraph):
         # return dataframe
         #return label_output
 
+    def __getstate__(self):
+        # Defualut get stat returns self.__dict__
+        return self.__dict__
+
     def draw(self, expand_nodes=None, layout='kamada_kawai_layout'):
         """ Draws the graph
 
@@ -1738,7 +1804,6 @@ class Recurrence:
         # Initialization of recurrent states
         if index == 0:
             self.cache[index] = self.node[self.name].initial_state(self.X)
-            #self.cache[index] = self.node[self.name].attributes['roll_out'].initial_state
 
         elif index not in self.cache:
             input_values = {}
@@ -1759,24 +1824,6 @@ class Recurrence:
             self.cache[index] = self.node[self.name](input_values)
 
         return self.cache[index]
-
-
-    # @cached_property
-    # def initial_state(self) -> dict:
-    #     """ 
-    #         Calls node initialization routine.
-            
-    #         Returns:
-    #             Initial states
-                
-    #     """
-    #     # Check that initialization has been defined
-    #     if not self.node[self.name].attributes['initialization']:
-    #         message = 'Recurrent node ({self.name} has not defined an initialzation routine. '
-    #         message += 'recurrent nodes must define the initialzation routine.'
-    #         raise ImproperTensorGraphError(message)
-
-    #     return self.node[self.name].attributes['initialization'](self.X)
 
     # Removes 'input' or 'output' nesting of keys
     def flatten(self, d):

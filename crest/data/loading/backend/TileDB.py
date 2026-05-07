@@ -1,10 +1,10 @@
 from .BaseBackend import BaseBackend
 
 from dask.diagnostics import ProgressBar
+from collections import defaultdict
 from functools import partial
 from itertools import product
 from pathlib import Path
-from tqdm import tqdm 
 
 import dask.array as da
 import tiledb as tdb
@@ -13,13 +13,19 @@ import numpy as np
 import threading
 import sparse
 import dask
+import time
+import sys
 
+ 
+_TILEDB_LOCKS = defaultdict(threading.Lock)
 
-def _load_sparse_block(lock, data: tdb.Array, block_info: dict) -> sparse.COO:
+def _load_sparse_block(uri: str, data: tdb.Array, block_info: dict) -> sparse.COO:
     """Retrieve a block of sparse data from the TileDB dataset. 
     
     Parameters
     ----------
+    uri : str
+        TileDB file data URI, used to select the proper thread lock.
     data : tiledb.Array
         Array object returned by `tiledb.open(uri)`.
     block_info : dict
@@ -40,9 +46,21 @@ def _load_sparse_block(lock, data: tdb.Array, block_info: dict) -> sparse.COO:
     # Select slices corresponding to the current block location
     # TileDB appears to segfault here sometimes, which may be
     # due to too many concurrent reads
-    with lock:
-        array = data.subarray(tuple(map(slice, *zip(*index))))
-    
+    # Use a lock for each data block index to avoid segfaults
+    count = 0
+    while True:
+        try:
+            with _TILEDB_LOCKS[(uri, tuple(index))]:
+                array = data.subarray(tuple(map(slice, *zip(*index))))
+            break
+
+        # Retry on error like '[TileDB::S3] Error: Failed to read S3 object'
+        except tdb.libtiledb.TileDBError:
+            count += 1
+            if count >= 5:
+                raise
+            time.sleep(0.1)
+
     # Sparse arrays require coordinates to be zero-based 
     coord = [array[dim]-idx[0] for dim,idx in zip(names, index)]
     dtype = array['data'].dtype
@@ -98,8 +116,6 @@ def tiledb_to_xarray(path: Path | str, **kwargs) -> xr.Dataset:
     coords = {}
     arrays = {}
 
-    lock = threading.Lock()
-
     # Iterate over all Array objects within the TileDB group at the given path
     with tdb.Group(str(path)) as items:
         for item in items:
@@ -126,7 +142,7 @@ def tiledb_to_xarray(path: Path | str, **kwargs) -> xr.Dataset:
                 
                 arrays[name] = (dims, da.map_blocks(**{
                     'chunks' : tuple(chunk),#map(chunks, data.domain)),
-                    'func'   : partial(_load_sparse_block, lock, data),
+                    'func'   : partial(_load_sparse_block, item.uri, data),
                     'meta'   : sparse.COO(
                         [np.empty((0,), dtype=int)] * len(dims), 
                          np.empty((0,), dtype=dtype), 
@@ -142,7 +158,7 @@ class TileDB(BaseBackend):
         return tiledb_to_xarray(self.path if path is None else path, **kwargs)
 
 
-    def cache(self, dest, data: xr.Dataset, **kwargs):
+    def cache(self, dest, data: xr.Dataset, stream=sys.stdout, **kwargs):
         assert('.tiledb' in str(dest)), f'Not a tiledb path: {dest=}'
 
         # Long path names can cause segfaults when writing arrays, which
@@ -251,7 +267,7 @@ class TileDB(BaseBackend):
             handles.append(handle)
             jobs.append(dask.delayed(write_summary)(handle, data['summary'].data))
             
-        with ProgressBar():
+        with ProgressBar(out=stream):
             dask.compute(*jobs)
         dask.compute(*[h.close() for h in map(dask.delayed, handles)])
             

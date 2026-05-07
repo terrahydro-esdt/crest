@@ -10,8 +10,10 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 import seaborn as sns
 import numpy as np
-import tlz
 import logging
+import hashlib
+import tlz
+import re
 
 from crest.utils import classproperty, plot_to_array
 from crest.base import BaseAbstract
@@ -44,7 +46,7 @@ class BaseNode(BaseAbstract):
     Any Model(BaseNode) definition must define Model.inputs and Model.outputs, 
     i.e. class-level dictionary attributes. These dictionaries define the input
     and output shapes for features coming into, and going out of, the model. 
-    BaseNode objects will then automatically have input_spec and output_spec 
+    BaseNode objects will then automatically have inputs_spec and outputs_spec 
     attributes defined, allowing the specs to be directly passed into any 
     HierarchalTensorGraph definition. As well, if forward and inverse normalization
     functions are given to the Model upon initialization, pre- and post-
@@ -97,13 +99,15 @@ class BaseNode(BaseAbstract):
         transform_loss : bool | tuple[Callable, Callable] = True,
         debug          : bool = False,
         plot_scatter   : bool = False,
-        use_raw_pred   : bool = True,
+        plot_histogram : bool = False,
+        use_raw_pred   : bool = False,
     ):
         self.normalize      = getattr(normalize, 'by_feature', normalize)
         self.loss           = loss
         self.debug          = debug
         self.transform_loss = transform_loss
         self.plot_scatter   = plot_scatter
+        self.plot_histogram = plot_histogram
         self.use_raw_pred   = use_raw_pred
 
 
@@ -118,14 +122,16 @@ class BaseNode(BaseAbstract):
             as input a dictionary of {feature name: Input Tensor}, and
             returns a dictionary of {output feature: Output Tensor}. """
         raise NotImplementedError(f'{self}.call() must be implemented')
+
+        
     @cached_property
     def node(self) -> 'Node':
         from crest.model import Node
         return Node(**{
-            'node': _NodeWrap(self, f'{self}-call'),
+            'node': _NodeWrap(self, f'{self}-call', self.plot_histogram),
             'name': f'{self}-Node',
-            'inputs': self.input_spec,
-            'outputs': self.output_spec,
+            'inputs': self.inputs_spec,
+            'outputs': self.outputs_spec,
         })
 
     @cached_property
@@ -165,21 +171,38 @@ class BaseNode(BaseAbstract):
 
 
     @classproperty
-    def input_spec(cls) -> dict[str, tf.TensorSpec]:
+    def inputs_spec(cls) -> dict[str, tf.TensorSpec]:
         """ Convert input shape dictionary into TensorSpec objects """
-        return cls._generate_spec(cls.inputs)
-
-
+        return cls._generate_spec(cls.inputs, 'inp')
+    @classproperty
+    def input_spec(cls) -> dict[str, tf.TensorSpec]:
+        """ Backward compatibility """
+        return cls.inputs_spec
+        
+    @classproperty
+    def outputs_spec(cls) -> dict[str, tf.TensorSpec]:
+        """ Convert output shape dictionary into TensorSpec objects """
+        return cls._generate_spec(cls.outputs, 'out')
     @classproperty
     def output_spec(cls) -> dict[str, tf.TensorSpec]:
-        """ Convert output shape dictionary into TensorSpec objects """
-        return cls._generate_spec(cls.outputs)
-
+        """ Backward compatibility """
+        return cls.outputs_spec
 
     @staticmethod
-    def _generate_spec(io_shapes_spec: IO_TYPE) -> dict[str, tf.TensorSpec]:
+    def _generate_spec(io_shapes_spec: IO_TYPE, suffix: str) -> dict[str, tf.TensorSpec]:
         """ Generate a TensorSpec dict from the given input/output config """
 
+        _valid_first = re.compile(r"^[A-Za-z0-9.]")
+        _valid_rest  = re.compile(r"[^A-Za-z0-9_.\\/>-]")
+        
+        def safe_name(k: str) -> str:
+            s = _valid_rest.sub("_", k.strip())
+            if not _valid_first.match(s):
+                s = "k_" + s
+            # ensure uniqueness even if two keys sanitize the same
+            h = hashlib.md5(k.encode("utf-8")).hexdigest()[:5]
+            return f"{s}_{h}_{suffix}"
+    
         def parse(coord_shapes: COORD_TYPE) -> list[int | None]:
             """ Convert window extent tuple to total shape """
             if not len(coord_shapes): return [None]
@@ -188,7 +211,7 @@ class BaseNode(BaseAbstract):
             _,ordered = zip(*sorted(coord_shapes.items(), key=lambda kv:kv[0]))
             return [None] + list(map(get_total, ordered))
 
-        return {feature: tf.TensorSpec(shape=parse(coord_shapes), name=feature)
+        return {feature: tf.TensorSpec(shape=parse(coord_shapes), name=safe_name(feature))
                 for source, feature_shapes in io_shapes_spec.items()
                 for feature,  coord_shapes in feature_shapes.items()}
 
@@ -211,8 +234,8 @@ class BaseNode(BaseAbstract):
         elif self.transform_loss:
             self.loss_transformer, self.postprocess = self.transform_loss
 
-        preprocess = _NodeWrap(self.preprocess,  f'{self}-preprocess')
-        postprocess = _NodeWrap(self.postprocess, f'{self}-postprocess')
+        preprocess = _NodeWrap(self.preprocess,  f'{self}-preprocess', self.plot_histogram)
+        postprocess = _NodeWrap(self.postprocess, f'{self}-postprocess', self.plot_histogram)
 
         # Instantiate graphs for each node to define input/output specs
         preprocess = Node(preprocess, self.node.inputs, self.node.inputs, 'preprocess')
@@ -385,6 +408,17 @@ class BaseNode(BaseAbstract):
         # implemented in the future.
         if coord_shape.shape[0] != 4: return X
 
+        def add_hist(data, days, label): 
+            """ Add histogram of converted datetime values for final items """
+            if not self.plot_histogram: return
+            def add():
+                with tf.name_scope(''):
+                    tf.summary.histogram(**{
+                        'name' : f'{self}-call/datetime_{days}_last{label}',
+                        'data' : data,
+                    })
+            tf.cond(tf.summary.should_record_summaries(), add, lambda: None)
+
         ndt,nlt,nln = coord_shape[1], coord_shape[2], coord_shape[3]
         for name in coord_names:
             if name in X:
@@ -396,30 +430,33 @@ class BaseNode(BaseAbstract):
                     'latitude'  : ([1, ndt, 1, nln], [slice(None), None, slice(None), None]),
                     'longitude' : ([1, ndt, nlt, 1], [slice(None), None, None, slice(None)]),
                 }[name]
+                
+                # Just duplicate latitude and longitude along other dimensions
+                if name != 'datetime':
+                    X[name] = tf.tile(coordinate[idx], tiles)
+                    continue
+                    
+                # Convert datetime to value between [0, seconds in day & year]
+                for n_days in [1, 365]:
+                    sec_in_day = 60 * 60 * 24 * n_days
+                    coord_secs = 60 * tf.cast(coordinate, tf.float64) # datetime[m] -> seconds
+                    coord_secs = tf.math.floormod(coord_secs, sec_in_day)
 
-                if name == 'datetime':
-                    # Convert datetime to value between [0, seconds in 24 hours]
-                    for mult in [1, 365]:
-                        sec_in_day = 60 * 60 * 24 * mult
-                        coord_secs = 60 * tf.cast(coordinate, tf.float64) # datetime[m] -> seconds
-                        coord_secs = tf.math.floormod(coord_secs, sec_in_day)
-    
-                        with tf.name_scope(''):
-                            tf.summary.histogram(f'{self}-call/datetime_{mult}_laststep', coord_secs[:, -1])
-                            tf.summary.histogram(f'{self}-call/datetime_{mult}_lastsample', coord_secs[-1])
-    
-                        # Convert to radians
-                        coord_rads = tf.cast(coord_secs * 2 * np.pi / sec_in_day, tf.float32)
-            
-                        # Convert datetime to a set of two periodic sin/cos features
-                        for name in ['sin', 'cos']:
-                            sin_cos_dt = getattr(tf.math, name)(coord_rads)
-    
-                            with tf.name_scope(''):
-                                tf.summary.histogram(f'{self}-call/datetime_{mult}_laststep_{name}', sin_cos_dt[:, -1])
-                                tf.summary.histogram(f'{self}-call/datetime_{mult}_lastsample_{name}', sin_cos_dt[-1])
-                            X[f'{name}_{mult}'] = tf.tile(sin_cos_dt[idx], tiles)
-                else: X[name] = tf.tile(coordinate[idx], tiles)
+                    # Histograms of datetime for final timestep and sample
+                    add_hist(coord_secs[:,-1], n_days, 'step')
+                    add_hist(coord_secs[-1], n_days, 'sample')
+
+                    # Convert to radians
+                    coord_rads = tf.cast(coord_secs * 2 * np.pi / sec_in_day, tf.float32)
+        
+                    # Convert datetime to set of two periodic sin/cos features
+                    for op in ['sin', 'cos']:
+                        periodic = getattr(tf.math, op)(coord_rads)
+                        X[f'{op}_{n_days}'] = tf.tile(periodic[idx], tiles)
+                        
+                        # Histograms of final periodic value for step & sample
+                        add_hist(periodic[:,-1], n_days, f'step_{op}')
+                        add_hist(periodic[-1], n_days, f'sample_{op}')
         return X
 
 
@@ -445,7 +482,7 @@ class _NodeWrap(tf.keras.layers.Layer):
             default to the name of the passed object if nothing is passed.
 
     """  
-    def __init__(self, obj: Callable, name: str = ''):
+    def __init__(self, obj: Callable, name: str = '', plot_histogram: bool = False):
         super().__init__(name=name or getattr(obj, 'name', str(obj)))
 
         # Add all tensorflow/keras objects to allow weight tracking
@@ -456,16 +493,21 @@ class _NodeWrap(tf.keras.layers.Layer):
         
         self.obj = obj
         self.obj_name = getattr(obj, '__name__', repr(obj))
+        self.plot_histogram = plot_histogram
 
+        
     def __repr__(self): 
         return repr(self.obj)
+        
     
     def build(self, input_shape):
         super().build(input_shape)
+        
 
     @property
     def __name__(self):
         return f'_NodeWrap({self.obj.__class__.__name__})'
+        
 
     def call(self, X, *args, **kwargs):
         """ Adds output histograms for tensorboard visualization """
@@ -478,27 +520,41 @@ class _NodeWrap(tf.keras.layers.Layer):
                 self.obj._raw_model_out = out
                 self._add_histograms(out, 'output', desc=self.obj_name)
 
-            # Add histograms for all weights
-            for w in self.weights: 
-                tf.summary.histogram(f'{self.obj_name}_{w.path}', w, description=w.name)
+                # Add histograms for all weights
+                # def add():
+                #     with tf.name_scope(f'{self.obj_name}/weights'):
+                #         for w in self.weights: 
+                #             tf.summary.histogram(w.path, w, description=w.name)
+                # tf.cond(tf.summary.should_record_summaries(), add, lambda: None)
+                
         return out
 
+    
     def get_config(self):
         return super().get_config() | {
             'obj'      : self.obj, 
             'obj_name' : self.obj_name}
 
+    
     @classmethod
     def from_config(cls, config):
         return cls(**config)
 
+    
     def _add_histograms(self, X, scope: str, desc: str | None = None):
         """ Log the given X dict/tensor(s) histograms under the given scope """
-        if isinstance(X, dict):
-            for k, v in X.items():
-                label = k.replace('@', '.') + f'/{scope}'
-                tf.summary.histogram(label, tf.identity(v), description=desc)
-        else: tf.summary.histogram(scope, tf.identity(X), description=desc) 
+        if not self.plot_histogram: return
+        def add():
+            hist = lambda k, v: tf.summary.histogram(**{
+                'name'        : k.replace('@', '.'), 
+                'data'        : tf.identity(v),
+                'description' : desc,
+            })
+            if isinstance(X, dict):
+                for k, v in X.items():
+                    hist(f'{k}/{scope}', v)
+            else: hist(scope, X) 
+        tf.cond(tf.summary.should_record_summaries(), add, lambda: None)
 
 
 
@@ -561,7 +617,7 @@ def loss_wrapper(
         def mask_nans(*arrs) -> tuple:
             """ Mask the union of NaN indices for given arrays """
             # Extract feature value if a dict is given, then mask NaNs
-            arrs = [a[feature] if isinstance(a, dict) else a for a in arrs]               
+            arrs = [tf.reshape(a[feature], (-1,)) if isinstance(a, dict) else a for a in arrs]               
             mask = reduce(and_, map(tf.math.is_finite, arrs))
             return tuple((tf.boolean_mask(a, mask) for a in arrs))
 
@@ -596,26 +652,40 @@ def loss_wrapper(
 
         # Calculate and log the final loss, then return if any exist
         loss = loss_func(*masked)
-        zero = tf.size(loss) == 0
+        # zero = tf.size(loss) == 0
         logging(f'{scope}/{feature}/loss/', {'loss': loss}, False)
         # return tf.cond(zero, lambda: 0., lambda: tf.reduce_mean(loss))
         return tf.cond(flag, lambda: tf.reduce_mean(loss), lambda: 0.)
 
-
+    # Accumulate batches over multiple steps for more efficient plotting
+    batches = {}
+    
     # Defines various logging functionality in a separate helper method
     def logging(scope: str, arrs: dict, do_scatter=plot_scatter) -> None:
         """ Output debug logs, scatter plots, histograms """
-        
+
         def scatter(y1: np.ndarray, y2: np.ndarray, **kwargs) -> np.ndarray:
             """ Create scatter plot and return the image as a numpy array """
-            ys = y1,y2 = y1.flatten(), y2.flatten()
-            try:    r2 = linregress(*ys)[2] ** 2 # pyright: ignore
-            except: r2 = np.nan
-            try:    R2 = r2_score(*ys)
-            except: R2 = np.nan
+            scope = kwargs['key']
+            if scope not in batches:
+                return np.empty((0,0,0), dtype=np.uint8)
+            k1 = kwargs.get('y1_label', 'y_true')
+            y1 = batches[scope][k1]
+            k2 = kwargs.get('y2_label', 'y_pred')
+            y2 = batches[scope][k2]
+
+            y1 = np.concatenate(y1, axis=0)
+            y2 = np.concatenate(y2, axis=0)
+            batches[scope].clear()
 
             # Write the plot image to the array variable
-            with plot_to_array() as array:
+            with plot_to_array(dpi=150, width=4, height=3.8) as array:
+                ys = y1,y2 = y1.flatten(), y2.flatten()
+                try:    r2 = linregress(*ys)[2] ** 2 # pyright: ignore
+                except: r2 = np.nan
+                try:    R2 = r2_score(*ys)
+                except: R2 = np.nan
+                    
                 # Scatter plot with KDE contours
                 sns.jointplot(x=y2, y=y1).plot_joint(sns.kdeplot, 
                     color='r', zorder=1, levels=6, alpha=0.7)
@@ -625,13 +695,13 @@ def loss_wrapper(
 
                 # Plot labels 
                 plt.ticklabel_format(style='sci',axis='both',scilimits=(-2,3))
-                plt.ylabel(kwargs.get('y1_label', 'y_true'), fontsize=14)
-                plt.xlabel(kwargs.get('y2_label', 'y_pred'), fontsize=14)
+                plt.ylabel(kwargs.get('y1_label', 'y_true'), fontsize=18)
+                plt.xlabel(kwargs.get('y2_label', 'y_pred'), fontsize=18)
                 plt.title('  '.join([
                     rf'$R^{{2}}$ = {R2:.2f}',
                     rf'$r^{{2}}$ = {r2:.2f}',
                     f'N = {len(y1)}',
-                ]), fontsize=14)
+                ]), fontsize=18, y=0.95)
 
                 # Use the same extent limits for both axes
                 minim = min(plt.xlim()[0], plt.ylim()[0])
@@ -649,17 +719,33 @@ def loss_wrapper(
                 for k, arr in arrs.items()
                 for output in [f'\n{k:>{align}}'] + stats(arr) ])
 
-        with tf.name_scope(scope.replace("@",".")):
+        record = tf.summary.should_record_summaries()
+        if isinstance(record, bool) and record:
             # Log array histograms to tensorboard
-            for k, v in arrs.items(): 
-                tf.summary.histogram(k, v)
+            with tf.name_scope(scope.replace("@",".")):
+                for k, v in arrs.items(): 
+                    tf.summary.histogram(k, v)
 
-        with tf.name_scope(f'scatter/{scope.replace("@",".")}'):
-            # Create scatter plot and log to tensorboard (very slow)
-            if do_scatter: 
-                (k1, k2, *_), (y1, y2, *_) = zip(*arrs.items())
-                image = lambda label, *y, **kw: tf.summary.image(label,
-                    tf.numpy_function(partial(scatter, **kw), y, tf.uint8))
-                image('image', y1, y2, y1_label=k1, y2_label=k2)
+        # Create scatter plot and log to tensorboard (very slow)
+        if do_scatter and (len(arrs) > 1):
+            (k1, k2, *_), (y1, y2, *_) = zip(*arrs.items())
 
+            def accumulate_batch(y1, y2, k1=k1, k2=k2, scope=scope) -> int:
+                """ Gather the new batch outside of the tensorflow graph """
+                if scope not in batches:
+                    batches[scope] = {}
+                scatters = batches[scope]
+                scatters[k1] = scatters.get(k1, []) + [y1]
+                scatters[k2] = scatters.get(k2, []) + [y2]
+                return len(scatters[k1])
+
+            # Accumulate outside of the TF context across graph executions
+            tf.numpy_function(accumulate_batch, (y1, y2), tf.int64)
+            
+            if isinstance(record, bool) and record:
+                with tf.name_scope(f'scatter/{scope.replace("@",".")}'):
+                    image = lambda label, *y, **kw: tf.summary.image(label,
+                        tf.numpy_function(partial(scatter, **kw), y, tf.uint8))
+                    image('image', y1, y2, y1_label=k1, y2_label=k2, key=scope)
+                
     return calculate_loss

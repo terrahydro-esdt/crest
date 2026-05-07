@@ -217,8 +217,8 @@ example_block_sparse = Block(**{
 
 
 def test_sparse():
-    assert(not example_block.sparse)
-    assert example_block_sparse.sparse
+    assert(not example_block.is_sparse)
+    assert example_block_sparse.is_sparse
 
 
 def test_valid_windows_sparse():

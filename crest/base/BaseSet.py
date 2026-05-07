@@ -120,15 +120,18 @@ class BaseSet(BaseAbstract):
         return f'<h3>{self}:</h3><div>{sub_html}</div>' 
 
 
-    def _wrap(self, objs: Collection) -> 'BaseSet':
+    def _wrap(self, objs: Collection) -> Union['BaseSet', Collection]:
         """ Wrap the return objects in either the original 
             *Set class if the obj type hasn't changed, or
             in a BaseSet class otherwise """ 
         if isinstance(objs[0], self[0].__class__):
             return self.__class__(objs)
-        return BaseSet(objs)
 
+        # BaseSet is not allowed to contain heterogeneous types
+        try:              return BaseSet(objs)
+        except TypeError: return objs
 
+        
     def __setattr__(self, attr: str, vals: Any):
         """ Pass through new attr values to the objects composing this set"""
         try:
@@ -136,8 +139,12 @@ class BaseSet(BaseAbstract):
                 if hasattr(vals, '__len__') and (len(vals) == len(self)):
                     if hasattr(vals, '__iter__'):
                         for obj, val in zip(self, vals):
-                            setattr(obj, attr, val)
-                        return
+                            if not hasattr(obj, attr):
+                                break
+                        else:
+                            for obj, val in zip(self, vals):
+                                setattr(obj, attr, val)
+                            return
         except: pass
         super().__setattr__(attr, vals)
 

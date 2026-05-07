@@ -5,6 +5,7 @@ from dask.diagnostics import ProgressBar
 from fsspec.mapping import FSMap
 import xarray as xr
 import zarr
+import sys
 
 
 class Zarr(BaseBackend):
@@ -18,6 +19,6 @@ class Zarr(BaseBackend):
         return xr.open_zarr(path, **kwargs)
 
 
-    def cache(self, dest, data: xr.Dataset, **kwargs):
-        with ProgressBar(): 
+    def cache(self, dest, data: xr.Dataset, stream=sys.stdout, **kwargs):
+        with ProgressBar(out=stream): 
             data.to_zarr(dest, **kwargs)

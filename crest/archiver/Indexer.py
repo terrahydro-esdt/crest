@@ -44,27 +44,29 @@ class Indexer:
 
     def __call__(self, coords: np.ndarray) -> np.ndarray:
         """ Convert real coordinates to integer indices """
-        # print(f'{coords=}\n\n{self.coords=}\n')
-        coords = coords.astype(self.coords.dtype)
-        found = self.find(coords)
-        # print(f'{found=}')
+        typed = coords.astype(self.coords.dtype)
+        found = self.find(typed)
         index = np.clip(found - int(self.mode!='strict'), 0, self.size - 1)
-        # print(f'\n{index=}')
+
         if self.mode == 'strict':
-            i = np.where(self.coords[index] != coords)[0][:5]
+            i = np.where(self.coords[index] != typed)[0][:5]
             if len(i):
-                raise ValueError(f'{self.name} strict match failed: archive=' +
-                                 f'{coords[i]} != schema={self.coords[index][i]}')
+                raise ValueError(
+                    f'{self.name} strict match failed: archive=' +
+                    f'{typed[i]} != schema={self.coords[index][i]}\n' +
+                    f'{self.coords.dtype=} vs {coords.dtype=}: {coords[i]}')
 
         elif self.mode == 'nearest':
             right = np.clip(found, 0, self.size - 1)
-            dif_l = np.abs(self.coords[index] - coords)
-            dif_r = np.abs(self.coords[right] - coords)
+            dif_l = np.abs(self.coords[index] - typed)
+            dif_r = np.abs(self.coords[right] - typed)
             index = np.where(dif_r < dif_l, right, index)
             if self.tol is not None:
-                distance = np.abs(self.coords[index] - coords)
+                distance = np.abs(self.coords[index] - typed)
                 i = np.where(distance > self.tol)[0][:5]
                 if len(i):
-                    raise ValueError(f'{self.name} nearest match > {self.tol}'+
-                                     f': {self.coords[index][i]} != {coords[i]}')
+                    raise ValueError(
+                        f'{self.name} nearest match > {self.tol}: ' +
+                        f'{self.coords[index][i]} != {typed[i]}\n' +
+                        f'{self.coords.dtype=} vs {coords.dtype=}: {coords[i]}')
         return index.astype(np.int64)
