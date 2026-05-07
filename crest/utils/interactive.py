@@ -433,8 +433,9 @@ class InteractiveConsole(code.InteractiveConsole):
     def interact(self, banner: str = '', **kwargs):
         """ Start the console, ensuring command history written on exit """
         try: 
+            resume = 'Ctrl-' + ('z' if os.name == 'nt' else 'd')
             banner += self._error_msg + '\n'
-            banner += 'Ctrl-z resumes execution, quit() halts execution\n'
+            banner += f'{resume} resumes execution, quit() halts execution\n'
             super().interact(banner=banner, **kwargs)
         finally:
             if hasattr(self, '_readline'):

@@ -97,11 +97,3 @@ class CrossStitchLSTM(HierarchalTensorGraph):
         # Remove cell states
         for i in self.nodenames:
             self.outputs.pop(i + '_c')
-
-    def encode(self,type='dill',**kwargs) -> dict:
-        """ Returns serialized dict """
-        keys = ['_inputs','nodenames','units']
-        encode = {k:dill.dumps(v,**kwargs) for k,v in self.__dict__.items() if k in keys}
-        encode['inputs'] = encode.pop('_inputs')
-        return {**encode,**super().encode(type,**kwargs)}
-    

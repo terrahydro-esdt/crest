@@ -171,7 +171,7 @@ class Stopwatch:
 
         metrics = '|'.join(starmap(fmt, self.deltas.items()))
         message = f'[{metrics}] {self.message}'
-        try:    self.logger(message)
+        try:    self.logger(message, stacklevel=2)
         except: self.logger(message)
 
     def __getitem__(self, key):
@@ -255,6 +255,9 @@ class Stopwatch:
 
         """
 
+        if isinstance(units, str) and (units not in ['time', 'byte', 'size']):
+            raise Exception(f'{units=} must be one of {{time, byte, size}}')
+            
         divisor = divisor or {
             'time' : 60,
             'byte' : 1024,
@@ -265,7 +268,7 @@ class Stopwatch:
             'time' : ['s', 'm', 'h'],#[' seconds', ' minutes', ' hours  '],
             'byte' : [' B ', ' KB', ' MB', ' GB', ' TB'],
             'size' : [' ', 'K', 'M', 'G', 'T'],
-        }.get(units, [])
+        }.get(units)
 
         def fmt(value, units):
             """ Recurse until value is small enough or we run out of units """

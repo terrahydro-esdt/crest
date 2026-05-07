@@ -10,8 +10,8 @@ class NonzeroSampler:
 
     def __next__(self):
         """ Yield the block most needed currently from blocks with samples """
-        index = self.random.choice( min(self.configs).nonzero )
-        return [[index, self.blocks[index]]]
+        return self.get_block(min(self.configs))
 
     def get_block(self, config):
-        return next(self)
+        index = self.random.choice( config.valid_index )
+        return [[index, self.blocks[index]]]

@@ -2,6 +2,7 @@ from collections.abc import Collection, Iterator
 from collections import defaultdict as dd
 from functools import cached_property
 from tlz import merge_with, dissoc
+import re
 
 import xarray as xr 
 import numpy as np 
@@ -51,7 +52,8 @@ class Sample:#(BaseAbstract):
     """
     def __init__(self, data: Collection[dict], dtype=object):
         self._features = merge_with(list, [dict.fromkeys(d.get('requested_features', []), i) for i,d in enumerate(data)])
-        self.container = [dissoc(d, 'requested_features') for d in data]
+        self.key_label = [d.get('key_label', '') for d in data]
+        self.container = [dissoc(d, 'requested_features', 'key_label') for d in data]
         self.dtype = dtype
         self.cache = {}
 
@@ -132,9 +134,9 @@ class Sample:#(BaseAbstract):
     @property
     def data(self) -> dict[str, list]:
         """ Data for all items; {feature: [item0_feature, ...]} """
-        to_dict = lambda d: dict(zip(d['coords']['features'], d['data']))
-        i_dicts = [to_dict(item) for item in self.container]
-        return self.coords | merge_with(list, *i_dicts)
+        to_dict = lambda i,d: dict(zip(d['coords']['features'], [(i,v) for v in d['data']]))
+        i_dicts = [to_dict(i, item) for i, item in enumerate(self.container)]
+        return self.coords | merge_with(dict, *i_dicts)
 
 
     @property
@@ -157,16 +159,45 @@ class Sample:#(BaseAbstract):
         grps = None
         vals = []
 
-        # Currently handling two different code paths - need to refactor
-        # into single handling method, esp. when dealing w/ StructuredDataset
+        def get_index(i):
+            i = str(i).replace('$', '/')
+            if i in self.key_label:
+                return self.key_label.index(i)
+            try: 
+                return int(i)
+            except:
+                raise Exception(f'Unknown format: {i=} {self.key_label=}')
+                
         for feature_index in (features or self.features):
             if isinstance(feature_index, str):
-                if '@' in feature_index:
+                # Handle feature differences (i.e. A-B)
+                # if feature_index.startswith('difference:'):
+                #     if data is None: data = self.data
+                #     _, d1, d2 = feature_index.split(':')
+                #     f1, i1, *_ = d1.split('@')
+                #     f2, i2, *_ = d2.split('@')
+                #     assert(i1 != i2), f'{feature_index=} {i1=} {i2=}'
+                #     v1 = data[f1][get_index(i1)]
+                #     v2 = data[f2][get_index(i2)]
+                #     diff = v1 - v2
+                #     diff[diff != 0] = abs(diff[diff != 0]) ** 0.5 * np.sign(diff[diff != 0])
+                #     vals.append(diff)
+
+                if '>>' in feature_index:
+                    if data is None: data = self.data
+                    label,feature = feature_index.split('>>',1)
+                    # Labels are ignored if not found
+                    if label not in self.key_label:
+                        label = self._features.get(feature, [0])[0]
+                    vals.append(data[feature][get_index(label)])
+                    
+                elif '@' in feature_index:
                     if data is None: data = self.data
                     if feature_index not in data:
                         feature, *index = (feature_index+'@0').split('@')
-                        vals.append(data[feature][int(index[0])])
-                    else: vals.append(data[feature_index][0])
+                        vals.append(data[feature][get_index(index[0])])
+                    else: vals.append(list(data[feature_index].values())[0])
+                        
                 else:
                     if feature_index not in self._features:
                         feature, *index = (feature_index+'@0').split('@')
@@ -179,6 +210,8 @@ class Sample:#(BaseAbstract):
                             if data is None: data = self.data
                             if feature_index not in data:
                                 vals.append(data[feature][int(index[0])])
+                            elif isinstance(data[feature_index], dict): 
+                                vals.append(list(data[feature_index].values())[0])
                             else: vals.append(data[feature_index][0])
                     else: 
                         if grps is None: grps = self.data_groups
@@ -187,6 +220,7 @@ class Sample:#(BaseAbstract):
             else: 
                 if data is None: data = self.data
                 vals.append(data[feature_index][0])
+
 
 
             # # Allow selecting feature from specific container item when there

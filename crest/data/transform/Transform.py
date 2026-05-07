@@ -1,4 +1,4 @@
-from functools import cached_property, wraps, partial as _partial
+from functools import cached_property, wraps, partial
 from typing import Union, Callable
 from scipy.stats import norm
 
@@ -9,10 +9,6 @@ import traceback
 
 from crest.base import BaseAbstract
 from crest.utils import classproperty
-
-
-# Need to use wraps to propagate __name__
-partial = lambda f, g, **kw: wraps(g)(_partial(f, g, **kw))
 
 
 class Transform(BaseAbstract):
@@ -87,8 +83,6 @@ class Transform(BaseAbstract):
     #   - iqrnorm
     #   - adaptnorm
     #   - quantile
-    #   - asinh
-    #   - identity
     # 
     # TODO: Refactor so that these transformations are in separate files
     #       contained within a transformations/ folder
@@ -105,9 +99,8 @@ class Transform(BaseAbstract):
     def by_feature(self):
         """ Return forward and inverse transforms for features """
         assert(self.feature_transforms), 'Must define feature_transforms'
-        return ( partial(self._map_transform, self.forward_by_feature), 
-                 partial(self._map_transform, self.inverse_by_feature) )
-
+        return ( self._map_transform(self.forward_by_feature), 
+                 self._map_transform(self.inverse_by_feature) )
 
 
     # Log transform
@@ -121,10 +114,10 @@ class Transform(BaseAbstract):
 
     @property
     def logexp(self): 
-        return ( partial(self._map_transform, self.forward_logexp), 
-                 partial(self._map_transform, self.inverse_logexp) )
+        return ( self._map_transform(self.forward_logexp), 
+                 self._map_transform(self.inverse_logexp) )
 
-
+    
     # Log(data+1) transform
     def forward_logexpp1(self, data, **kwargs):
         base = tf.math if isinstance(data, tf.Tensor) else np
@@ -136,9 +129,8 @@ class Transform(BaseAbstract):
 
     @property
     def logexpp1(self): 
-        return ( partial(self._map_transform, self.forward_logexpp1), 
-                 partial(self._map_transform, self.inverse_logexpp1) )
-
+        return ( self._map_transform(self.forward_logexpp1), 
+                 self._map_transform(self.inverse_logexpp1) )
 
 
     # 0 mean, 1 standard deviation data standardization
@@ -150,9 +142,8 @@ class Transform(BaseAbstract):
 
     @property
     def standardize(self): 
-        return ( partial(self._map_transform, self.forward_standardize), 
-                 partial(self._map_transform, self.inverse_standardize) )
-
+        return ( self._map_transform(self.forward_standardize), 
+                 self._map_transform(self.inverse_standardize) )
 
 
     # Interquartile range scaling
@@ -164,9 +155,8 @@ class Transform(BaseAbstract):
 
     @property
     def robust(self): 
-        return ( partial(self._map_transform, self.forward_robust), 
-                 partial(self._map_transform, self.inverse_robust) )
-
+        return ( self._map_transform(self.forward_robust), 
+                 self._map_transform(self.inverse_robust) )
 
 
     # Map data values to a given range; default [-1, 1]
@@ -180,9 +170,8 @@ class Transform(BaseAbstract):
     
     @property
     def normalize(self): 
-        return ( partial(self._map_transform, self.forward_normalize), 
-                 partial(self._map_transform, self.inverse_normalize) )
-
+        return ( self._map_transform(self.forward_normalize), 
+                 self._map_transform(self.inverse_normalize) )
 
 
     # Map data quartiles to a given range; default [-1, 1]
@@ -196,9 +185,8 @@ class Transform(BaseAbstract):
     
     @property
     def iqrnorm(self): 
-        return ( partial(self._map_transform, self.forward_iqrnorm), 
-                 partial(self._map_transform, self.inverse_iqrnorm) )
-
+        return ( self._map_transform(self.forward_iqrnorm), 
+                 self._map_transform(self.inverse_iqrnorm) )
 
 
     # Adaptively map data values to a given range to mitigate outliers
@@ -218,9 +206,8 @@ class Transform(BaseAbstract):
 
     @property
     def adaptnorm(self): 
-        return ( partial(self._map_transform, self.forward_adaptnorm), 
-                 partial(self._map_transform, self.inverse_adaptnorm) )
-
+        return ( self._map_transform(self.forward_adaptnorm), 
+                 self._map_transform(self.inverse_adaptnorm) )
 
 
     # Transforms data into a gaussian (or uniform) distribution
@@ -234,8 +221,8 @@ class Transform(BaseAbstract):
 
     @property
     def quantile(self):
-        return ( partial(self._map_transform, self.forward_quantile), 
-                 partial(self._map_transform, self.inverse_quantile) )
+        return ( self._map_transform(self.forward_quantile), 
+                 self._map_transform(self.inverse_quantile) )
 
 
     # asinh scaling
@@ -251,10 +238,23 @@ class Transform(BaseAbstract):
         
     @property
     def asinh(self): 
-        return ( partial(self._map_transform, self.forward_asinh), 
-                 partial(self._map_transform, self.inverse_asinh) )
+        return ( self._map_transform(self.forward_asinh), 
+                 self._map_transform(self.inverse_asinh) )
 
 
+    # Identity function
+    def forward_identity(self, data, **kwargs): 
+        return data   
+        
+    def inverse_identity(self, data, **kwargs): 
+        return data
+        
+    @property
+    def identity(self): 
+        return ( self._map_transform(self.forward_identity), 
+                 self._map_transform(self.inverse_identity) )
+
+        
     # Used to create combinations of transform functions
     def forward_combination(self, data, transforms, **kwargs):
         """ Forward function only needs to apply transforms in order """
@@ -292,19 +292,8 @@ class Transform(BaseAbstract):
         """ Create a forward (inverse) function that applies the given
             transforms in (reverse) order, while also applying each transform
             to the Transformer statistics to enable correct transforms """
-        return ( partial(self._map_transform, self.forward_combination, transforms=transforms), 
-                 partial(self._map_transform, self.inverse_combination, transforms=transforms) )
-
-    
-    # Identity function
-    def forward_identity(self, data, **kwargs): 
-        return data    
-    def inverse_identity(self, data, **kwargs): 
-        return data
-    @property
-    def identity(self): 
-        return ( partial(self._map_transform, self.forward_identity), 
-                 partial(self._map_transform, self.inverse_identity) )
+        return ( self._map_transform(self.forward_combination, transforms=transforms), 
+                 self._map_transform(self.inverse_combination, transforms=transforms) )
 
 
     # Internal functions
@@ -331,7 +320,7 @@ class Transform(BaseAbstract):
         return self.copy(statistics = stats.sel(features=feature))
 
 
-    def _get_transform(self, transform, index: int, **kwargs) -> Callable:
+    def _get_transform(self, transform, index: int = 0, **kwargs) -> Callable:
         """ Return the callable associated with the given transform """
 
         # Allow selecting transforms by name, and chaining them with commas 
@@ -361,27 +350,34 @@ class Transform(BaseAbstract):
             transform = transform[index]
         
         assert(callable(transform)), f'Unknown transform: {transform=}'
-        return _partial(transform, **kwargs)
+        return partial(transform, **kwargs)
 
 
-    def _map_transform(self, transform: Callable, data, **kwargs):
+    def _map_transform(self, transform: Callable, **kwargs):
         """ Apply a transform to every value in the data dictionary """
 
-        # Just apply the transform if data isn't a dictionary
-        if not isinstance(data, dict):
-            return transform(data, **kwargs)
-        
-        # If this transform is a bound method of a Transform object 
-        if isinstance(getattr(transform, '__self__', None), Transform):
-             # Replace the object with a copy that only has stats for one key
-            orig = transform.__self__
-            func = transform.__func__.__get__
-            copy = lambda k: func(orig[k], orig.__class__)
-
-            # Create a new transform function that is unique for each feature
-            transform = lambda v, key, **kws: copy(key)(v, key=key, **kws)
-        return {k: transform(v, key=k, **kwargs) if k in self.stats.features
-                else v for k,v in data.items()}
+        @wraps(transform)
+        def wrapper(data, **kws):
+            nonlocal transform, kwargs
+            kws |= kwargs
+            
+            # Just apply the transform if data isn't a dictionary
+            if not isinstance(data, dict):
+                return transform(data, **kws)
+            
+            # If this transform is a bound method of a Transform object 
+            if isinstance(getattr(transform, '__self__', None), Transform):
+                 # Replace the object with a copy that only has stats for one key
+                orig = transform.__self__
+                func = transform.__func__.__get__
+                copy = lambda k: func(orig[k], orig.__class__)
+    
+                # Create a new transform function that is unique for each feature
+                transform = lambda v, key, **k: copy(key)(v, key=key, **k)
+    
+            return {k: transform(v, key=k, **kws) if k in self.stats.features
+                    else v for k,v in data.items()}
+        return wrapper
 
 
     def _process_feature(self, data, index: int, key: str, **kwargs):
@@ -412,11 +408,41 @@ class Transform(BaseAbstract):
         feature = key if key in self.feature_transforms else '*'
         assert(feature in self.feature_transforms), f'Missing key: {key=}'
         try: 
-            func = self._get_transform(self.feature_transforms[feature], index)
-            return func(data, key=feature, **kwargs)
+            # Allow multiple transforms to be applied and returned as a list
+            name_list = self.feature_transforms[feature].split('&')
+            functions = [self._get_transform(n, index) for n in name_list]
+            transform = [partial(f, key=feature, **kwargs) for f in functions]
+
+            # For backwards compatibility, don't return a sole item as a list
+            if len(transform) == 1:
+                return transform[0](data)
+
+            # When there is more than one transform to be applied:
+            #   - Forward pass (index=0) applies each one to the data object
+            #   - Inverse pass (index=1) applies respective inverse functions
+            def process(features: list):
+                """ Inverse needs to apply each respective transform """
+                if len(features) == len(transform):
+                    return [t(f) for t, f in zip(transform, features)]
+                message = f'Expected {len(transform)=} items: {len(features)=}'
+                raise Exception(message)
+
+            # One-to-one correspondence between list items and transforms
+            if (index == 1) and isinstance(data, list):
+                return process(data)
+
+            # Likewise, dicts must contain the feature and correctly sized list
+            if (index == 1) and isinstance(data, dict):
+                assert(feature in data), f'Missing {feature=}: {list(data)}'
+                return {feature: process(data[feature])} 
+
+            # Apply each transform to the data object during the forward pass,
+            # as well as any inverse pass with a singular data object given
+            return [t(data) for t in transform]
+
         except Exception as e: 
-            tb = f'{e}\n{traceback.format_exc()}'
-            raise Exception(f'Failed on {key=} | {tb}')
+            tb = f'{e}\n{traceback.format_exc()}\ndata={str(data)[:100]}\n'
+            raise Exception(f'{tb} Failed data transform for {key=} {index=}')
 
 
     def _infer_affine(self, prev, post, min_k: str, max_k: str, tol=1e-4):
@@ -603,24 +629,28 @@ class Transform(BaseAbstract):
             return tf.reshape(t_interp, tf.shape(x))
 
         # Handle non-tensorflow objects
-        not_tensor = not isinstance(x, tf.Tensor)
+        not_tensor = not any(k in str(type(x)) for k in ['tensorflow', 'keras'])
         if not_tensor:
+            data = getattr(x, 'values', x)
+            x_clipped = np.clip(data, quantiles[0], quantiles[-1])
+            transform = np.interp(x_clipped, quantiles, targets)
+
+            # Handle xarray objects
+            if hasattr(x, 'loc'):
+                x.values = transform
+                return x
+            return transform
+
+            # Does not work if inside symbolic graph
             original, x = x, tf.constant(getattr(x, 'values', x))
 
         z = _do_transform(x)
         if not_tensor:
+            z = getattr(z, 'numpy', lambda: z)()
+            
             # Handle xarray objects
-            if hasattr(original, 'loc'):
-                original.values = z.numpy()
+            if 'xarray' in str(type(original)):
+                original.values = z
                 return original
-            return z.numpy()
+            return z
         return z
-            # data = getattr(x, 'values', x)
-            # x_clipped = np.clip(data, quantiles[0], quantiles[-1])
-            # transform = np.interp(x_clipped, quantiles, targets)
-
-            # Handle xarray objects
-            # if hasattr(x, 'loc'):
-            #     x.values = transform
-            #     return x
-            # return transform

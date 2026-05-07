@@ -106,7 +106,7 @@ class BatchCombiner:
 
             # Decrement the number of queued samples for this BlockConfig
             with config: 
-                config.n_queued.value = max(0, config.n_queued.value-1)
+                config.n_queued = max(0, config.n_queued-1)
 
         # Total batch size will now be `batch_size*len(self.configs)`
         return batch
@@ -150,5 +150,5 @@ class BatchCombiner:
         
         for config_hash, config in self.configs.items():
             with config:
-                config.n_queued.value = len(self.batches[config_hash])
-                config.n_worker.value = 0
+                config.n_queued = len(self.batches[config_hash])
+                config.n_worker = 0

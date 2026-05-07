@@ -2,12 +2,13 @@ from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 from typing import get_args, get_origin, get_type_hints, _type_repr
-from typing import Union, Iterator, TypeVar
+from typing import Union, Iterator, TypeVar, ForwardRef
 from types import UnionType
 from abc import ABC
 
 import weakref
 import inspect
+import re
 
 
 def type_repr(val=None, T=None, _maxdepth: int = 4):
@@ -53,6 +54,13 @@ def handle_generic(val, T):
 
 def istype(val, T):
     """ Recursively determine if value matches generic type T """
+    # ForwardRefs can be created when using strings as types (e.g. class names)
+    # They aren't valid types, but can be handled like other string annotations
+    if isinstance(T, ForwardRef):
+        # Use regex extraction to get the type if the attribute is unavailable
+        S = re.sub(r"ForwardRef\('(.+)'\)", r"\1", str(T))
+        T = getattr(T, '__forward_arg__', S)
+
     # Cannot look inside iterators to verify types, as it would exhaust values
     if isinstance(val, Iterator):
         origin = get_origin(T) or T

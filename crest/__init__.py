@@ -47,12 +47,11 @@ try: import pandas
 except ImportError: pass
 
 # from ._dask_monkeypatch import *
-from .model import HierarchalTensorGraph, Model, NetworkXGraph
+from .model import HierarchalTensorGraph, Model, NetworkXGraph, Node, TensorSpec,IOSpec
 from .data_server import DataServer
-from .model import HierarchalTensorGraph, Model, NetworkXGraph, Node, TensorSpec
-from .data_server import DataServer
-from .nodes import CrossStitchLSTM,LSTM,LSTMCell
-
+try:
+    from .nodes import CrossStitchLSTM,LSTM,LSTMCell
+except: pass
 warnings.filterwarnings('ignore',category=PicklingWarning)
 settings['byref'] = True
 

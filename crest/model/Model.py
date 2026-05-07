@@ -1,21 +1,27 @@
+import zipfile
+import base64
+import tempfile
 import logging
-from contextlib import nullcontext
 import numpy as np
 import warnings
 import itertools
 import os
 import json
+
+from contextlib import nullcontext
+from pathlib import Path
 from keras import Input
 from keras import Model as KerasModel
 from keras.models import load_model
+
+from .BaseModel import BaseModel, ImproperModelError
+from .TensorGraph import TensorGraph
+from .TensorSpec import TensorSpec
+from .HierarchalTensorGraph import HierarchalTensorGraph
 from crest.utils import Metrics
 from crest.data.loading import Dataset, StructuredDataset
 from crest.data import Batcher
-from .BaseModel import BaseModel, ImproperModelError
-from .TensorGraph import TensorGraph
-from crest.model.TensorSpec import TensorSpec
-from crest.model.HierarchalTensorGraph import HierarchalTensorGraph
-from crest.utils.save_node_class import write_pkl, read_pkl, gen_filename
+
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +40,7 @@ class Model(BaseModel):
     def logger(self) -> logging.Logger:
         return logging.getLogger(__name__)
 
-    def __init__(self, graph: TensorGraph, **kwargs):
+    def __init__(self, graph: HierarchalTensorGraph):
         self.graph = graph
         self.name = graph.name
 
@@ -53,14 +59,31 @@ class Model(BaseModel):
                     self.inputs[k] = Input(shape=v.shape[1:], dtype=v.dtype, name=k)
             else:
                 self.inputs[k] = None
-
+        
         self.outputs = self.graph(self.inputs)
-        self.metric = Metrics()
-        self.model = KerasModel(inputs=self.inputs,outputs=self.outputs)
-         
+        self.metrics = Metrics()
+        self._model = KerasModel(inputs=self.inputs,outputs=self.outputs)
+
         # Explicitly set model output_names for correct logging labels
         if isinstance(self.outputs, dict):
-            self.model.output_names = sorted(self.outputs)
+            self._model.output_names = sorted(self.outputs)
+
+    @property
+    def model(self):
+        return self._model
+
+    def __call__(self,X):
+        """ 
+        
+        Call the model 
+        
+        Parameters
+        ----------
+
+        X : dictionary of tensors
+        
+        """
+        return self.model(X)
 
     def compile(self, show_summary: bool = False, **kwargs):
         """
@@ -76,11 +99,6 @@ class Model(BaseModel):
 
         """
         logger.debug(f'Compiling Keras Model')
-
-        # Check kwargs for metrics locally defined
-        # if 'metrics' in kwargs:
-        #     metrics = self.metric.get_callbacks(kwargs['metrics'])
-        #     kwargs['metrics'] = metrics
 
         self.model.compile(**kwargs)
 
@@ -241,147 +259,126 @@ class Model(BaseModel):
             y = None
 
         return self.model.evaluate(x,y, **kwargs)
+    
+    def get_weights(self):
+        """ Returns a numpy array of the weights of the mdoel"""
+        return self.model.get_weights()
+    
+    def set_weights(self,weights):
+        """ Returns a numpy array of the weights of the mdoel"""
+        return self.model.set_weights(weights)
 
-    def save_weights(self):
-        """
-        Save the weights of the model
+    def save_weights(self,filepath, overwrite=True, max_shard_size=None):
+        """ Save the weights of the model """
 
-        """
-        logger.debug(f'Save weights')
+        logger.debug(f'Saving weights')
+        self.model.save_weights(filepath,overwrite,max_shard_size)
 
-        os.makedirs('crest_cache', exist_ok=True)
-        self.model.save_weights('crest_cache/htg.weights.h5')
+    def load_weights(self,filepath,skip_mismatch=False, **kwargs):
+        """ Load the weights of the model """
 
-    def load_weights(self, path: str):
-        """
-        Load the weights of the model
-
-        """
         logger.debug(f'Load weights')
+        self.model.load_weights(filepath,skip_mismatch,**kwargs)
 
-        self.model.load_weights(os.path.join(path, 'htg.weights.h5'))
+    def save(self,filepath,overwrite=True):
+        """ 
+        Saves the crest model into a zipfile. This
+        saves the:
 
-    def save_model(self, model_path):
-        """
-        Save model by registering the keras model
+        - HierarchalTensorGraph
+        - trainable weights
+        - compile args
+        - Any metrics
 
-        """
-        logger.debug(f'Save model as custom_model')
-
-        if hasattr(self.model, 'save') and callable(self.model.save):
-            from tensorflow.keras.utils import get_custom_objects
-
-            logger.debug('Saving model with tensorflow keras.')
-
-            get_custom_objects()[model_path] = self.model
-            self.model.save(model_path)
-        else:
-            logger.debug("Saving model using pickle.")
-
-            if (os.path.isdir(model_path)):
-                pickle_name = gen_filename(self.name, '.pkl')
-                pickle_name = os.path.join(model_path, pickle_name)
-            
-            write_pkl(self.model, pickle_name)
-
-            logger.debug(f"Saved metadata to the same root path: {Path(model_path).parent}")
-            
-
-    @staticmethod
-    def load_model(model_type: str = 'keras', path: str = 'htg_model', custom_objects: dict = None):
-        """
-        Load model registered as custom object
-
-        """
-        root_dir = Path(path).parent
-
-        logger.debug(f'Load custom model from {root_dir}')
-
-        try:
-            if (model_type == 'keras'):
-                logger.debug('Loading model using Tensorflow Keras library.')
-
-                if (custom_objects is None):
-                    loaded = tf.keras.models.load_model(path)
-                else:
-                    loaded = tf.keras.models.load_model(path, custom_objects)
-                
-                return loaded
-            else:
-                logger.debug('Loading model using pickle.')
-
-                model_obj = read_pkl(root_dir)
-                
-                logger.debug(f'Model object loaded.')
-                return model_obj
-        except Exception as e:
-            logger.error(f'Could not load model from CREST Model: {e}')
-            raise ImproperModelError('Cannot recreate previous CREST Model')
-
-    def save(self, dir='crest_cache', save_metrics=False):
-        """
-        Converts the model to a json string
-
-        """
-        logger.debug(f'Save Keras Model')
-
-        os.makedirs(dir, exist_ok=True)
-
-        # convert graph to json
-        graph_json = self.graph.to_json()
-
-        with open(os.path.join(dir, 'htg.graph.json'), 'w') as f:
-            json.dump(graph_json, f)
-
-        # convert model to json
-        self.save_model(dir)
-
-        if (save_metrics):
-            # covert metrics to json
-            logger.debug(f'Saving custom metrics: {self.metric.customs}')
-
-            metric_json = self.metric.to_json()
-
-            logger.debug(f'Metric JSON: {metric_json}')
-
-            with open(os.path.join(dir, 'htg.metric.json'), 'w') as f:
-                json.dump(metric_json, f)
-
-    @staticmethod
-    def load(path: str, model_type: str, load_metrics=False):
-        """
-        Converts the model from a json string.
+        It reconstructs the htg and underlying model. Reloads the weights,
+        compile args, and metrics. Note, it does not save the optimizer
+        state.
 
         Parameters
         ----------
-        json_str : str
-            The json string to convert the model from.
 
+         filepath : str or pahtlib.Path object where the model is saved.
+         
         """
-        # convert graph from json
-        with open(os.path.join(path, 'htg.graph.json'), 'r') as f:
-            graph_json = json.load(f)
-            graph = HierarchalTensorGraph.from_json(graph_json)
 
-        model = Model(graph)
+        logger.debug(f'Saving model')
 
-        if (load_metrics):
-            logger.debug(f'Loading metrics: {load_metrics}')
-            metrics = None
+        if isinstance(filepath,str):
+            filepath = Path(filepath)
 
-            # convert metrics from json
-            with open(os.path.join(path, 'htg.metric.json'), 'r') as f:
-                metric_json = json.load(f)
-                metrics = Metrics.from_json(metric_json)
+        # Create temporary directory and zip
+        with tempfile.TemporaryDirectory() as temp_dir:
+           
+            # Convert to base64 and save htg and save
+            encode = {k : base64.b64encode(v).decode('utf-8') for k,v in self.graph.encode().items()}
+            encode = encode | {'crest_registry_name' : self.graph.registry_name}
+            with open("graph.json",'w') as f:
+                json.dump(encode,f)
+           
+            # Save weights 
+            self.save_weights('model.weights.h5')
 
-            custom_metrics = {v: metrics.get_handler(
-                v) for v in metrics.customs}
+            # Save metrices 
+            with open("metrics.json",'w') as f:
+                json.dump(self.metrics.to_json(),f)
+           
+            # Save keras compile args
+            with open("compile_args.json",'w') as f:
+                json.dump(self.model.get_compile_config(),f)
             
-            model.model = Model.load_model(model_type, path, custom_metrics)
-        else:
-            model.model = Model.load_model(model_type, path)
+            with zipfile.ZipFile(filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                zipf.write('graph.json')
+                zipf.write('model.weights.h5')
+                zipf.write('metrics.json')
+                zipf.write('compile_args.json')
 
-        # convert model from json
-        model.model = load_model(os.path.join(path, 'htg.model.h5'), custom_objects=custom_metrics)
+    @classmethod 
+    def load(cls,filepath):
+        """ 
+        Loads a saved crest model.
 
-        return model
+        Parameters
+        ----------
+
+         filepath : str or pahtlib.Path of the saved model.
+         
+        """
+
+        logger.debug(f'Saving model')
+
+        if isinstance(filepath,str):
+            filepath = Path(filepath)
+
+        # Create temporary directory and zip
+        with tempfile.TemporaryDirectory() as temp_dir:
+
+            # Unzip file
+            with zipfile.ZipFile(filepath, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
+           
+            # Load config and create Model
+            with open("graph.json",'r') as f:
+                graph = json.load(f)
+
+            registry_name = graph.pop('crest_registry_name')
+            decode = {k : base64.b64decode(v) for k,v in graph.items()}
+            htg_obj =  HierarchalTensorGraph.registry[registry_name]
+            htg = htg_obj.decode(decode)
+            obj = cls(htg)
+            
+            # Load weights
+            obj.load_weights('model.weights.h5')
+
+            # Load metrices 
+            with open("metrics.json",'r') as f:
+                metrics = json.load(f)
+
+            obj.metrics = Metrics.from_json(metrics)
+           
+           # Load keras compile args
+            with open("compile_args.json",'r') as f:
+                compile_args = json.load(f)
+
+            obj.compile(**compile_args)
+
+            return obj

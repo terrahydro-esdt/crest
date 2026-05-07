@@ -27,7 +27,8 @@ t = Timer(5, lambda: print('Compiling numba functions...'))
 t.start()
 # from .lexsort import lexsort
 from .matchup.bruteforce.utils.bruteforce_numba import *
-from .matchup.bruteforce.utils.multiset_numba import multiset_single_numba
+from .matchup.bruteforce.utils.multiset_numba import multiset_single_numba, multiset_full_numba
+
 if t.is_alive():
     t.cancel()
 else: print('Finished compiling functions')
@@ -254,15 +255,17 @@ def implode(table):#: np.ndarray | pl.DataFrame):
 
 
 def multiset_single(
+    method      : str,
     coordinates : list[np.ndarray], 
     resolutions : list[np.ndarray], 
-    num_samples : int = -1,
+    is_required : list[bool] | None = None,
+    num_samples : int = 0,
     shuffle     : bool = True,
     logger      : logging.Logger | None = None, 
     seed        : int | None = None,
 ):
     log = getattr(logger, 'debug', print)
-    with Stopwatch('multiset_single preparation', log, silent=logger is None):
+    with Stopwatch('multiset preparation', log, silent=logger is None):
         # Temporarily hard-code reversing feature dimension in order to
         # put the datetime coordinate last
         orig_idxs = []
@@ -274,49 +277,73 @@ def multiset_single(
             coordinates[i] = coordinates[i][idx]
             if len(resolutions[i]) > 1:
                 resolutions[i] = resolutions[i][idx]
-        
-        array_lens = np.array([len(a) for a in coordinates], dtype=np.int32)
 
-        order = np.argsort(array_lens)
-        array_lens = array_lens[order].astype(np.int32)
-        array_idxs = np.cumsum(np.r_[[0], array_lens])
-        array_idxs = np.stack([array_idxs[:-1], array_idxs[1:]], axis=1).astype(np.int32)
+        # Order the arrays first by is_required, second by their length
+        array_len = np.array([len(a) for a in coordinates], dtype=np.int32)
+        array_req = np.array(is_required or [True] * len(coordinates))
+        orderings = list(zip(~array_req, array_len))
+        ordered,_ = zip(*sorted(enumerate(orderings), key=lambda ip: ip[1]))
 
-        c = np.vstack([coordinates[i] for i in order])
-        for i in range(len(coordinates)):
-            coordinates[i] = None
-        coordinates = None
+        # Create the concatenation start/end indices of each grid
+        array_len = array_len[list(ordered)].astype(np.int32)
+        array_idx = np.cumsum(np.r_[[0], array_len]).astype(np.int32)
+        array_idx = np.stack([array_idx[:-1], array_idx[1:]], axis=1)
+
+        # Concatenate coordinates then delete parts to allow garbage collection
+        c = np.vstack([coordinates[i] for i in ordered])
+        # for i in range(len(coordinates)):
+        #     coordinates[i] = None
+        # coordinates = None
+
+        # Include resolution for each coordinate in the concatenated array
         c = np.tile(c, (1, 3))
-
-        for i, j in enumerate(order):
-            r = resolutions[j]
-            c[array_idxs[i, 0]:array_idxs[i, 1], r.shape[1]:] += np.c_[-r[..., 0], r[..., 1]]
-            resolutions[j] = r = None
-        resolutions = None
-        if logger is not None:
-            log(f'{array_lens=} {order=}')
-
+        for i, j in enumerate(ordered):
+            res = resolutions[j]
+            idx = slice(*array_idx[i])
+            c[idx, res.shape[1]:] += np.c_[-res[..., 0], res[..., 1]]
+        #     resolutions[j] = res = None
+        # resolutions = None
+        
+        # Set via NUMBA_NUM_THREADS environmental variable
         n_threads = nb.get_num_threads()
         chunksize = 0
-        if array_lens[0] > (n_threads*2):
-            chunksize = 1+array_lens[0] // (n_threads * 8)
+        if array_len[0] > (n_threads*2):
+            chunksize = 1+array_len[0] // (n_threads * 8)
         # nb.set_num_threads(n_threads)
         nb.set_parallel_chunksize(chunksize) 
         
         if logger is not None:
             log(f'Set numba {chunksize=} (num threads={n_threads})')
-    # nb.set_num_threads(1)
 
+    # Generate an actual seed if needed
     if seed is None:
         seed = np.random.randint(1e8)
-    table = multiset_single_numba(c, array_lens, array_idxs, num_samples, shuffle, seed)
-    order = np.argsort(order)
-    return np.array([i[t] for t,i in zip(table.T[order], orig_idxs)]).T
 
+    # If we are generating only a limited number of samples, full should be 
+    # used since it samples uniformly over all possibilities - but consequently
+    # can be less efficient if samples are not evenly distributed between the
+    # threads. If all samples are being generated then single should be used 
+    # since biased sampling is irrelevant (as all possible samples will be 
+    # created regardless) and it can distribute work more evenly among threads.
+    #   single: parallel over 1st array, draws small number of 1st array points
+    #   full: parallel over n_threads, uniform over 1st array
+    # 
+    # num_samples == 0: generate all samples with single
+    # num_samples  > 0: generate the requested number of samples (num_samples)
+    # num_samples  < 0: generate all samples with full
+    sampler = multiset_single_numba if num_samples == 0 else multiset_full_numba
+
+    locus = method == 'locus'
+    table = sampler(c, array_len, array_idx, num_samples, seed, shuffle, locus)
+    order = np.argsort(ordered)
+    table = np.array([i[t] for t,i in zip(table.T[order], orig_idxs)]).T
+    return table[np.lexsort(table.T[::-1])]
+    
     
 def find_neighbors(
     coordinates : Collection[np.ndarray], 
     resolutions : Collection[np.ndarray] | None = None,
+    is_required : Collection[bool] | None = None,
     radius      : float = 0.5,
     method      : str   = 'multi',
     allow_empty : bool  = False,
@@ -325,7 +352,7 @@ def find_neighbors(
     debug       : bool  = False,
     logger      : logging.Logger | None = None,
     eps         : float = 1e-5,
-    num_samples : int   = -1,
+    num_samples : int   = 0,
     seed        : int | None = None,
     rng                      = None,
     grid_labels : Collection[str] | None = None,
@@ -361,6 +388,12 @@ def find_neighbors(
         dimensionality, and the left and right hand resolution, respectively.
         This allows non-uniform coordinate spacing, including anisotropic 
         coordinate systems. 
+    is_required : Collection[bool] | None
+        List of bools indicating whether the respective coordinate grids are
+        required to create a valid matchup. For example, all datafiles that
+        contain input features would (generally) be required; but if there
+        are multiple datafiles containing targets, some may be optional. Note
+        that this argument is only used by method='locus'. 
     radius      : float
         Radius within which points are considered neighbors of a reference point
         (with radius indicating a fraction of the resolution).
@@ -463,13 +496,15 @@ def find_neighbors(
         have lengths 2 and 1; and for grid_3 have lengths 1 and 2. 
 
     """
-
+    if is_required is None:
+        is_required = [True] * len(coordinates)
+        
     # Rough guess on what dtype can be used to hold indices and values
-    large = max(map(np.log10, map(len, coordinates))) > 8
+    large = max(map(np.log10, [max(l,1) for l in map(len, coordinates)])) > 8
     itype = np.int64 if large else np.int32
     isflt = lambda v: np.issubdtype(v, np.floating) 
     ftype = np.float32#max(filter(isflt, [c.dtype for c in coordinates]+[np.float32]))
-
+    assert(all((len(c) >= 1) or not req for c, req in zip(coordinates, is_required))), [[len(c) for c in coordinates], is_required]
     # If there's only one grid, we can just return the indices for it
     if len(coordinates) == 1:
         table = np.arange(len(coordinates[0]), dtype=itype)[None]
@@ -523,7 +558,7 @@ def find_neighbors(
             resolutions[i] = r.astype(ftype)
 
     # For anisotropic grids, the only available method is bruteforce
-    if any(r.ndim > 2 for r in resolutions): method = 'multi'
+    # if any(r.ndim > 2 for r in resolutions): method = 'multi'
 
     # Single anchor grid, checked against all other grids
     if method == 'anchor':
@@ -577,7 +612,7 @@ def find_neighbors(
 
     # [Multiple anchors] Extended dimension tree search over all grids
     # [Multiple non-uniform grids] Extended dimension brute force search optimized with numba
-    elif method in ['brute', 'multi', 'tree']:
+    elif method in ['brute', 'locus', 'multi', 'tree']:
         if False:#method == 'brute':
             table = brute(
                 coordinates,
@@ -593,7 +628,7 @@ def find_neighbors(
 
             # Ensure resolutions are in the correct format
             # resolutions = list(map(np.atleast_1d, resolutions))
-            if method in ['brute', 'multi']:
+            if method in ['brute', 'locus', 'multi']:
                 # Format resolutions into (left side, right side) 2D resolution arrays
                 for i, res in enumerate(resolutions):
                     c_shp = coordinates[i].shape 
@@ -617,7 +652,7 @@ def find_neighbors(
                     assert(res.shape[-1] == 2), res.shape
 
                     # Place left/right dimension on the first axis
-                    if method != 'multi': 
+                    if method == 'brute': 
                         resolutions[i] = np.moveaxis(res, -1, 0)
                     else: resolutions[i] = res
 
@@ -629,10 +664,21 @@ def find_neighbors(
                 resolutions = [np.nanmean(r, axis=0) if len(r.shape) > 1 else r for r in resolutions]
                 resolutions = list(map(np.atleast_1d, resolutions))
 
-            if method == 'multi':
+            coordinates_not_req = [c for c,r in zip(coordinates, is_required) if not r]
+            resolutions_not_req = [c for c,r in zip(resolutions, is_required) if not r]
+            
+            coordinates_original = [c for c,r in zip(coordinates, is_required) if r]
+            resolutions_original = [c for c,r in zip(resolutions, is_required) if r]
+
+            coordinates = list(coordinates_original)
+            resolutions = list(resolutions_original)
+            
+            if method in ['locus', 'multi']:
                 seed  = (seed or 0) + rng.integers(1e8)
-                table = multiset_single(coordinates, resolutions, num_samples, shuffle, logger, seed)
+                table = multiset_single(method, coordinates, resolutions, is_required, num_samples, shuffle, logger, seed)
+                order = grid_order = np.arange(len(coordinates_original))
             else:
+
                 # Optimize column and grid orderings
                 optimizations = True
                 if optimizations: 
@@ -778,7 +824,7 @@ def find_neighbors(
 
                         with progress as pbar:
                             # b_ix, q_ix = bruteforce_double(b, q, *br, *qr, skip_dims, pbar)[bq_order]
-                            b_ix, q_ix = bruteforce_single(b, q, *br, *qr, skip_dims, pbar)[bq_order] # Original w/ dict
+                            b_ix, q_ix = bruteforce_single(b, q, *br, *qr, skip_dims, False, pbar)[bq_order] # Original w/ dict
                             # b_ix, q_ix = bruteforce_original(b, q, *br, *qr, skip_dims, pbar).T[bq_order] # Original
                         if debug: print('b q i shape:', b_ix.shape, q_ix.shape)
                     else:
@@ -797,7 +843,7 @@ def find_neighbors(
                         q_ix = q_orig[q_ix]
 
                     # Save time/memory by skipping unnecessary work on the final loop
-                    if (i+1) < len(coordinates):
+                    if ((i+1) < len(coordinates)) or len(coordinates_not_req):
                         _,bqr = (b, q), (br, qr) = list(zip(build, query)) 
 
                         # If resolution can be non-uniform (i.e. brute method)
@@ -830,6 +876,8 @@ def find_neighbors(
                 if debug: print('\nReordering table...')
                 table = table[:, np.argsort(order)[np.argsort(grid_order)]]
 
+            if len(coordinates_not_req) and table.size:# and (method != 'brute'):
+                table = add_not_req(method, rng, ftype, is_required, table, coordinates_original, resolutions_original, coordinates_not_req, resolutions_not_req, np.array(grid_order)[np.array(order)])                    
         if table.size == 0:
             return (np.empty((0, 0)),) * 2
 
@@ -855,6 +903,125 @@ def find_neighbors(
     return table, count
 
 
+def add_not_req(method, rng, ftype, is_required, table, coordinates, resolutions, coordinates_not_req, resolutions_not_req, grid_order):
+    """ Find matches for any grids that aren't required to be present for valid
+        samples (i.e. np.prod(valid_percent.values()) == 0) """
+
+    not_req_order = np.arange(len(coordinates_not_req))
+    rng.shuffle(not_req_order)
+    n_grids = len(coordinates)
+    coordinates_not_req = [coordinates_not_req[i] for i in not_req_order]
+    resolutions_not_req = [resolutions_not_req[i] for i in not_req_order]
+
+    try:
+        if method != 'brute': 
+            resolutions = [np.moveaxis(r, -1, 0) for r in resolutions]
+            resolutions_not_req = [np.moveaxis(r, -1, 0) for r in resolutions_not_req]
+
+        if max([r.shape[1] for r in resolutions]) > 1:
+            for i, r in enumerate(resolutions):
+                if r.shape[1] == 1:
+                    resolutions[i] = np.tile(r, (1, len(table), 1))
+                else:
+                    resolutions[i] = r[:, table[:, i]]
+            
+        coordinates = [c[t] for c,t in zip(coordinates, table.T)]
+
+        coordinates = np.hstack([coordinates[i] for i in sorted(grid_order)])
+        resolutions = np.dstack([resolutions[i] for i in sorted(grid_order)])
+
+        lex_idx = np.lexsort(coordinates.T[::-1])
+        coordinates = coordinates[lex_idx]
+        resolutions = resolutions[:, lex_idx] if resolutions.ndim > 1 and resolutions.shape[1] > 1 else resolutions
+        
+        grids = zip([c.astype(ftype) for c in coordinates_not_req], resolutions_not_req)
+        query = coordinates, resolutions
+        order = list(range(len(coordinates)))
+    except:
+        print(f'{[c.shape for c in coordinates]=} {[c.shape for c in resolutions]=}')
+        raise
+    new_table = [None]*len(coordinates_not_req)
+    skipped = 0
+    for i, (build, cnr) in enumerate(zip(grids, not_req_order), n_grids):
+        if not len(build[0]):
+            table = np.c_[np.nan*np.ones((len(table),1)), table]
+            skipped += 1
+            continue
+            
+        # Duplicate the next grid to align with the current table
+        build_dup = [np.tile(b, i-skipped) for b in build]
+
+        # Extract the build/query coordinates/resolutions
+        b,q,br,qr = chain.from_iterable( zip(*[build_dup, query]) )
+
+        # Drop any all NaN (virtual) columns from the build and query tables
+        b_nan_col = np.isnan(b).all(0)
+        q_nan_col = np.isnan(q).all(0)
+        skip_dims = b_nan_col | q_nan_col
+
+        b_ix, q_ix = bruteforce_single(b, q, *br, *qr, skip_dims, method=='locus', None)
+        _,bqr = (b, q), (br, qr) = list(zip(build, query)) 
+
+        missing = np.ones(len(q), dtype=bool)
+        missing[q_ix] = False
+        m_ix = np.where(missing)[0].astype(b_ix.dtype)
+
+        # If resolution can be non-uniform (i.e. brute method)
+        if max(br.ndim, qr.ndim) > 1:
+
+            # If either grid uses a non-uniform resolution, both need to
+            if max(br.shape[1], qr.shape[1]) > 1:
+                qr_orig = qr
+                
+                if br.shape[1] == 1: br = np.tile(br, (1, len(b), 1))
+                if qr.shape[1] == 1: qr = np.tile(qr, (1, len(q), 1))
+                br, qr = [br[:, b_ix], qr[:, q_ix]]
+
+                qr = np.append(qr, (qr_orig[:, m_ix] if qr_orig.shape[1] > 1 else np.tile(qr_orig, (1, len(m_ix), 1))), 1)                                
+                br = np.append(br, qr_orig[:, m_ix, :br.shape[2]] if qr_orig.shape[1] > 1 else np.tile(qr_orig[..., :br.shape[2]], (1, len(m_ix), 1)), 1)
+                
+                br_qr = [br, qr]
+                
+            else: br_qr = bqr
+            br_qr = np.dstack(br_qr)
+        else: br_qr = np.hstack(bqr)
+
+        q_orig = q
+        b = b[b_ix]
+        q = q[q_ix]
+
+        q = np.append(q, q_orig[m_ix], axis=0).astype(q.dtype)
+        b = np.append(b, q_orig[m_ix, :b.shape[1]], axis=0).astype(b.dtype)
+        
+        # Construct the next query set by combining the current two grids
+        query = np.c_[(b, q)], br_qr
+        b_ix = np.append(b_ix, [np.nan]*len(m_ix), axis=0)
+        q_ix = np.append(q_ix, m_ix, axis=0)
+        
+        # Separate the coordinates/resolutions and extract the locations
+        table = np.c_[(b_ix, table[q_ix])]
+        order = sum([[i], order], [])
+
+    # print(f'final: {table.shape=}')
+    new_table = table[:, :len(not_req_order)][:,::-1]
+    table = table[:, len(not_req_order):]
+    
+    # table = table[:, np.argsort(order)[np.argsort(not_req_order)]]
+    # assert(len(table) >= n_start_match), [table.shape, n_start_match]
+
+    not_req_order = list(not_req_order)
+    tbl = []
+    c1 = 0
+    c2 = 0
+    for r in is_required:
+        if r:
+            tbl.append(table[:, c1])
+            c1 += 1
+        else:
+            tbl.append(new_table[:, not_req_order.index(c2)])
+            c2+=1
+    return np.stack(tbl, axis=1)
+    
 
 class StreamToLogger:
     """

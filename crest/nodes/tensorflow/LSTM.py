@@ -29,12 +29,12 @@ class LSTM(HierarchalTensorGraph):
     def __init__(self,name,inputs,units,**kwargs):
         super().__init__(name)
         self.units = units
-        self._inputs = inputs
+        self.inp = inputs
         self.kwargs = kwargs
 
     def build(self):
         """ builds the graph """
-        cell = LSTMCell(self.name + '_cell',self._inputs,self.units,**self.kwargs)
+        cell = LSTMCell(self.name + '_cell',self.inp,self.units,**self.kwargs)
         self.add_edge('input',cell)
         self.add_edge(cell,cell)
         self.add_edge(cell,'output')
@@ -45,10 +45,3 @@ class LSTM(HierarchalTensorGraph):
         else:
             if not self.kwargs['return_state']:
                 self.outputs.pop(self.name + '_cell' + '_c')
-
-    def encode(self,type='dill',**kwargs) -> dict:
-        """ returns encoded dictionary """
-        keys = ['_inputs','units','return_state','kwargs']
-        encode = {k:dill.dumps(v) for k,v in self.__dict__.items() if k in keys}
-        encode['inputs'] = encode.pop('_inputs')
-        return {**encode,**super().encode()}

@@ -50,35 +50,33 @@ class Metrics(object):
             metrics: A list of metrics for which callbacks are required
         """
         m_callbacks = []
-        try:
-            # If metrics is not a list, make it a list
-            if not isinstance(metrics, list):
-                metrics = [metrics]
+        # If metrics is not a list, make it a list
+        if not isinstance(metrics, list):
+            metrics = [metrics]
 
-            # For each metric, check if it is a keras metric or a custom metric
-            for m in metrics:
+        # For each metric, check if it is a keras metric or a custom metric
+        for m in metrics:
 
-                # If the metric is a string
-                if isinstance(m, str):
-                    keras_avail = tf.keras.metrics.get(m)
-                    handler_avail = self.get_handler(m)
+            # If the metric is a string
+            if isinstance(m, str):
+                keras_avail = tf.keras.metrics.get(m)
+                handler_avail = self.get_handler(m)
 
-                    # If the metric is a keras metric, add it to the list of callbacks
-                    if (not keras_avail == m) or callable(keras_avail):
-                        m_callbacks.append(keras_avail)
-                    elif not handler_avail is None:
-                        m_callbacks.append(handler_avail)
+                # If the metric is a keras metric, add it to the list of callbacks
+                if (not keras_avail == m) or callable(keras_avail):
+                    m_callbacks.append(keras_avail)
+                elif not handler_avail is None:
+                    m_callbacks.append(handler_avail)
 
-                # If the metric is a callable, add it to the list of callbacks
-                elif (callable(m)):
-                    if (type(m).__name__ == 'function'):
-                        self.register(m.__name__, m)
-                    else:
-                        self.register(m.__class__.__name__, m)
+            # If the metric is a callable, add it to the list of callbacks
+            elif (callable(m)):
+                if (type(m).__name__ == 'function'):
+                    self.register(m.__name__, m)
+                else:
+                    self.register(m.__class__.__name__, m)
 
-                    m_callbacks.append(m)
+                m_callbacks.append(m)
 
-        finally:
             return m_callbacks
 
     def register(self, event, callback):

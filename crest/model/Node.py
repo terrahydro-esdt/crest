@@ -3,6 +3,7 @@ import dill
 from .HierarchalTensorGraph import HierarchalTensorGraph as HTG
 from .TensorSpec import TensorSpec
 from .TensorGraph import ImproperTensorGraphError
+from .IOSpec import IOSpec
 
 class Node(HTG):
     """
@@ -33,14 +34,13 @@ class Node(HTG):
         The attributes of Node. Defaults:
         'recurrent' : False,
         'return_seq' : False,
-        'initialization' : None,
         'roll_out' : None
 
     """
     def __init__(self,
                  node : Callable,
-                 inputs: dict,
-                 outputs: dict,
+                 inputs: dict | IOSpec,
+                 outputs: dict | IOSpec,
                  name: str | None = None,
                  **attr
                 ):
@@ -52,13 +52,20 @@ class Node(HTG):
         super().__init__(name or HTG.get_name(node))
 
         self.node = node
-        self.inputs = inputs
-        self.outputs = outputs
+        self._inputs = inputs.spec if isinstance(inputs,IOSpec) else inputs
+        self._outputs = outputs.spec if isinstance(outputs,IOSpec) else outputs
+
+        if isinstance(inputs,IOSpec):
+            self._inputs_spec = inputs
+        
+        if isinstance(inputs,IOSpec):
+            self._outputs_spec = outputs
+
         for k,v in attr.items():
             self.attributes[k] = v
 
         # Wrap tensor specs in CREST.TensorSpec
-        for k in self.inputs:
+        for k in self._inputs:
             self.inputs[k] = TensorSpec(self.inputs[k])
 
         for k in self.outputs:
@@ -68,10 +75,18 @@ class Node(HTG):
     def is_basenode(self) -> bool:
         """ Return basenode True """
         return True
+    
+    @property
+    def inputs(self):
+        return self._inputs
+    
+    @property
+    def outputs(self):
+        return self._outputs
 
     def encode(self,type='dill',**kwargs):
-        keys = ['name','attributes','inputs','outputs','node']
-        encode = {k:dill.dumps(v,**kwargs) for k,v in self.__dict__.items() if k in keys}
+        self.build()
+        encode = {k:dill.dumps(v,**kwargs) for k,v in self.config.items()}
         return encode
 
     @classmethod

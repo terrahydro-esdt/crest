@@ -12,5 +12,5 @@ class BaseBackend(BaseAbstract):
         raise Exception(f'Not implemented for {self}')
 
 
-    def cache(self, path, data):
+    def cache(self, path, data, stream=None):
         raise Exception(f'Not implemented for {self}')

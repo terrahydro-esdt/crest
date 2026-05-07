@@ -11,7 +11,7 @@ def test_LSTMCell():
     tf.keras.utils.set_random_seed(seed)
     sm = LSTMCell('sm',inputs={'era5' : (features,), 'smap' :
                                    (features,)},units=units)
-
+    
     h = tf.zeros([batch_size,units])
     c = tf.zeros([batch_size,units])
 
