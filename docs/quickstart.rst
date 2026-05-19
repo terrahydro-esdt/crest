@@ -1,37 +1,57 @@
 Quick Start
 ============
 
-Installation from source
-------------------------
+Installation
+------------
 
-For developers with SSH access:
+Public install (coming at release)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block::
+Once CREST is published to PyPI, installation will be a single command:
 
-   git@ssh.gitlab.smce.nasa.gov:astg/terrahydro/development/crest.git
+.. code-block:: bash
 
-cd into the code repo:
+   pip install crest
 
-.. code-block::
+Developer install (current)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+Clone the repository:
+
+.. code-block:: bash
+
+   # TODO: Update URL when repository is made public on GitHub (planned August 2026)
+   git clone https://gitlab.smce.nasa.gov/astg/terrahydro/development/crest.git
    cd crest
-   
-Create the Python environment:
 
-.. code-block::
+Create the Python environment. Choose the file that matches your platform:
 
-   conda env create -f cicd/environment.yaml
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
 
-Once the installation has finished building, *activate* the installed environment by running:
+   * - Platform
+     - Environment file
+   * - macOS Apple Silicon (M1/M2/M3)
+     - ``cicd/environment_macos_arm64.yaml``
+   * - Linux x86_64 (e.g. AWS cluster)
+     - ``cicd/environment_cpu_x86_64.yaml``
+   * - Linux aarch64
+     - ``cicd/environment_cpu_aarch64.yaml``
 
-.. code-block::
+.. code-block:: bash
 
-   conda activate crest_cpu
+   conda env create -f cicd/environment_macos_arm64.yaml   # adjust for your platform
+   conda activate OCETRA_cpu
 
 Install CREST in development mode:
 
-.. code-block::
+.. code-block:: bash
 
    pip install -e .
 
+Verify your installation:
 
+.. code-block:: bash
+
+   pytest tests/ -v
