@@ -33,9 +33,17 @@ This project adheres to a code of conduct that all contributors are expected to 
 
 2. **Create a development environment**
 
+   Choose the environment file that matches your platform:
+
+   | Platform | File |
+   |---|---|
+   | macOS Apple Silicon (M1/M2/M3) | `cicd/environment_macos_arm64.yaml` |
+   | Linux x86\_64 (e.g. AWS cluster) | `cicd/environment_cpu_x86_64.yaml` |
+   | Linux aarch64 | `cicd/environment_cpu_aarch64.yaml` |
+
    ```bash
-   conda env create -f environment.yml
-   conda activate crest
+   conda env create -f cicd/environment_macos_arm64.yaml   # adjust for your platform
+   conda activate OCETRA_cpu
    ```
 
 3. **Install in development mode**
@@ -143,7 +151,7 @@ def process_data(
 
 ## Documentation Standards
 
-All contributions must include appropriate documentation. See [DOCUMENTATION_GUIDE.md](DOCUMENTATION_GUIDE.md) for detailed templates.
+All contributions must include appropriate documentation. See [DOC_GUIDE.md](DOC_GUIDE.md) for detailed templates.
 
 ### Minimum Requirements
 
@@ -298,6 +306,7 @@ Fixes #(issue number)
 
 ## Getting Help
 
+<!-- TODO: Update these URLs when the repository is made public on GitHub (planned August 2026) -->
 - **Documentation**: https://crest.readthedocs.io/
 - **Issues**: https://github.com/terrahydro/crest/issues
 - **Discussions**: https://github.com/terrahydro/crest/discussions

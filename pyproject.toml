@@ -4,14 +4,47 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "crest"
-version = "0.0.1"
+version = "0.1.0"
 description = "AI-based python framework for coupling tensor network models."
 readme = "README.rst"
-requires-python = ">=3.7"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [
+  {name = "CREST Development Team"},
+]
+keywords = [
+  "earth system modeling",
+  "machine learning",
+  "tensor graphs",
+  "hydrological modeling",
+  "climate science",
+  "artificial intelligence",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Atmospheric Science",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# TODO: Update URLs when the repository is made public on GitHub (planned August 2026)
+[project.urls]
+Homepage = "https://crest.readthedocs.io/"
+Documentation = "https://crest.readthedocs.io/"
+Repository = "https://github.com/terrahydro/crest"
+"Bug Tracker" = "https://github.com/terrahydro/crest/issues"
 
 [project.optional-dependencies]
 dev = [
-  "pip >=24.2.0",
+  "pytest",
+  "black",
+  "isort",
+  "interrogate",
 ]
 docs = [
   "furo >=2023.9.10",
@@ -20,7 +53,6 @@ docs = [
   "sphinx-autobuild >=2024.4.16",
   "sphinx-autodoc-typehints",
   "sphinx-design",
-  "sphinx-autodoc-typehints",
   "sphinx_rtd_theme",
 ]
 
@@ -31,4 +63,3 @@ include = [
   "README.rst"
 ]
 exclude = ["test*"]
-
