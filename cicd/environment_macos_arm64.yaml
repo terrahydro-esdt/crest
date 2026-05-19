@@ -1,0 +1,91 @@
+# Apple Silicon (M1/M2/M3, osx-arm64) development environment
+# For: local documentation generation and unit testing
+# WARNING: Keep this up-to-date with changes to environment_cpu_aarch64.yaml!
+name: OCETRA_cpu
+channels:
+  - conda-forge
+  - nodefaults
+
+dependencies:
+  - apscheduler
+  - awscli
+  - boto3
+  - bottleneck
+  - cdsapi
+  - cfgrib
+  - cloudpickle
+  - cmake
+  - cython
+  - dask=2025.5.0
+  - datapi
+  - dill
+  - earthaccess
+  - ecmwf-api-client
+  - fastapi
+  - fsspec
+  - geopandas
+  - h5netcdf
+  - hdf5
+  - ipykernel
+  - ipywidgets
+  - libgdal-hdf4
+  - jsonpickle
+  - make
+  - matplotlib
+  - nbconvert
+  - nbformat
+  - netCDF4
+  - networkx
+  - numpy=2.2.6
+  - opencv
+  - osmnx
+  - pandas
+  - pip
+  - polars
+  - prettytable
+  - pyarrow
+  - pytest
+  - python=3.12.11
+  - python-daemon
+  - pyvis
+  - rasterio
+  - s3fs
+  - s3path
+  - scikit-learn
+  - seaborn
+  - setuptools
+  - sparse
+  # No build string — let conda-forge resolve the osx-arm64 build.
+  # Version may differ slightly from the Linux cluster environments.
+  - tensorflow>=2.17
+  - tiledb-py
+  - tqdm
+  - uvicorn
+  - xarray
+  - zarr=2.18.7
+
+  # for docs
+  - docutils
+  - flit
+  - furo
+  - myst-nb
+  - nbsphinx
+  - nbsphinx-link
+  - pandoc
+  - sphinx
+  - sphinx-autodoc-typehints
+  - sphinx_rtd_theme
+  - sphinxcontrib-mermaid
+
+  - pip:
+      # crick has no osx-arm64 conda-forge build
+      - crick
+      # msgraph-sdk is not on conda-forge
+      - msgraph-sdk
+      # web (optional — not needed for docs/tests)
+      - titiler
+      - titiler-application
+      - titiler-core
+      - titiler-extensions
+      - titiler-mosaic
+      - titiler-xarray
