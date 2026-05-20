@@ -1,45 +1,25 @@
 crest.base package
 ==================
 
+.. automodule:: crest.base
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Subpackages
 -----------
 
 .. toctree::
-   :maxdepth: 4
+   :maxdepth: 2
 
    crest.base.data_server
 
 Submodules
 ----------
 
-crest.base.BaseAbstract module
-------------------------------
+.. toctree::
+   :maxdepth: 2
 
-.. automodule:: crest.base.BaseAbstract
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-crest.base.BaseNode module
---------------------------
-
-.. automodule:: crest.base.BaseNode
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-crest.base.BaseSet module
--------------------------
-
-.. automodule:: crest.base.BaseSet
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Module contents
----------------
-
-.. automodule:: crest.base
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   crest.base.BaseAbstract
+   crest.base.BaseNode
+   crest.base.BaseSet
