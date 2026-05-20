@@ -11,6 +11,5 @@ Earth Information Systems.
    :caption: Contents:
    
    quickstart
-   tutorial/index
    examples/index
    api/index
