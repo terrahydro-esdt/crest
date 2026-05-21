@@ -1,3 +1,4 @@
+from __future__ import annotations
 from itertools import starmap, zip_longest
 from typing import Iterator, Iterable
 from math import ceil

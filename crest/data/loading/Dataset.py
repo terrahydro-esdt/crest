@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections.abc import Iterable, Callable, Collection
 from collections import defaultdict as dd
 from dask.diagnostics import ProgressBar

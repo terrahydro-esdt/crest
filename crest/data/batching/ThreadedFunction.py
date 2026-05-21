@@ -1,3 +1,4 @@
+from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from collections.abc import Callable
 from threading import Event

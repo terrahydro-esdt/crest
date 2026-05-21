@@ -1,3 +1,4 @@
+from __future__ import annotations
 import tlz
 import numpy as np
 import tensorflow as tf

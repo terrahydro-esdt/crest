@@ -1,3 +1,4 @@
+from __future__ import annotations
 from queue import Empty
 from tlz import merge_with
 import numpy as np 

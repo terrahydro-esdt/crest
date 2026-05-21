@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections.abc import Collection, Callable, Iterator
 from itertools import zip_longest, starmap, compress
 from operator import itemgetter

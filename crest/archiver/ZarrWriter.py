@@ -1,3 +1,4 @@
+from __future__ import annotations
 from crest.utils import S3Path, silence_warnings
 from .Writer import Writer
 from .StageWriter import StageWriter

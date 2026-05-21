@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections.abc import Collection, Sequence
 from numpy.random import Generator
 from functools import cached_property, partial
@@ -411,7 +412,7 @@ class Blockset(BaseSet):
         return matches, divisions, cartesian
 
 
-    def _partition(self, names: list[str | int]) -> (list, list):
+    def _partition(self, names: list[str | int]) -> tuple[list, list]:
         """ Split blocks into [(in names), (not in names)] """
         select = lambda i, b, n: (n==i) if isinstance(n,int) else (n in b.label)
         within = lambda i,block: any(map(lambda n: select(i, block, n), names))

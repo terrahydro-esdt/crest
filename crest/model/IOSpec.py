@@ -1,3 +1,4 @@
+from __future__ import annotations
 from crest.base import BaseAbstract
 from collections.abc import Collection
 from collections import UserDict

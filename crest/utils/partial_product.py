@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections.abc import Collection, Iterator
 from itertools import product
 from numpy import unravel_index, ndarray

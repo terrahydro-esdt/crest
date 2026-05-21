@@ -21,6 +21,7 @@ Can also use context-aware logging:
 >>> with log_context(run_id="exp_001", stage="training"):
 ...     logger.info("Training started")  # Will include run_id and stage
 """
+from __future__ import annotations
 
 import inspect
 import logging

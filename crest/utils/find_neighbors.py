@@ -1,3 +1,4 @@
+from __future__ import annotations
 from sklearn.neighbors import BallTree
 from scipy.spatial import KDTree
 from collections.abc import Collection

@@ -1,3 +1,4 @@
+from __future__ import annotations
 #from ...model import HierarchalTensorGraph
 from enum import Enum
 #import tensorflow as tf
