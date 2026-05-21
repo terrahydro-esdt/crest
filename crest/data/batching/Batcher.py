@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections.abc import Collection
 from collections import defaultdict
 from fsspec.mapping import FSMap 

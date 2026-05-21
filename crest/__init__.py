@@ -1,6 +1,10 @@
 from pathlib import Path
 import warnings
-from dill import PicklingWarning,settings
+try:
+    from dill import PicklingWarning, settings as dill_settings
+except ImportError:
+    PicklingWarning = None
+    dill_settings = {}
 
 ROOT_PATH = Path(__file__).parent
 
@@ -52,8 +56,9 @@ from .data_server import DataServer
 try:
     from .nodes import CrossStitchLSTM,LSTM,LSTMCell
 except: pass
-warnings.filterwarnings('ignore',category=PicklingWarning)
-settings['byref'] = True
+if isinstance(PicklingWarning, type):
+    warnings.filterwarnings('ignore', category=PicklingWarning)
+    dill_settings['byref'] = True
 
 # from .utils.setup_logging import logger_setup
 # logger_setup('crest-logfile')

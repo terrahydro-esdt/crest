@@ -1,3 +1,4 @@
+from __future__ import annotations
 from .Writer import Writer
 from .Indexer import Indexer
 
@@ -13,7 +14,10 @@ import numpy as np
 import uuid
 import os
 
-Int = int | np.int32 | np.int64
+try:
+    Int = int | np.int32 | np.int64
+except TypeError:
+    Int = int  # fallback when numpy is mocked (e.g. during doc generation)
 
 class StageWriter(Writer):
     """ Class that stages data in parquet fragments for later consolidation.

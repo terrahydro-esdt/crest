@@ -5,10 +5,11 @@ abstract: "The CREST framework provides a graph-based modeling framework built o
 authors:
   - family-names: "Pelissier"
     given-names: "Craig"
-    orcid: "https://orcid.org/0000-0000-0000-0000"
     affiliation: "TerraHydro"
   - name: "CREST Development Team"
+doi: 10.5281/zenodo.20293610  
 type: software
+# TODO: Update URL when repository is made public on GitHub (planned August 2026)
 repository-code: "https://github.com/terrahydro/crest"
 url: "https://crest.readthedocs.io/"
 keywords:
@@ -18,16 +19,7 @@ keywords:
   - "hydrological modeling"
   - "climate science"
   - "artificial intelligence"
-license: MIT
+license: Apache-2.0
 version: 0.1.0
-date-released: "2024-10-14"
-preferred-citation:
-  type: article
-  title: "CREST: A Framework for Coupled Reusable Earth System Tensors"
-  authors:
-    - family-names: "Pelissier"
-      given-names: "Craig"
-    - name: "et al."
-  year: 2024
-  journal: "TBD"
-  # doi: "10.xxxx/xxxxx"  # Add when available
+# TODO: Set to actual release date when the repository is made public
+date-released: "2026-08-15"

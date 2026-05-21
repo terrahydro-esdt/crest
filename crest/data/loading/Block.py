@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections.abc import Collection, Sequence
 from collections import defaultdict as dd
 from functools import cached_property, reduce

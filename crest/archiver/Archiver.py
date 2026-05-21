@@ -1,3 +1,4 @@
+from __future__ import annotations
 from crest.utils import S3Path
 from .StageWriter import StageWriter
 from .ZarrWriter import ZarrWriter

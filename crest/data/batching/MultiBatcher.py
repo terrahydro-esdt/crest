@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections import defaultdict as dd
 from functools import cached_property, wraps
 from itertools import zip_longest, product

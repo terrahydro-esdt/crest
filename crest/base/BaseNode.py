@@ -1,10 +1,10 @@
+from __future__ import annotations
 from collections.abc import Callable, Collection
 from sklearn.metrics import r2_score
 from scipy.stats import linregress
 from functools import cached_property, partial, reduce
 from operator import and_
 from abc import abstractmethod
-from typing import Union
 
 import matplotlib.pyplot as plt
 import tensorflow as tf
@@ -94,7 +94,7 @@ class BaseNode(BaseAbstract):
     outputs : IO_TYPE 
 
     def __init__(self, 
-        normalize      = (), #: Union[tuple[Callable, Callable], 'Transform'] = (), 
+        normalize      = (),
         loss           : str | Callable | dict[str, str | Callable | dict] = 'mse',
         transform_loss : bool | tuple[Callable, Callable] = True,
         debug          : bool = False,

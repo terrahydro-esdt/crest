@@ -1,11 +1,16 @@
 crest package
 =============
 
+.. automodule:: crest
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Subpackages
 -----------
 
 .. toctree::
-   :maxdepth: 4
+   :maxdepth: 2
 
    crest.archiver
    crest.base
@@ -16,12 +21,3 @@ Subpackages
    crest.model
    crest.nodes
    crest.utils
-
-Module contents
----------------
-
-.. automodule:: crest
-   :members:
-   :undoc-members:
-   :show-inheritance:
-   :no-index:

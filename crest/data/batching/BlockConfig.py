@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections import defaultdict as dd
 from ctypes import c_int, c_bool
 import multiprocessing as mp

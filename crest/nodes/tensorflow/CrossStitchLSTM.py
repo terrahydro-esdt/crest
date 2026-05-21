@@ -1,3 +1,4 @@
+from __future__ import annotations
 import dill
 from .LSTMCell import LSTMCell
 from ...model import HierarchalTensorGraph

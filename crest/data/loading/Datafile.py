@@ -1,3 +1,4 @@
+from __future__ import annotations
 from collections.abc import Collection, Callable
 from collections import defaultdict as dd
 from fsspec.mapping import FSMap

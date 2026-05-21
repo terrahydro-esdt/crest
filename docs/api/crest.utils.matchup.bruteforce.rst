@@ -1,45 +1,25 @@
 crest.utils.matchup.bruteforce package
 ======================================
 
+.. automodule:: crest.utils.matchup.bruteforce
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Subpackages
 -----------
 
 .. toctree::
-   :maxdepth: 4
+   :maxdepth: 2
 
    crest.utils.matchup.bruteforce.utils
 
 Submodules
 ----------
 
-crest.utils.matchup.bruteforce.Grid module
-------------------------------------------
+.. toctree::
+   :maxdepth: 2
 
-.. automodule:: crest.utils.matchup.bruteforce.Grid
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-crest.utils.matchup.bruteforce.Pair module
-------------------------------------------
-
-.. automodule:: crest.utils.matchup.bruteforce.Pair
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-crest.utils.matchup.bruteforce.brute module
--------------------------------------------
-
-.. automodule:: crest.utils.matchup.bruteforce.brute
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Module contents
----------------
-
-.. automodule:: crest.utils.matchup.bruteforce
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   crest.utils.matchup.bruteforce.Grid
+   crest.utils.matchup.bruteforce.Pair
+   crest.utils.matchup.bruteforce.brute

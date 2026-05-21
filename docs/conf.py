@@ -41,10 +41,10 @@ always_use_bars_union = True
 #    "sphinx.ext.viewcode",
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "**.ipynb_checkpoints", "examples/*.nblink"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "**.ipynb_checkpoints"]
 
 # The suffix of source filenames.
-source_suffix = [".rst", ".md"]
+source_suffix = [".rst", ".md", ".nblink"]
 
 # The master toctree document.
 master_doc = "index"
@@ -88,6 +88,8 @@ autodoc_mock_imports = [
     "shapely",
     "dill",
     "prettytable",
+    "_bruteforce",                  # compiled Cython extension (bare name)
+    "crest.utils._bruteforce",      # compiled Cython extension (qualified name)
 ]
     
   # -- Options for HTML output -------------------------------------------------

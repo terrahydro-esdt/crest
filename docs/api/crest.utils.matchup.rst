@@ -1,37 +1,25 @@
 crest.utils.matchup package
 ===========================
 
+.. automodule:: crest.utils.matchup
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Subpackages
 -----------
 
 .. toctree::
-   :maxdepth: 4
+   :maxdepth: 2
 
    crest.utils.matchup.bruteforce
 
 Submodules
 ----------
 
-crest.utils.matchup.join module
--------------------------------
+.. toctree::
+   :maxdepth: 2
 
-.. automodule:: crest.utils.matchup.join
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-crest.utils.matchup.tree module
--------------------------------
-
-.. automodule:: crest.utils.matchup.tree
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-Module contents
----------------
-
-.. automodule:: crest.utils.matchup
-   :members:
-   :undoc-members:
-   :show-inheritance:
+   crest.utils.matchup.anchor
+   crest.utils.matchup.join
+   crest.utils.matchup.tree
