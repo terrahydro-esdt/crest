@@ -1,34 +1,19 @@
 CREST Fundamentals
 ==================
 
-The Hierarchal Tensor Graph (HTG) is the core object in CREST where the Earth System Model (ESM) is encoded and specified.
 
-In this section we include examples that show how to use the :doc:`CREST HTG <HTG_overview>` and how to perform basic :doc:`HTG computations <HTG_algebra>`.
+**CREST** is a modular machine learning pipeline framework engineered to process, train, and make predictions on high-dimensional **geospatial datasets**. It translates complex data processing blueprints into *Hierarchal Tensor Graphs* which act as workstation assembly lines, wrapping around frameworks like *TensorFlow* and *Keras*.  By partitioning gigantic datasets into aligned *blocks* and matching independent coordinate grids using high-performance *neighbor finder* algorithms, it streams optimized, balanced batches straight to model training loops and archives predictions cleanly to disk.
 
-The HTG :doc:`Keras Node <HTG_keras>` class implements a wrapper around a `Keras` model or layer and the HTG :doc:`Lambda Node <HTG_lambda>` class implements a wrapper around a `lambda` function. In CREST we can also :doc:`serialize <HTG_tofromJSON>` an HTG network graph as a JSON string.
-
-Batch processing is a technique of processing large volumes of data in groups or batches, rather than individually or continuously. The :doc:`batcher demo <batcher_demo>` shows how this is done in CREST. Additionally, the :doc:`data loader package <data_loader_demo>` is responsible for loading data from single or multiple sources.
-
-Metrics are quantitative measures that help evaluate the effectiveness and reliability of models. This is implemented in the :doc:`CREST metrics <metrics_demo>` class.
-
-The :doc:`Archiver <archiver_demo>` class is responsible for inserting the model predictions into an `xArray` dataset at the correct coordinates and save the results to disk.
+These examples introduce the Hierarchal Tensor Graph (HTG), which is the core object in CREST where the Earth System Model (ESM) is encoded and specified, and the Batcher, which is the engine that executes the HTG and feeds data to the model training loop. We also use CREST to load/train/predict with the well-known :doc:`MNIST dataset <mnist_demo>` and finally  introduce a more realistic example used to predict soil moisture.
 
 Applications
 ------------
 
-One can use CREST to load/train/predict with the well-known :doc:`MNIST dataset <mnist_demo>` as well as with the :doc:`CIFAR-10 dataset <cifar_demo>`.
-
 .. toctree::
-   :hidden:
+   :maxdepth: 1
 
    HTG_overview
    HTG_algebra
-   HTG_keras
-   HTG_lambda
-   HTG_tofromJSON
-   batcher_demo
-   data_loader_demo
+   HTG_recurrent
    metrics_demo
-   archiver_demo
    mnist_demo
-   cifar_demo
