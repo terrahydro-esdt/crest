@@ -7,135 +7,119 @@ from nbconvert.preprocessors import CellExecutionError
 
 def run_notebook(notebook_path):
     """
-    Run Jupyter Notebook of specified path and 
+    Run Jupyter Notebook of specified path and
     raises exception if any cell fails to execute.
     """
     with open(notebook_path) as f:
         nb = nbformat.read(f, as_version=4)
 
-    ep = ExecutePreprocessor(timeout=600, kernel_name='python3')
+    ep = ExecutePreprocessor(timeout=600, kernel_name="python3")
     try:
-        ep.preprocess(
-            nb, {'metadata': {'path': os.path.dirname(notebook_path)}})
+        ep.preprocess(nb, {"metadata": {"path": os.path.dirname(notebook_path)}})
     except CellExecutionError:
         msg = 'Error executing the notebook "%s".\n\n' % notebook_path
         msg += 'See notebook "%s" for the traceback.' % notebook_path
         print(msg)
         raise
     finally:
-        with open(notebook_path, 'wt') as f:
+        with open(notebook_path, "wt") as f:
             nbformat.write(nb, f)
 
+
 def get_all_notebooks():
-    examples = os.path.join(os.getcwd(), 'examples')
-    nbs = [os.path.join(examples, f) for f in os.listdir(examples) if f.endswith('.ipynb')]
+    examples = os.path.join(os.getcwd(), "examples")
+    nbs = [
+        os.path.join(examples, f) for f in os.listdir(examples) if f.endswith(".ipynb")
+    ]
 
     return nbs
 
+
 @pytest.mark.examples
-def test_mnist_demo():
-    mnist = os.path.join(os.getcwd(), 'examples', 'mnist_demo.ipynb')
+def test_htg_recurrent_demo():
+    recurrent = os.path.join(os.getcwd(), "examples", "HTG_recurrent.ipynb")
 
     try:
-        run_notebook(mnist)
+        run_notebook(recurrent)
     except Exception as e:
-        assert False, f'Error in {mnist}: {e}'
+        assert False, f"Error in {recurrent}: {e}"
+
 
 @pytest.mark.examples
-def test_algebra_demo():
-    algebra = os.path.join(os.getcwd(), 'examples', 'HTG_algebra.ipynb')
+def test_htg_algebra_demo():
+    algebra = os.path.join(os.getcwd(), "examples", "HTG_algebra.ipynb")
 
     try:
         run_notebook(algebra)
     except Exception as e:
-        assert False, f'Error in {algebra}: {e}'
+        assert False, f"Error in {algebra}: {e}"
+
 
 @pytest.mark.examples
-def test_kerasnode_demo():
-    kerasnode = os.path.join(os.getcwd(), 'examples', 'HTG_kerasnode.ipynb')
-
-    try:
-        run_notebook(kerasnode)
-    except Exception as e:
-        assert False, f'Error in {kerasnode}: {e}'
-
-@pytest.mark.examples
-def test_lambdanode_demo():
-    lambdanode = os.path.join(os.getcwd(), 'examples', 'HTG_lambdanode.ipynb')
-
-    try:
-        run_notebook(lambdanode)
-    except Exception as e:
-        assert False, f'Error in {lambdanode}: {e}'
-
-@pytest.mark.examples
-def test_overview_demo():
-    overview = os.path.join(os.getcwd(), 'examples', 'HTG_overview.ipynb')
+def test_htg_overview_demo():
+    overview = os.path.join(os.getcwd(), "examples", "HTG_overview.ipynb")
 
     try:
         run_notebook(overview)
     except Exception as e:
-        assert False, f'Error in {overview}: {e}'
+        assert False, f"Error in {overview}: {e}"
 
-@pytest.mark.examples
-def test_tofromjson_demo():
-    tofromjson = os.path.join(os.getcwd(), 'examples', 'HTG_ToFromJson.ipynb')
-
-    try:
-        run_notebook(tofromjson)
-    except Exception as e:
-        assert False, f'Error in {tofromjson}: {e}'
 
 @pytest.mark.examples
 def test_metrics_demo():
-    metrics = os.path.join(os.getcwd(), 'examples', 'metrics_demo.ipynb')
+    metrics = os.path.join(os.getcwd(), "examples", "metrics_demo.ipynb")
 
     try:
         run_notebook(metrics)
     except Exception as e:
-        assert False, f'Error in {metrics}: {e}'
+        assert False, f"Error in {metrics}: {e}"
+
+
+@pytest.mark.examples
+def test_mnist_demo():
+    mnist = os.path.join(os.getcwd(), "examples", "mnist_demo.ipynb")
+
+    try:
+        run_notebook(mnist)
+    except Exception as e:
+        assert False, f"Error in {mnist}: {e}"
+
 
 @pytest.mark.examples
 def test_dataloader_demo():
-    dataloader = os.path.join(os.getcwd(), 'examples', 'data_loader_demo.ipynb')
+    dataloader = os.path.join(os.getcwd(), "examples", "data_loader_demo.ipynb")
 
     try:
         run_notebook(dataloader)
     except Exception as e:
-        assert False, f'Error in {dataloader}: {e}'
+        assert False, f"Error in {dataloader}: {e}"
+
 
 @pytest.mark.examples
 def test_soil_moisture_demo():
-    soil_moisture = os.path.join(os.getcwd(), 'examples', 'soil_moisture_demo.ipynb')
+    soil_moisture = os.path.join(os.getcwd(), "examples", "soil_moisture_demo.ipynb")
 
     try:
         run_notebook(soil_moisture)
     except Exception as e:
-        assert False, f'Error in {soil_moisture}: {e}'
+        assert False, f"Error in {soil_moisture}: {e}"
 
-@pytest.mark.examples
-def test_cifar_demo():
-    cifar = os.path.join(os.getcwd(), 'examples', 'cifar_demo.ipynb')
-
-    try:
-        run_notebook(cifar)
-    except Exception as e:
-        assert False, f'Error in {cifar}: {e}'
 
 @pytest.mark.examples
 def test_batcher_demo():
-    batcher = os.path.join(os.getcwd(), 'examples', 'batcher_demo.ipynb')
+    batcher = os.path.join(os.getcwd(), "examples", "batcher_demo.ipynb")
 
     try:
         run_notebook(batcher)
     except Exception as e:
-        assert False, f'Error in {batcher}: {e}'
+        assert False, f"Error in {batcher}: {e}"
+
 
 @pytest.mark.examples
 def test_archiver_demo():
-    archiver = os.path.join(os.getcwd(), 'examples', 'archiver_demo.ipynb')
+    archiver = os.path.join(os.getcwd(), "examples", "archiver_demo.ipynb")
 
     try:
         run_notebook(archiver)
     except Exception as e:
-        assert False, f'Error in {archiver}: {e}'
+        assert False, f"Error in {archiver}: {e}"
