@@ -140,8 +140,13 @@ def test_soil_moisture_model():
     check = loaded(X)
     assert any(tf.math.equal(check['SMAP>>soil_moisture'],result['SMAP>>soil_moisture']))
 
-    # Clean 
-    shutil.rmtree(ROOT_PATH)
+    # Clean up test files
+    files = ["sm.weights.h5", "soil_moisture.crest", "model.weights.h5"]
+    for filename in files:
+        file_path = Path(filename)
+        if file_path.is_file():
+            file_path.unlink()
+
 
 @pytest.mark.integtest
 def test_model():
