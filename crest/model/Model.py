@@ -1,4 +1,3 @@
-from __future__ import annotations
 import zipfile
 import base64
 import tempfile
@@ -50,8 +49,8 @@ class Model(BaseModel):
         # Allow for TensorSpec to be converted to Keras Input
         self.inputs = {}
         for k, v in self.graph.inputs.items():
-            if (not v is None):
-                if (isinstance(v, TensorSpec)):
+            if not v is None:
+                if isinstance(v, TensorSpec):
                     v = v.tf
                 # Compatibility with future TF versions
                 try:
@@ -255,11 +254,11 @@ class Model(BaseModel):
 
         """
 
-        if isinstance(x,Batcher):
-            x = iter(x)
-            y = None
+        if isinstance(x, Batcher):
+            with x as batcher:
+                return self.model.evaluate(iter(batcher), None, **kwargs)
 
-        return self.model.evaluate(x,y, **kwargs)
+        return self.model.evaluate(x, y, **kwargs)
     
     def get_weights(self):
         """ Returns a numpy array of the weights of the mdoel"""
@@ -309,10 +308,27 @@ class Model(BaseModel):
 
         # Create temporary directory and zip
         with tempfile.TemporaryDirectory() as temp_dir:
-           
-            # Convert to base64 and save htg and save
-            encode = {k : base64.b64encode(v).decode('utf-8') for k,v in self.graph.encode().items()}
-            encode = encode | {'crest_registry_name' : self.graph.registry_name}
+
+            # Convert to base64 and save htg. Also, handle HTG node encoding correctly
+            raw_encode = self.graph.encode()
+            raw_nodes = raw_encode.pop("nodes", None)  # None -> key absent
+            encode = {
+                k: base64.b64encode(v).decode("utf-8") for k, v in raw_encode.items()
+            }
+            if raw_nodes is not None:
+                encode["nodes"] = [
+                    {
+                        k: (
+                            base64.b64encode(v).decode("utf-8")
+                            if isinstance(v, bytes)
+                            else v
+                        )
+                        for k, v in node.items()
+                    }
+                    for node in raw_nodes
+                ]
+            encode["crest_registry_name"] = self.graph.registry_name
+
             with open("graph.json",'w') as f:
                 json.dump(encode,f)
            
@@ -361,12 +377,26 @@ class Model(BaseModel):
             with open("graph.json",'r') as f:
                 graph = json.load(f)
 
-            registry_name = graph.pop('crest_registry_name')
-            decode = {k : base64.b64decode(v) for k,v in graph.items()}
-            htg_obj =  HierarchalTensorGraph.registry[registry_name]
+            registry_name = graph.pop("crest_registry_name")
+            # Here we need to handle HTG node encoding correctly
+            raw_nodes = graph.pop("nodes", None)  # None -> key absent
+            decode = {k: base64.b64decode(v) for k, v in graph.items()}
+            if raw_nodes is not None:
+                decode["nodes"] = [
+                    {
+                        k: (
+                            base64.b64decode(v)
+                            if isinstance(v, str) and k != "crest_registry_name"
+                            else v
+                        )
+                        for k, v in node.items()
+                    }
+                    for node in raw_nodes
+                ]
+            htg_obj = HierarchalTensorGraph.registry[registry_name]
             htg = htg_obj.decode(decode)
             obj = cls(htg)
-            
+
             # Load weights
             obj.load_weights('model.weights.h5')
 
@@ -383,3 +413,4 @@ class Model(BaseModel):
             obj.compile(**compile_args)
 
             return obj
+
