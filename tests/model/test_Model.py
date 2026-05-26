@@ -140,8 +140,13 @@ def test_soil_moisture_model():
     check = loaded(X)
     assert any(tf.math.equal(check['SMAP>>soil_moisture'],result['SMAP>>soil_moisture']))
 
-    # Clean 
-    shutil.rmtree(ROOT_PATH)
+    # Clean up test files
+    files = ["sm.weights.h5", "soil_moisture.crest", "model.weights.h5"]
+    for filename in files:
+        file_path = Path(filename)
+        if file_path.is_file():
+            file_path.unlink()
+
 
 @pytest.mark.integtest
 def test_model():
@@ -303,3 +308,20 @@ def test_model_exhaust():
 
     assert np.array_equal(using_dict['y'], using_bs['y'])
     bp.close()
+
+def test_model_fit_tuple():
+    """Model.fit accepts a plain (x_dict, y_dict) numpy tuple without a Batcher."""
+    layer = Dense(1)
+    htg = Node(
+        node=lambda X: {"y": layer(X["x"])},
+        name="dense",
+        inputs={"x": TensorSpec(shape=[None, 1])},
+        outputs={"y": TensorSpec(shape=[None, 1])},
+    )
+    model = Model(htg)
+    model.compile(optimizer="adam", loss="mse")
+
+    x = np.random.rand(20, 1).astype("float32")
+    y = np.random.rand(20, 1).astype("float32")
+    model.fit(({"x": x}, {"y": y}), epochs=1, verbose=False)
+

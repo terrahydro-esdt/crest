@@ -50,8 +50,8 @@ class Model(BaseModel):
         # Allow for TensorSpec to be converted to Keras Input
         self.inputs = {}
         for k, v in self.graph.inputs.items():
-            if (not v is None):
-                if (isinstance(v, TensorSpec)):
+            if v is not None:
+                if isinstance(v, TensorSpec):
                     v = v.tf
                 # Compatibility with future TF versions
                 try:
@@ -60,10 +60,10 @@ class Model(BaseModel):
                     self.inputs[k] = Input(shape=v.shape[1:], dtype=v.dtype, name=k)
             else:
                 self.inputs[k] = None
-        
+
         self.outputs = self.graph(self.inputs)
         self.metrics = Metrics()
-        self._model = KerasModel(inputs=self.inputs,outputs=self.outputs)
+        self._model = KerasModel(inputs=self.inputs, outputs=self.outputs)
 
         # Explicitly set model output_names for correct logging labels
         if isinstance(self.outputs, dict):
@@ -73,16 +73,16 @@ class Model(BaseModel):
     def model(self):
         return self._model
 
-    def __call__(self,X):
-        """ 
-        
-        Call the model 
-        
+    def __call__(self, X):
+        """
+
+        Call the model
+
         Parameters
         ----------
 
         X : dictionary of tensors
-        
+
         """
         return self.model(X)
 
@@ -99,7 +99,7 @@ class Model(BaseModel):
             args passed as keras.Model.compile(kwargs)
 
         """
-        logger.debug(f'Compiling Keras Model')
+        logger.debug(f"Compiling Keras Model")
 
         self.model.compile(**kwargs)
 
@@ -108,7 +108,7 @@ class Model(BaseModel):
         if show_summary or no_trainable:
             self.model.summary(line_length=200)
         if no_trainable:
-            self.logger.warning('\nNo trainable parameters in model\n')
+            self.logger.warning("\nNo trainable parameters in model\n")
 
     def fit(self, data, **kwargs):
         """
@@ -124,17 +124,19 @@ class Model(BaseModel):
         accepted by keras.fit().
 
         """
-        logger.debug(f'Training Keras Model')
+        logger.debug(f"Training Keras Model")
 
-        if isinstance(data,Batcher):
-            with data as batcher, kwargs.get('validation_data', nullcontext()):
-                if 'validation_data' in kwargs:
-                    kwargs['validation_data'] = iter(kwargs['validation_data'])
+        if isinstance(data, Batcher):
+            with data as batcher, kwargs.get("validation_data", nullcontext()):
+                if "validation_data" in kwargs:
+                    kwargs["validation_data"] = iter(kwargs["validation_data"])
                 self.model.fit(iter(batcher), **kwargs)
+        elif isinstance(data, tuple):
+            self.model.fit(*data, **kwargs)
         else:
             self.model.fit(data, **kwargs)
 
-    def predict(self, dataset, coords: str | list =[], **kwargs) -> dict:
+    def predict(self, dataset, coords: str | list = [], **kwargs) -> dict:
         """
         Make predictions with the model.
 
@@ -154,7 +156,7 @@ class Model(BaseModel):
         accepted by Keras.predict().
 
         """
-        logger.debug(f'Predicting with Keras Model')
+        logger.debug(f"Predicting with Keras Model")
 
         # Check if exhaust is possible
         steps = None
@@ -163,36 +165,36 @@ class Model(BaseModel):
         if isinstance(coords, str):
             coords = [coords]
 
-        if(coords and not isinstance(dataset,Batcher)):
-            message = 'The arg coords can only be used when'\
-                      ' dataset is a crest.Batcher'
+        if coords and not isinstance(dataset, Batcher):
+            message = (
+                "The arg coords can only be used when" " dataset is a crest.Batcher"
+            )
             raise ValueError(message)
-        
+
         # Make prediction using Keras.predict()
-        if isinstance(dataset,Batcher):
+        if isinstance(dataset, Batcher):
             pred = []
             lbls = []
             steps = None
 
             # Get steps
-            if 'steps' in kwargs:
-                steps = kwargs.pop('steps')
-            
+            if "steps" in kwargs:
+                steps = kwargs.pop("steps")
+
             with dataset as data:
-                
+
                 if not steps:
                     steps = data
                     if dataset.repeat:
                         raise ImproperModelError(
-                                'When using a crest.Batcher you must. '\
-                                'specify steps if repeat == False'
-                                )
+                            "When using a crest.Batcher you must. "
+                            "specify steps if repeat == False"
+                        )
                 else:
-                    steps = itertools.islice(data,steps)
-
+                    steps = itertools.islice(data, steps)
 
                 for batch in steps:
-                    pred_batch = self.predict_on_batch(batch,coords,**kwargs)
+                    pred_batch = self.predict_on_batch(batch, coords, **kwargs)
                     if pred:
                         for key in pred_batch.keys():
                             pred[key] = np.concatenate([pred[key], pred_batch[key]])
@@ -200,7 +202,7 @@ class Model(BaseModel):
                         pred = pred_batch
             return pred
 
-        return self.model.predict(dataset,**kwargs)
+        return self.model.predict(dataset, **kwargs)
 
     def predict_on_batch(self, batch: dict, coords=[], **kwargs) -> dict:
         """
@@ -250,39 +252,39 @@ class Model(BaseModel):
 
         Parameters
         ----------
-      
+
         Evaulate wraps keras.evaluate(). See, Keras docs.
 
         """
 
-        if isinstance(x,Batcher):
-            x = iter(x)
-            y = None
+        if isinstance(x, Batcher):
+            with x as batcher:
+                return self.model.evaluate(iter(batcher), None, **kwargs)
 
-        return self.model.evaluate(x,y, **kwargs)
-    
+        return self.model.evaluate(x, y, **kwargs)
+
     def get_weights(self):
-        """ Returns a numpy array of the weights of the mdoel"""
+        """Returns a numpy array of the weights of the mdoel"""
         return self.model.get_weights()
-    
-    def set_weights(self,weights):
-        """ Returns a numpy array of the weights of the mdoel"""
+
+    def set_weights(self, weights):
+        """Returns a numpy array of the weights of the mdoel"""
         return self.model.set_weights(weights)
 
-    def save_weights(self,filepath, overwrite=True, max_shard_size=None):
-        """ Save the weights of the model """
+    def save_weights(self, filepath, overwrite=True, max_shard_size=None):
+        """Save the weights of the model"""
 
-        logger.debug(f'Saving weights')
-        self.model.save_weights(filepath,overwrite,max_shard_size)
+        logger.debug(f"Saving weights")
+        self.model.save_weights(filepath, overwrite, max_shard_size)
 
-    def load_weights(self,filepath,skip_mismatch=False, **kwargs):
-        """ Load the weights of the model """
+    def load_weights(self, filepath, skip_mismatch=False, **kwargs):
+        """Load the weights of the model"""
 
-        logger.debug(f'Load weights')
-        self.model.load_weights(filepath,skip_mismatch,**kwargs)
+        logger.debug(f"Load weights")
+        self.model.load_weights(filepath, skip_mismatch, **kwargs)
 
-    def save(self,filepath,overwrite=True):
-        """ 
+    def save(self, filepath, overwrite=True):
+        """
         Saves the crest model into a zipfile. This
         saves the:
 
@@ -299,85 +301,116 @@ class Model(BaseModel):
         ----------
 
          filepath : str or pahtlib.Path object where the model is saved.
-         
+
         """
 
-        logger.debug(f'Saving model')
+        logger.debug(f"Saving model")
 
-        if isinstance(filepath,str):
+        if isinstance(filepath, str):
             filepath = Path(filepath)
 
         # Create temporary directory and zip
         with tempfile.TemporaryDirectory() as temp_dir:
-           
-            # Convert to base64 and save htg and save
-            encode = {k : base64.b64encode(v).decode('utf-8') for k,v in self.graph.encode().items()}
-            encode = encode | {'crest_registry_name' : self.graph.registry_name}
-            with open("graph.json",'w') as f:
-                json.dump(encode,f)
-           
-            # Save weights 
-            self.save_weights('model.weights.h5')
 
-            # Save metrices 
-            with open("metrics.json",'w') as f:
-                json.dump(self.metrics.to_json(),f)
-           
+            # Convert to base64 and save htg. Also, handle HTG node encoding correctly
+            raw_encode = self.graph.encode()
+            raw_nodes = raw_encode.pop("nodes", None)  # None -> key absent
+            encode = {
+                k: base64.b64encode(v).decode("utf-8") for k, v in raw_encode.items()
+            }
+            if raw_nodes is not None:
+                encode["nodes"] = [
+                    {
+                        k: (
+                            base64.b64encode(v).decode("utf-8")
+                            if isinstance(v, bytes)
+                            else v
+                        )
+                        for k, v in node.items()
+                    }
+                    for node in raw_nodes
+                ]
+            encode["crest_registry_name"] = self.graph.registry_name
+
+            with open("graph.json", "w") as f:
+                json.dump(encode, f)
+
+            # Save weights
+            self.save_weights("model.weights.h5")
+
+            # Save metrices
+            with open("metrics.json", "w") as f:
+                json.dump(self.metrics.to_json(), f)
+
             # Save keras compile args
-            with open("compile_args.json",'w') as f:
-                json.dump(self.model.get_compile_config(),f)
-            
-            with zipfile.ZipFile(filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                zipf.write('graph.json')
-                zipf.write('model.weights.h5')
-                zipf.write('metrics.json')
-                zipf.write('compile_args.json')
+            with open("compile_args.json", "w") as f:
+                json.dump(self.model.get_compile_config(), f)
 
-    @classmethod 
-    def load(cls,filepath):
-        """ 
+            with zipfile.ZipFile(filepath, "w", zipfile.ZIP_DEFLATED) as zipf:
+                zipf.write("graph.json")
+                zipf.write("model.weights.h5")
+                zipf.write("metrics.json")
+                zipf.write("compile_args.json")
+
+    @classmethod
+    def load(cls, filepath):
+        """
         Loads a saved crest model.
 
         Parameters
         ----------
 
          filepath : str or pahtlib.Path of the saved model.
-         
+
         """
 
-        logger.debug(f'Saving model')
+        logger.debug(f"Saving model")
 
-        if isinstance(filepath,str):
+        if isinstance(filepath, str):
             filepath = Path(filepath)
 
         # Create temporary directory and zip
         with tempfile.TemporaryDirectory() as temp_dir:
 
             # Unzip file
-            with zipfile.ZipFile(filepath, 'r') as zip_ref:
+            with zipfile.ZipFile(filepath, "r") as zip_ref:
                 zip_ref.extractall(temp_dir)
-           
+
             # Load config and create Model
-            with open("graph.json",'r') as f:
+            with open("graph.json", "r") as f:
                 graph = json.load(f)
 
-            registry_name = graph.pop('crest_registry_name')
-            decode = {k : base64.b64decode(v) for k,v in graph.items()}
-            htg_obj =  HierarchalTensorGraph.registry[registry_name]
+            registry_name = graph.pop("crest_registry_name")
+            # Here we need to handle HTG node encoding correctly
+            raw_nodes = graph.pop("nodes", None)  # None -> key absent
+            decode = {k: base64.b64decode(v) for k, v in graph.items()}
+            if raw_nodes is not None:
+                decode["nodes"] = [
+                    {
+                        k: (
+                            base64.b64decode(v)
+                            if isinstance(v, str) and k != "crest_registry_name"
+                            else v
+                        )
+                        for k, v in node.items()
+                    }
+                    for node in raw_nodes
+                ]
+            htg_obj = HierarchalTensorGraph.registry[registry_name]
             htg = htg_obj.decode(decode)
             obj = cls(htg)
-            
-            # Load weights
-            obj.load_weights('model.weights.h5')
 
-            # Load metrices 
-            with open("metrics.json",'r') as f:
+            # Load weights
+            obj.load_weights("model.weights.h5")
+
+            # Load metrices
+            with open("metrics.json", "r") as f:
                 metrics = json.load(f)
 
             obj.metrics = Metrics.from_json(metrics)
-           
-           # Load keras compile args
-            with open("compile_args.json",'r') as f:
+
+            # Load keras compile args
+            with open("compile_args.json", "r") as f:
                 compile_args = json.load(f)
 
             obj.compile(**compile_args)
