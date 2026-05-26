@@ -42,8 +42,8 @@ single end-to-end example.
 .. _MNIST dataset: mnist_demo.nblink
 
 
-Applications
-------------
+Examples:
+---------
 
 .. toctree::
    :maxdepth: 1
