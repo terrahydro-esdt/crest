@@ -23,16 +23,16 @@ release = about["__version__"]
 # -- General configuration ---------------------------------------------------
 extensions = [
     "sphinx.ext.autosectionlabel",  # link from text to a heading using :ref:
-      "sphinx.ext.autodoc",  # autodocument
-      "sphinx.ext.napoleon",  # google and numpy doc string support
-      "sphinx.ext.mathjax",  # latex rendering of equations using MathJax
-      "myst_parser",
-      "sphinxcontrib.mermaid",
-      #"sphinx_autodoc_typehints",  # Disabled due to conflicts with mocked modules
-      "nbsphinx",  # for direct embedding of jupyter notebooks into sphinx docs
-      "nbsphinx_link",  # to be able to include notebooks from outside of the docs folder
-  ]
-    
+    "sphinx.ext.autodoc",  # autodocument
+    "sphinx.ext.napoleon",  # google and numpy doc string support
+    "sphinx.ext.mathjax",  # latex rendering of equations using MathJax
+    "myst_parser",
+    "sphinxcontrib.mermaid",
+    # "sphinx_autodoc_typehints",  # Disabled due to conflicts with mocked modules
+    "nbsphinx",  # for direct embedding of jupyter notebooks into sphinx docs
+    "nbsphinx_link",  # to be able to include notebooks from outside of the docs folder
+]
+
 autodoc_typehints = "description"
 autodoc_typehints_format = "short"
 typehints_use_signature = False
@@ -88,11 +88,11 @@ autodoc_mock_imports = [
     "shapely",
     "dill",
     "prettytable",
-    "_bruteforce",                  # compiled Cython extension (bare name)
-    "crest.utils._bruteforce",      # compiled Cython extension (qualified name)
+    "_bruteforce",  # compiled Cython extension (bare name)
+    "crest.utils._bruteforce",  # compiled Cython extension (qualified name)
 ]
-    
-  # -- Options for HTML output -------------------------------------------------
+
+# -- Options for HTML output -------------------------------------------------
 html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
 html_logo = "_static/img/temp_logo.png"

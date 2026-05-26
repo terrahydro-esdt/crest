@@ -1,10 +1,46 @@
-CREST Fundamentals
-==================
+CREST Examples
+==============
 
+The following examples introduce the main CREST components. We start by showing how
+to construct and use a `CREST HTG`_, then demonstrate how to perform basic
+`HTG computations`_.
 
-**CREST** is a modular machine learning pipeline framework engineered to process, train, and make predictions on high-dimensional **geospatial datasets**. It translates complex data processing blueprints into *Hierarchal Tensor Graphs* which act as workstation assembly lines, wrapping around frameworks like *TensorFlow* and *Keras*.  By partitioning gigantic datasets into aligned *blocks* and matching independent coordinate grids using high-performance *neighbor finder* algorithms, it streams optimized, balanced batches straight to model training loops and archives predictions cleanly to disk.
+.. _CREST HTG: HTG_overview.nblink
 
-These examples introduce the Hierarchal Tensor Graph (HTG), which is the core object in CREST where the Earth System Model (ESM) is encoded and specified, and the Batcher, which is the engine that executes the HTG and feeds data to the model training loop. We also use CREST to load/train/predict with the well-known :doc:`MNIST dataset <mnist_demo>` and finally  introduce a more realistic example used to predict soil moisture.
+.. _HTG computations: HTG_algebra.nblink
+
+CREST also supports `recurrent HTGs`_, in which a Node is unrolled across a fixed
+number of time steps. This enables sequence modeling and temporal architectures
+while staying entirely within the HTG composition model.
+
+.. _recurrent HTGs: HTG_recurrent.nblink
+
+Large geospatial datasets rarely fit in memory all at once. The `batcher demo`_
+shows how CREST partitions data into aligned Blocks and streams balanced
+mini-batches to the training loop. The `data loader demo`_ covers loading data
+from single or multiple sources using the Dataset and StructuredDataset classes.
+
+.. _batcher demo: batcher_demo.nblink
+
+.. _data loader demo: data_loader_demo.nblink
+
+Metrics are quantitative measures that help evaluate model effectiveness and
+reliability. The `CREST metrics`_ demo shows how to compute and log them during
+training and evaluation.
+
+.. _CREST metrics: metrics_demo.nblink
+
+The `Archiver`_ class inserts model predictions into an xarray Dataset at the
+correct coordinates and writes the results to disk.
+
+.. _Archiver: archiver_demo.nblink
+
+Finally, we use CREST to load, train, and predict with the well-known
+`MNIST dataset`_, bringing the HTG model layer and data pipeline together in a
+single end-to-end example.
+
+.. _MNIST dataset: mnist_demo.nblink
+
 
 Applications
 ------------
@@ -15,5 +51,8 @@ Applications
    HTG_overview
    HTG_algebra
    HTG_recurrent
+   batcher_demo
+   data_loader_demo
    metrics_demo
+   archiver_demo
    mnist_demo

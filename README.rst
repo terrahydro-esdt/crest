@@ -95,25 +95,35 @@ Your First Model
 
 .. code-block:: python
 
-   import tensorflow as tf
    from crest.model import HierarchalTensorGraph, Node, TensorSpec, Model
 
-   # Define input specifications
-   inputs = {
-       'precipitation': TensorSpec(shape=(None, 100), dtype=tf.float32),
-       'temperature':   TensorSpec(shape=(None, 100), dtype=tf.float32),
-   }
+   # Node callables must accept a dict of tensors and return a dict of tensors.
+   # TensorSpec takes positional args: TensorSpec(shape, dtype).
+   def compute_pet(X):
+       return {'pet': 0.5 * X['temperature'] + 2.0}
 
-   # Create a hierarchical tensor graph
-   htg = HierarchalTensorGraph(name='soil_moisture_model', inputs=inputs)
+   # Define the node with explicit I/O specs
+   pet_node = Node(
+       node=compute_pet,
+       inputs={'temperature': TensorSpec((None, 100), 'float32')},
+       outputs={'pet': TensorSpec((None, 100), 'float32')},
+       name='pet'  # potential evapotranspiration
+   )
 
-   # Add a physics-based component
-   def compute_pet(temperature):
-       return 0.5 * temperature + 2.0
-
-   htg.add_node(Node(compute_pet, name='pet'))
+   # Wire the node into the graph with add_edge.
+   # 'input' and 'output' are the HTG's external interface.
+   htg = HierarchalTensorGraph(name='soil_moisture_model')
+   htg.add_edge('input', pet_node)
+   htg.add_edge(pet_node, 'output')
 
    # Build and train
+   # training_data is a (inputs_dict, targets_dict) tuple matched to the HTG's I/O keys
+   import numpy as np
+   training_data = (
+       {'temperature': np.random.rand(200, 100).astype('float32')},
+       {'pet':         np.random.rand(200, 100).astype('float32')},
+   )
+
    model = Model(htg)
    model.compile(optimizer='adam', loss='mse')
    model.fit(training_data, epochs=10)
