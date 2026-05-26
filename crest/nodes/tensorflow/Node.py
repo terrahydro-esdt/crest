@@ -627,3 +627,4 @@ def loss_wrapper(
                 image('image', y1, y2, y1_label=k1, y2_label=k2)
 
     return calculate_loss
+

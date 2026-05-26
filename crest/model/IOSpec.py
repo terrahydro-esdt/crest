@@ -9,36 +9,38 @@ import dill
 
 class IOSpec(UserDict):
     """
-   IOSpec is a managed dictionary that defines 
-   a collection of specs for a set of keys. It
-   can generate the inputs/outputs dictionary of keys : TensorSpecs()
-   using IOSpec.spec, and can be used to create data sets using
-   crest.Dataset.from_specs(). Elements in IOSpec
-   are of the form:
+    IOSpec is a managed dictionary that defines
+    a collection of specs for a set of keys. It
+    can generate the inputs/outputs dictionary of keys : TensorSpecs()
+    using IOSpec.spec, and can be used to create data sets using
+    crest.Dataset.from_specs(). Elements in IOSpec
+    are of the form::
 
-   {str(label) : {'keys' : list[str],
-                  'labeled' : bool,
-                  'coord_shapes': dict[str,dict[str, Collection[int] | int | None]],
-                  'dtype' : 'float32'
-                }
-            }
+        {str(label) : {'keys' : list[str],
+                       'labeled' : bool,
+                       'coord_shapes': dict[str,dict[str, Collection[int] | int | None]],
+                       'dtype' : 'float32'
+                      }
+        }
 
-    'labeled' = whether to add label to the keys
+    'labeled' = whether to add label to the keys.
     'coord_shapes' = specification of coords and window extents. If only
-     one coord_shape is given, it is applied to all keys.
+    one coord_shape is given, it is applied to all keys.
 
-     IOSpec can be initialized with a dictionary of specs or elements can
-     be added as:  IOSpec[label] = {'keys' : list[str],
-                  'labeled' : bool,
-                  'coord_shapes': dict[str,dict[str, Collection[int] | int | None]],
-                  'dtype' : str | dict
-                }
+    IOSpec can be initialized with a dictionary of specs or elements can
+    be added as::
+
+        IOSpec[label] = {'keys' : list[str],
+                         'labeled' : bool,
+                         'coord_shapes': dict[str,dict[str, Collection[int] | int | None]],
+                         'dtype' : str | dict
+                        }
 
     Parameters
     ----------
 
     io : optional, dictionary of IOSpec elements following the above format.
-    
+
     """
 
     def __init__(self,io = None):

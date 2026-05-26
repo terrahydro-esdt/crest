@@ -250,17 +250,20 @@ class RegionalMaskGenerator():
             raise e
 
     def get_extent(self):
-        """ Generate the extent of the mask in terms of the latitude and longitude 
+        """Generate the extent of the mask in terms of the latitude and longitude
         coordinates.
 
         Returns
         -------
         dict
-            A dictionary with the keys 'latitude' and 'longitude', each containing a list of the minimum and maximum values for the respective coordinate. For example: 
-            {
-                'latitude': [min_lat, max_lat],
-                'longitude': [min_lon, max_lon]
-            }
+            A dictionary with the keys 'latitude' and 'longitude', each containing a
+            list of the minimum and maximum values for the respective coordinate.
+            For example::
+
+                {
+                    'latitude': [min_lat, max_lat],
+                    'longitude': [min_lon, max_lon]
+                }
         """
         if self.mask is None:
             raise ValueError('Mask needs to be initialized to get extent of the mask.')

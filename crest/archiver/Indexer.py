@@ -71,3 +71,4 @@ class Indexer:
                         f'{self.coords[index][i]} != {typed[i]}\n' +
                         f'{self.coords.dtype=} vs {coords.dtype=}: {coords[i]}')
         return index.astype(np.int64)
+

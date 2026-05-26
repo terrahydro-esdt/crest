@@ -23,37 +23,33 @@ from crest.utils.matchup.bruteforce.utils.entropy import entropy
 
 
 def full_resolutions(coordinates: np.ndarray, resolutions: np.ndarray):
-    """ Resolutions expanded into their full generic representation.
+    """Resolutions expanded into their full generic representation.
 
     The general format for resolutions is to have two resolution vectors
     for each coordinate vector: one for the left (lower) bound, and one
     for the right (upper) coordinate bound.
-    
+
     There are three cases that must be handled:
-    1. self.resolutions.ndim == 1
-        This is a uniform resolution (i.e. all points use the same
-        resolution vector), and so we can simply duplicate the left/right
-        side and have a singleton dimension for the coordinate rows. For
-        example, given data with 3 dimensions, we would have resolutions
-        shape=(3,), which we tile and return a shape of (2, 1, 3).
-    2. self.resolutions.ndim == 2
-        This is a non-uniform resolution (i.e. all points use a different
-        resolution vector), and so we only need to shift this left/right
-        by one element to create the lower/upper bounds.
-    3. self.resolutions.ndim == 3 
-        This is an anisotropic resolution, where the left/right bounds
-        for each coordinate row aren't necessarily the same coming from
-        different directions. For example, given the following situation:
-            - point A matches point X if (A-A_left <= X <= A+A_right)
-            - point B matches point X if (B-B_left <= X <= B+B_right)
-            - point B is the direct neighbor of point A to the right
-        With a non-uniform resolution, A_right == B_left, since resolutions
-        can change per point, but are only shifted left or right by one. In
-        contrast, for the anisotropic case, we can have A_right != B_left,
-        such that neighboring points can have overlapping regions in which
-        they would match a point (or equivalently, regions between them for
-        which neither point would match).
-    
+
+    1. ``resolutions.ndim == 1`` — uniform resolution: all points share the same
+       resolution vector. We duplicate it for the left/right bounds and use a
+       singleton coordinate dimension, returning shape ``(2, 1, n_dims)``.
+
+    2. ``resolutions.ndim == 2`` — non-uniform resolution: each point has a
+       different resolution vector. We shift left/right by one element to form
+       the lower/upper bounds.
+
+    3. ``resolutions.ndim == 3`` — anisotropic resolution: the left and right
+       bounds for each coordinate row are independent. For example::
+
+           - point A matches X if (A - A_left <= X <= A + A_right)
+           - point B matches X if (B - B_left <= X <= B + B_right)
+           - point B is the direct neighbor of A to the right
+
+       With non-uniform resolution ``A_right == B_left``; in the anisotropic
+       case ``A_right != B_left``, allowing overlapping or gapped match regions
+       between neighboring points.
+
     Returns
     -------
     np.ndarray
@@ -62,7 +58,7 @@ def full_resolutions(coordinates: np.ndarray, resolutions: np.ndarray):
         represents the left/right bounds; the second dimension is
         the resolution for each coordinate row (duplicated as 1 if
         using a uniform resolution); and the third dimension is the
-        same as the number of coordinate dimensions. 
+        same as the number of coordinate dimensions.
 
     """
     r_shape = resolutions.shape 
@@ -470,15 +466,15 @@ def find_neighbors2(
     axis_labels : Collection[str] | None = None,
     **kwargs,
 ) -> (np.ndarray, np.ndarray):
-    """ Find all nearest neighbors for the given coordinates.
+    """Find all nearest neighbors for the given coordinates.
 
     Notes
     -----
-    Ordinarily, finding nearest neighbors for multiple sets of coordinate 
+    Ordinarily, finding nearest neighbors for multiple sets of coordinate
     grids would have combinatorial time complexity. This function implements
-    a variety of methods which are able to utilize structural information 
-    inherent to the grids, in order to reduce the time complexity to 
-    O(K*Dlog(N)); where K is the number of grids, D is the dimensionality 
+    a variety of methods which are able to utilize structural information
+    inherent to the grids, in order to reduce the time complexity to
+    O(K*Dlog(N)); where K is the number of grids, D is the dimensionality
     of the grids, and N is the size of the grids. By default, neighbor
     distances are calculated based on the L-infinity norm, with the given
     radius used as a fraction of the grids' coordinate resolution (e.g.
@@ -497,8 +493,8 @@ def find_neighbors2(
         For the `brute` method, resolutions can be a 3d matrix of shape
         (N, D, 2) - which represents the number of coordinate grids, the
         dimensionality, and the left and right hand resolution, respectively.
-        This allows non-uniform coordinate spacing, including anisotropic 
-        coordinate systems. 
+        This allows non-uniform coordinate spacing, including anisotropic
+        coordinate systems.
     radius      : float
         Radius within which points are considered neighbors of a reference point
         (with radius indicating a fraction of the resolution).
@@ -507,53 +503,53 @@ def find_neighbors2(
 
         - brute (default)
             Brute force neighbor search which exploits monotonically increasing
-            coordinate grids. Note that coordinates passed in *must* be 
-            lexicographically sorted within each grid's coordinates, but 
-            generally in CREST this comes for free where finding neighbors 
-            happens. This brute force approach is the only implemented method 
+            coordinate grids. Note that coordinates passed in *must* be
+            lexicographically sorted within each grid's coordinates, but
+            generally in CREST this comes for free where finding neighbors
+            happens. This brute force approach is the only implemented method
             which allows grids with non-uniform spacing (rectilinear grids, as
-            well as anisotropic coordinate systems) to be accurately matched. 
-            It should also be at least on par with the speed of other comparable 
-            methods, if not faster - esp. when more grids and/or number of 
+            well as anisotropic coordinate systems) to be accurately matched.
+            It should also be at least on par with the speed of other comparable
+            methods, if not faster - esp. when more grids and/or number of
             dimensions are used. Further (relatively significant) optimizations
-            could be made to the method as well, if warranted. Only allows 
-            L-infinity norm to be used in checking neighbor distances. 
+            could be made to the method as well, if warranted. Only allows
+            L-infinity norm to be used in checking neighbor distances.
         - tree
             Iteratively build up the matches by combining grids together and
-            extending the coordinate dimensionality. A KDTree is constructed 
+            extending the coordinate dimensionality. A KDTree is constructed
             on each iteration, with the output of one tree being fed into the
             next such that the coordinates are combined together. This method
             provides simultaneous grid matching, and can sometimes be faster
-            than `brute` if coordinates are regular grids (uniform spacing). 
+            than `brute` if coordinates are regular grids (uniform spacing).
         - polars
             Use a table inner join to find matches. Slower than using a single
             anchor, but ensures any returned matches are simultaneously matched
-            across all grids; i.e. [i,j,k] implies A[i] == B[j] == C[k]. Note 
-            that order of returned matches can sometimes vary. 
+            across all grids; i.e. [i,j,k] implies A[i] == B[j] == C[k]. Note
+            that order of returned matches can sometimes vary.
         - pandas
             Same as `polars`, but uses the pandas library instead of polars.
             In general, `polars` should be preferred since it will produce
-            the same result but operate faster than using `pandas`. 
+            the same result but operate faster than using `pandas`.
         - anchor
-            Builds N-1 BallTrees and queries each of them using a reference 
-            coordinate set (where N=len(coordinates)). The reference 
-            coordinate set is the first index in the given collection of 
-            coordinates. Generally much faster than methods which ensure 
-            matches are simultaneous across all grids, but also returns 
-            many matches which may not be considered actual neighbors; 
-            i.e. [i,j,k] implies A[i] == B[j] and A[i] == C[k], but not 
+            Builds N-1 BallTrees and queries each of them using a reference
+            coordinate set (where N=len(coordinates)). The reference
+            coordinate set is the first index in the given collection of
+            coordinates. Generally much faster than methods which ensure
+            matches are simultaneous across all grids, but also returns
+            many matches which may not be considered actual neighbors;
+            i.e. [i,j,k] implies A[i] == B[j] and A[i] == C[k], but not
             necessarily B[j] == C[k].
 
     allow_empty : bool
         Whether to allow empty neighbor sets in the results (i.e. all reference
         points are returned, regardless of if there are any neighbors). By
-        default, only reference points which have at least one neighbor in 
-        all other coordinate sets are returned. Note that this option is only 
+        default, only reference points which have at least one neighbor in
+        all other coordinate sets are returned. Note that this option is only
         available when `use_anchor=True`; otherwise has no effect.
     use_implode : bool
         Condense matches into nested lists rather than returning a flattened
         representation. Takes slightly longer to run, but can significantly
-        reduce memory requirements in some cases. See the `implode` method 
+        reduce memory requirements in some cases. See the `implode` method
         for further details.
     shuffle : bool
         If True, shuffle the table before returning (only applicable for
@@ -568,12 +564,12 @@ def find_neighbors2(
     (np.ndarray, np.ndarray)
         A tuple of two arrays: neighbor indices, and neighbor counts.
         Both arrays are shaped [len(coordinates), len(coordinates[0])],
-        but neighbor indices (first array) is a ragged object array where 
+        but neighbor indices (first array) is a ragged object array where
         each element is itself a variable length array::
 
-          [ 
-             array(ref grid indices) 
-             array([grid 2 indices matching ref grid indices[0]], 
+          [
+             array(ref grid indices)
+             array([grid 2 indices matching ref grid indices[0]],
                    [grid 2 indices matching ref grid indices[1]],
                    [...])
              array([grid 3 indices matching ref grid indices[0]],
@@ -581,24 +577,24 @@ def find_neighbors2(
                    [...])
           ]
 
-        For example, indices equal to 
+        For example, indices equal to
 
             [ [[1], [2]],  [[0, 1], [2]],  [[2], [4,5]] ]
-        
+
         would indicate:
-        
+
         - ref_grid[1] matches [grid_2[0], grid_2[1]] and [grid_3[2]]
         - ref_grid[2] matches [grid_2[2]] and [grid_3[4], grid_3[5]]
-        
-        Counts (the second array output) is then the length (number of 
+
+        Counts (the second array output) is then the length (number of
         matches) for each coordinate grid neighbor set, i.e. the length
         of each nested ragged array. Using the above example, counts would
         correspond to::
-        
+
             [[1, 1], [2, 1], [1, 2]]
-        
-        as the matches for the ref grid have lengths 1 and 1; for grid_2 
-        have lengths 2 and 1; and for grid_3 have lengths 1 and 2. 
+
+        as the matches for the ref grid have lengths 1 and 1; for grid_2
+        have lengths 2 and 1; and for grid_3 have lengths 1 and 2.
 
     """
     # import pickle as pkl

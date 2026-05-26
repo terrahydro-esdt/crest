@@ -1,9 +1,8 @@
 """
-
 This snippet contains functions that enable starting an interactive console
 anywhere in a python execution path. Users can simply call `interactive()`
 where they want the console to start, and all local and global variables
-from that context will be available within the console session. 
+from that context will be available within the console session.
 
 In addition, the `interactive_exceptions` decorator can be used to decorate
 any function, in order to enable starting an interactive console session if
@@ -11,36 +10,37 @@ and when an exception is raised by the decorated function. The console will
 start where the exception was raised, thus allowing users to easily debug.
 
 Contents summary:
-    - interactive_exceptions (function: Callable)
-        Decorator that catches any exception that occurs in the decorated
-        function, and starts a console session at the location where the
-        exception was raised (to enable direct interactive debugging).
 
-    - interactive (environment: dict={}, n_prior_frames: int=0, frame=None)
-        Function that can be called anywhere, which will start a console
-        that has access to all local and global variables where called.
-    
-    - get_highlighter (style_name: str = 'monokai')
-        Function that returns a function which applies syntax highlighting
-        to any string given as input (if pygments is installed).
+- ``interactive_exceptions(function: Callable)`` —
+  Decorator that catches any exception that occurs in the decorated
+  function, and starts a console session at the location where the
+  exception was raised (to enable direct interactive debugging).
 
-    - get_call_frame (n_prior_frames: int = 0):
-        Function that returns a frame object relative to where it's called.
-    
-    - get_frame_vars (frame: PyFrameObject)
-        Function that returns a frame's local and global variables.
+- ``interactive(environment: dict={}, n_prior_frames: int=0, frame=None)`` —
+  Function that can be called anywhere, which will start a console
+  that has access to all local and global variables where called.
 
-    - get_source_code (frame: PyFrameObject, n_lines: int = 20)
-        Function that returns a frame's source code context as a string.
-    
-    - InteractiveConsole
-        Class which patches various issues with `code.InteractiveConsole`,
-        and adds some nice features to the console functionality.
+- ``get_highlighter(style_name: str = 'monokai')`` —
+  Function that returns a function which applies syntax highlighting
+  to any string given as input (if pygments is installed).
+
+- ``get_call_frame(n_prior_frames: int = 0)`` —
+  Function that returns a frame object relative to where it's called.
+
+- ``get_frame_vars(frame: PyFrameObject)`` —
+  Function that returns a frame's local and global variables.
+
+- ``get_source_code(frame: PyFrameObject, n_lines: int = 20)`` —
+  Function that returns a frame's source code context as a string.
+
+- ``InteractiveConsole`` —
+  Class which patches various issues with ``code.InteractiveConsole``,
+  and adds some nice features to the console functionality.
 
 See docstrings for more details.
 
 """
-    
+
 from collections.abc import Callable
 from functools import partial, wraps
 from itertools import takewhile
@@ -370,16 +370,16 @@ def get_source_code(
 
 class InteractiveConsole(code.InteractiveConsole):
     """ Fixes various issues with parent class, and adds functionality.
-
+    
     Notes
     -----
     If available, the readline and rlcompleter libraries are used to allow:
-    - previous console command history
-    - using tab to complete variable names
-    - using tab to print object attrs/functions (e.g. obj.<tab>)
-    - restoring history to the same place after executing previous command,
-      so multiple commands can be executed without needing to scroll back
-      for each. Note: Windows only, due to pyreadline3 dependency
+      - previous console command history
+      - using tab to complete variable names
+      - using tab to print object attrs/functions (e.g. obj.<tab>)
+      - restoring history to the same place after executing previous command,
+        so multiple commands can be executed without needing to scroll back
+        for each. Note: Windows only, due to pyreadline3 dependency
 
     References
     ----------
