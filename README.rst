@@ -84,7 +84,7 @@ Choose the environment file that matches your platform:
 
 .. code-block:: bash
 
-   git clone https://github.com/terrahydro/crest.git   # TODO: confirm URL at release
+   git clone https://gitlab.smce.nasa.gov/astg/terrahydro/development/crest   # TODO: change URL at release
    cd crest
    conda env create -f cicd/environment_macos_arm64.yaml   # adjust for your platform
    conda activate OCETRA_cpu
@@ -133,12 +133,12 @@ See the `examples/ <examples/>`_ directory for full worked notebooks.
 Documentation
 -------------
 
-Full documentation: https://crest.readthedocs.io/
+.. TODO: change URL at release
+Full documentation: https://astg.pages.smce.nasa.gov/terrahydro/development/crest  
 
-- `Installation Guide <https://crest.readthedocs.io/en/latest/installation.html>`_
-- `Tutorials <https://crest.readthedocs.io/en/latest/tutorials/>`_
-- `API Reference <https://crest.readthedocs.io/en/latest/api/>`_
-- `Example Notebooks <https://crest.readthedocs.io/en/latest/examples/>`_
+- `Installation Guide <https://astg.pages.smce.nasa.gov/terrahydro/development/crest/quickstart.html>`_
+- `Example Notebooks <https://astg.pages.smce.nasa.gov/terrahydro/development/crest/examples/index.html>`_
+- `API Reference <https://astg.pages.smce.nasa.gov/terrahydro/development/crest/api/index.html>`_
 
 Architecture
 ------------
@@ -148,26 +148,34 @@ CREST follows a modular, layered architecture:
 .. code-block:: text
 
    ┌─────────────────────────────────────────────────┐
-   │           Application Layer                      │
-   │  (User Models, Workflows, Experiments)           │
+   │               Application Layer                 │
+   │       (User Models, Workflows, Experiments)     │
    └─────────────────────────────────────────────────┘
-                        ↓
+                          ↓
    ┌─────────────────────────────────────────────────┐
-   │         Model Layer (HTG)                        │
-   │  ┌──────────┐  ┌──────────┐  ┌──────────┐      │
-   │  │  Lambda  │  │  Keras   │  │ Recurrent│      │
-   │  │   Node   │  │   Node   │  │   Node   │      │
-   │  └──────────┘  └──────────┘  └──────────┘      │
+   │                  Model Layer                    │
+   │       HierarchalTensorGraph (HTG) · Model       │
+   │  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │
+   │  │   Node   │  │Recurrent │  │ Prebuilt TF  │   │
+   │  │(callable)│  │   Node   │  │Nodes (LSTM…) │   │
+   │  └──────────┘  └──────────┘  └──────────────┘   │
    └─────────────────────────────────────────────────┘
-                        ↓
+                          ↓
    ┌─────────────────────────────────────────────────┐
-   │         Data Layer                               │
-   │  Dataset → Batcher → Transforms                  │
+   │                  Engine Layer                   │
+   │      ModelEngine · DataServer · Archiver        │
+   │   (training/inference orchestration and output) │
    └─────────────────────────────────────────────────┘
-                        ↓
+                          ↓
+   ┌──────────────────────────────────────────────────┐
+   │                   Data Layer                     │
+   │   Dataset · Block · Blockset · StructuredDataset │
+   │         Batcher · MultiBatcher · Transform       │
+   └──────────────────────────────────────────────────┘
+                          ↓
    ┌─────────────────────────────────────────────────┐
-   │         Storage Layer                            │
-   │  Zarr | TileDB | NetCDF | Xarray                │
+   │                 Storage Layer                   │
+   │               Zarr | TileDB | NetCDF            │
    └─────────────────────────────────────────────────┘
 
 Contributing
