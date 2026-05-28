@@ -1,4 +1,5 @@
 import os
+import tempfile
 import pytest
 import nbformat
 from nbconvert.preprocessors import ExecutePreprocessor
@@ -9,6 +10,7 @@ def run_notebook(notebook_path):
     """
     Run Jupyter Notebook of specified path and
     raises exception if any cell fails to execute.
+    Output is written to a temporary file; the source notebook is never modified.
     """
     with open(notebook_path) as f:
         nb = nbformat.read(f, as_version=4)
@@ -22,7 +24,10 @@ def run_notebook(notebook_path):
         print(msg)
         raise
     finally:
-        with open(notebook_path, "wt") as f:
+        suffix = "_" + os.path.basename(notebook_path)
+        with tempfile.NamedTemporaryFile(
+            mode="wt", suffix=suffix, dir=tempfile.gettempdir(), delete=False
+        ) as f:
             nbformat.write(nb, f)
 
 
