@@ -332,8 +332,8 @@ git merge --no-ff my_feature
 # Build docs locally (see your changes)
 cd docs/ && make html && open _build/html/index.html
 
-# Test notebooks work
-pytest examples/your_notebook.py -v
+# Test that notebooks work
+pytest tests/examples/test_nbs.py --examples -v
 
 # Test documentation examples You need to use run_doctest.py):
 # For example:
@@ -388,9 +388,9 @@ from crest.graph import GraphBuilder
 
 ### Look at these for "inspiration"
 
-- `crest/model/Model.py` - Class documentation
+- `crest/model/HierarchalTensorGraph.py` - Class documentation
 - `crest/utils/Metrics.py` - Function documentation
-- `examples/soil_moisture_demo.ipynb` - Notebook structure
+- `examples/metrics.ipynb` - Notebook structure
 
 ## FAQ
 
