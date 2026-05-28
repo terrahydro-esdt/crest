@@ -93,9 +93,10 @@ autodoc_mock_imports = [
 ]
 
 # -- Options for HTML output -------------------------------------------------
-html_theme = "sphinx_rtd_theme"
+html_theme = "pydata_sphinx_theme"
 html_static_path = ["_static"]
-html_logo = "_static/img/temp_logo.png"
+html_logo = "_static/crest_logo.svg"
+html_favicon = "_static/crest_icon.svg"
 
 # -- Napoleon autodoc options -------------------------------------------------
 napoleon_numpy_docstring = True

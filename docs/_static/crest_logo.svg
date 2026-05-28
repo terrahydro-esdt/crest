@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 100" width="420" height="100" role="img" aria-label="CREST logo">
+  <title>CREST — Coupled Reusable Earth System Tensor Framework</title>
+
+  <defs>
+    <linearGradient id="circBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop class="bg-start" offset="0%"/>
+      <stop class="bg-end"   offset="100%"/>
+    </linearGradient>
+    <clipPath id="iconClip">
+      <circle cx="50" cy="50" r="41"/>
+    </clipPath>
+  </defs>
+
+  <style>
+    /* ── Light mode (default) ── */
+    .bg-start  { stop-color: #EBF5FB; }
+    .bg-end    { stop-color: #E6F9F0; }
+    .cross-edge { stroke: #7BB8DC; }
+    .wordmark  { fill: #0D1F2D; }
+
+    /* ── Dark mode ── */
+    @media (prefers-color-scheme: dark) {
+      .bg-start  { stop-color: #0F2035; }
+      .bg-end    { stop-color: #0B2118; }
+      .cross-edge { stroke: #4A8FB8; }
+      .wordmark  { fill: #E8F4FD; }
+    }
+  </style>
+
+  <!-- ── Icon ── -->
+  <circle cx="50" cy="50" r="42" fill="url(#circBg)" stroke="#1B6CA8" stroke-width="2.2"/>
+  <circle cx="50" cy="50" r="42" fill="none" stroke="#2A9D5C" stroke-width="2.2"
+          stroke-dasharray="66 264" stroke-dashoffset="-66"/>
+
+  <g clip-path="url(#iconClip)">
+    <!-- L1 → L2 edges -->
+    <line x1="50" y1="22" x2="30" y2="43" stroke="#4A90C4" stroke-width="2"   stroke-linecap="round"/>
+    <line x1="50" y1="22" x2="70" y2="43" stroke="#4A90C4" stroke-width="2"   stroke-linecap="round"/>
+    <!-- cross-connection (dashed) -->
+    <line class="cross-edge" x1="36" y1="44" x2="64" y2="44" stroke-width="1.2" stroke-dasharray="3 2.5"/>
+    <!-- L2 → L3 edges -->
+    <line x1="30" y1="50" x2="18" y2="70" stroke="#3DBE76" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="30" y1="50" x2="42" y2="73" stroke="#3DBE76" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="70" y1="50" x2="58" y2="73" stroke="#3DBE76" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="70" y1="50" x2="82" y2="70" stroke="#3DBE76" stroke-width="1.8" stroke-linecap="round"/>
+
+    <!-- Apex — amber/gold -->
+    <circle cx="50" cy="15" r="7"   fill="#F5A623" stroke="#C8841C" stroke-width="1.5"/>
+    <!-- L2 — ocean blue -->
+    <circle cx="30" cy="44" r="5.5" fill="#1B6CA8" stroke="#155990" stroke-width="1.5"/>
+    <circle cx="70" cy="44" r="5.5" fill="#1B6CA8" stroke="#155990" stroke-width="1.5"/>
+    <!-- L3 — earth green -->
+    <circle cx="18" cy="72" r="4.5" fill="#2A9D5C" stroke="#1E7A45" stroke-width="1.5"/>
+    <circle cx="42" cy="76" r="4.5" fill="#2A9D5C" stroke="#1E7A45" stroke-width="1.5"/>
+    <circle cx="58" cy="76" r="4.5" fill="#2A9D5C" stroke="#1E7A45" stroke-width="1.5"/>
+    <circle cx="82" cy="72" r="4.5" fill="#2A9D5C" stroke="#1E7A45" stroke-width="1.5"/>
+  </g>
+
+  <!-- ── Wordmark ── -->
+  <text class="wordmark" x="108" y="64"
+        font-family="'Futura', 'Futura PT', 'Century Gothic', 'Trebuchet MS', Arial, sans-serif"
+        font-size="50" font-weight="700" letter-spacing="4">CREST</text>
+</svg>

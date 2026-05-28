@@ -75,6 +75,7 @@ dependencies:
   - sphinx
   - sphinx-autodoc-typehints
   - sphinx_rtd_theme
+  - pydata-sphinx-theme
   - sphinxcontrib-mermaid
 
   - pip:
