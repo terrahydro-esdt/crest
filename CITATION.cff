@@ -5,7 +5,7 @@ abstract: "The CREST framework provides a graph-based modeling framework built o
 authors:
   - family-names: "Pelissier"
     given-names: "Craig"
-    affiliation: "TerraHydro"
+    affiliation: "SSAI Inc and NASA GSFC "
   - name: "CREST Development Team"
 doi: 10.5281/zenodo.20293610  
 type: software
