@@ -83,10 +83,3 @@ dependencies:
       - crick
       # msgraph-sdk is not on conda-forge
       - msgraph-sdk
-      # web (optional — not needed for docs/tests)
-      - titiler
-      - titiler-application
-      - titiler-core
-      - titiler-extensions
-      - titiler-mosaic
-      - titiler-xarray

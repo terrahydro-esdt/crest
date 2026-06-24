@@ -79,13 +79,4 @@ dependencies:
   - pydata-sphinx-theme
   - sphinxcontrib-mermaid
 
-  - pip:
-  #for web
-      - titiler
-      - titiler-application
-      - titiler-core
-      - titiler-extensions
-      - titiler-mosaic
-      - titiler-xarray
-
 

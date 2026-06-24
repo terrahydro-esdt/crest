@@ -80,11 +80,4 @@ dependencies:
   #for pytest
   - pip:
       - crick
-  #for web
-      - titiler
-      - titiler-application
-      - titiler-core
-      - titiler-extensions
-      - titiler-mosaic
-      - titiler-xarray
 
