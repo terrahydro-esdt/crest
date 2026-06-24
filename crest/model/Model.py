@@ -130,11 +130,11 @@ class Model(BaseModel):
             with data as batcher, kwargs.get("validation_data", nullcontext()):
                 if "validation_data" in kwargs:
                     kwargs["validation_data"] = iter(kwargs["validation_data"])
-                self.model.fit(iter(batcher), **kwargs)
+                return self.model.fit(iter(batcher), **kwargs)
         elif isinstance(data, tuple):
-            self.model.fit(*data, **kwargs)
+            return self.model.fit(*data, **kwargs)
         else:
-            self.model.fit(data, **kwargs)
+            return self.model.fit(data, **kwargs)
 
     def predict(self, dataset, coords: str | list = [], **kwargs) -> dict:
         """
