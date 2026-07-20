@@ -33,8 +33,8 @@ classifiers = [
 
 # TODO: Update URLs when the repository is made public on GitHub (planned August 2026)
 [project.urls]
-Homepage = "https://crest.readthedocs.io/"
-Documentation = "https://crest.readthedocs.io/"
+Homepage = "https://astg.pages.smce.nasa.gov/terrahydro/development/crest/"
+Documentation = "https://astg.pages.smce.nasa.gov/terrahydro/development/crest/"
 Repository = "https://github.com/terrahydro/crest"
 "Bug Tracker" = "https://github.com/terrahydro/crest/issues"
 

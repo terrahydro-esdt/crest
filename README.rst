@@ -1,7 +1,7 @@
 .. TODO: Uncomment badges once the repository is public and DOI is registered
 
 .. |docs| image:: https://readthedocs.org/projects/crest/badge/?version=latest
-   :target: https://crest.readthedocs.io/en/latest/
+   :target: https://astg.pages.smce.nasa.gov/terrahydro/development/crest/
    :alt: Documentation Status
 
 .. |license| image:: https://img.shields.io/badge/License-Apache%202.0-blue.svg

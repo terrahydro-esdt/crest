@@ -11,7 +11,7 @@ doi: 10.5281/zenodo.20293610
 type: software
 # TODO: Update URL when repository is made public on GitHub (planned August 2026)
 repository-code: "https://github.com/terrahydro/crest"
-url: "https://crest.readthedocs.io/"
+url: "https://astg.pages.smce.nasa.gov/terrahydro/development/crest"
 keywords:
   - "earth system modeling"
   - "machine learning"
