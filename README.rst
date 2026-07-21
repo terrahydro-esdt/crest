@@ -90,43 +90,8 @@ Choose the environment file that matches your platform:
    conda activate OCETRA_cpu
    pip install -e .
 
-Your First Model
-~~~~~~~~~~~~~~~~
-
-.. code-block:: python
-
-   from crest.model import HierarchalTensorGraph, Node, TensorSpec, Model
-
-   # Node callables must accept a dict of tensors and return a dict of tensors.
-   # TensorSpec takes positional args: TensorSpec(shape, dtype).
-   def compute_pet(X):
-       return {'pet': 0.5 * X['temperature'] + 2.0}
-
-   # Define the node with explicit I/O specs
-   pet_node = Node(
-       node=compute_pet,
-       inputs={'temperature': TensorSpec((None, 100), 'float32')},
-       outputs={'pet': TensorSpec((None, 100), 'float32')},
-       name='pet'  # potential evapotranspiration
-   )
-
-   # Wire the node into the graph with add_edge.
-   # 'input' and 'output' are the HTG's external interface.
-   htg = HierarchalTensorGraph(name='soil_moisture_model')
-   htg.add_edge('input', pet_node)
-   htg.add_edge(pet_node, 'output')
-
-   # Build and train
-   # training_data is a (inputs_dict, targets_dict) tuple matched to the HTG's I/O keys
-   import numpy as np
-   training_data = (
-       {'temperature': np.random.rand(200, 100).astype('float32')},
-       {'pet':         np.random.rand(200, 100).astype('float32')},
-   )
-
-   model = Model(htg)
-   model.compile(optimizer='adam', loss='mse')
-   model.fit(training_data, epochs=10)
+Tutorials
+~~~~~~~~~
 
 See the `examples/ <examples/>`_ directory for full worked notebooks.
 
@@ -140,43 +105,6 @@ Full documentation: https://astg.pages.smce.nasa.gov/terrahydro/development/cres
 - `Example Notebooks <https://astg.pages.smce.nasa.gov/terrahydro/development/crest/examples/index.html>`_
 - `API Reference <https://astg.pages.smce.nasa.gov/terrahydro/development/crest/api/index.html>`_
 
-Architecture
-------------
-
-CREST follows a modular, layered architecture:
-
-.. code-block:: text
-
-   ┌─────────────────────────────────────────────────┐
-   │               Application Layer                 │
-   │       (User Models, Workflows, Experiments)     │
-   └─────────────────────────────────────────────────┘
-                          ↓
-   ┌─────────────────────────────────────────────────┐
-   │                  Model Layer                    │
-   │       HierarchalTensorGraph (HTG) · Model       │
-   │  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │
-   │  │   Node   │  │Recurrent │  │ Prebuilt TF  │   │
-   │  │(callable)│  │   Node   │  │Nodes (LSTM…) │   │
-   │  └──────────┘  └──────────┘  └──────────────┘   │
-   └─────────────────────────────────────────────────┘
-                          ↓
-   ┌─────────────────────────────────────────────────┐
-   │                  Engine Layer                   │
-   │      ModelEngine · DataServer · Archiver        │
-   │   (training/inference orchestration and output) │
-   └─────────────────────────────────────────────────┘
-                          ↓
-   ┌──────────────────────────────────────────────────┐
-   │                   Data Layer                     │
-   │   Dataset · Block · Blockset · StructuredDataset │
-   │         Batcher · MultiBatcher · Transform       │
-   └──────────────────────────────────────────────────┘
-                          ↓
-   ┌─────────────────────────────────────────────────┐
-   │                 Storage Layer                   │
-   │               Zarr | TileDB | NetCDF            │
-   └─────────────────────────────────────────────────┘
 
 Contributing
 ------------
