@@ -30,24 +30,16 @@ CREST: Coupled Reusable Earth System Tensor Framework
 Overview
 --------
 
-The **CREST framework** provides a flexible, scalable infrastructure for developing Earth
-system models that seamlessly integrate machine learning with physics-based components.
-Built on TensorFlow, CREST enables researchers to:
+**CREST** is a tooling framework for developing data-driven Earth system models that run on tensor-based machine learning frameworks such as Keras, TensorFlow, and PyTorch. It enables users to efficiently combine, sample, and manipulate large, heterogeneous Earth datasets across dense, sparse, irregular, and polygon-based grids, creating flexible data pipelines for model training. CREST also provides intuitive graph-based APIs for constructing complex, coupled, hierarchical Earth system models, along with integrated tools for model explainability, evaluation, and reliability assessment.
+ 
+Key capabilities
+~~~~~~~~~~~~~~~~
 
-- **Build modular Earth system models** using hierarchical tensor graphs
-- **Combine ML and physics-based processes** in a unified framework
-- **Process large-scale gridded datasets** efficiently with optimized data pipelines
-- **Deploy models** from research to operational systems
-- **Share and reuse components** across the research community
+- **Streamlined data pipelines**: Build scalable data pipelines that efficiently leverage large Earth datasets without extensive preprocessing or regridding.
+- **Composable Earth system models**: Assemble, organize, and train complex coupled Earth system models from reusable subcomponents using intuitive graph-based abstractions.
+- **Collaboration and interoperability**: Promote lightweight standardization of modeling interfaces and information exchange, making it easier for researchers and developers across disciplines to collaborate and integrate models.
+- **Model evaluation and explainability**: Assess model performance, interpret predictions, and quantify reliability using built-in analysis and diagnostics tools.
 
-Key Features
-~~~~~~~~~~~~
-
-- **Hierarchical Tensor Graphs (HTG)**: Directed acyclic graph structure for flexible model composition
-- **Hybrid Modeling**: Seamlessly mix neural networks, physical equations, and empirical relationships
-- **Scalable Data Pipeline**: Efficient batching and loading for large Earth science datasets
-- **Model Serialization**: Save, version, and share complete model configurations
-- **Distributed Computing**: Built-in support for multi-GPU and distributed training
 
 Quick Start
 -----------
