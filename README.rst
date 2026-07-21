@@ -93,7 +93,17 @@ Choose the environment file that matches your platform:
 Tutorials
 ~~~~~~~~~
 
-See the `examples/ <examples/>`_ directory for full worked notebooks.
+See the `examples/ <examples/>`_ directory for full worked notebooks:
+
+- `HTG Overview <examples/HTG_overview.ipynb>`_
+- `HTG Algebra <examples/HTG_algebra.ipynb>`_
+- `HTG Recurrent <examples/HTG_recurrent.ipynb>`_
+- `Data Loader Demo <examples/data_loader_demo.ipynb>`_
+- `Batcher Demo <examples/batcher_demo.ipynb>`_
+- `Archiver Demo <examples/archiver_demo.ipynb>`_
+- `Metrics Demo <examples/metrics_demo.ipynb>`_
+- `MNIST Demo <examples/mnist_demo.ipynb>`_
+- `CIFAR-10 Demo <examples/cifar10_demo.ipynb>`_
 
 Documentation
 -------------
