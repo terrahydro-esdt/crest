@@ -1,3 +1,5 @@
+""" Implements a convenient general purpose Keras-based Node """
+
 from __future__ import annotations
 from collections.abc import Callable, Collection
 from sklearn.metrics import r2_score
@@ -100,6 +102,7 @@ class Node(HTG,BaseAbstract):
 
     @cached_property
     def _node(self) -> 'Node':
+        """ wraps the call function into a CREST node """
         from crest.model import Node
         return Node(**{
             'node': _NodeWrap(self,f'{self.name}-call'),
@@ -136,8 +139,8 @@ class Node(HTG,BaseAbstract):
         return dict(zip(losses, map(wrap_loss, losses, losses.values())))
     
     def _add_data_transform(self):
+        """ Adds pre-/post-processing functions to the graph """
         from crest.model import Node
-        """ Add pre-/post-processing functions to the graph """
         assert(getattr(self, 'preprocess', None) is None), \
             f'Should only call {self}._add_data_transform once'
 
@@ -362,6 +365,7 @@ class Node(HTG,BaseAbstract):
         return X
     
     def encode(self,type='dill',**kwargs):
+        """ Serialization dictionary """
         self.build()
 
         # Add __init__ args
@@ -373,6 +377,7 @@ class Node(HTG,BaseAbstract):
 
     @classmethod
     def decode(cls,encode,type='dill',**kwargs):
+        """ Reconstructs the Node from the serialization dictionary """
         _inputs_spec = encode.pop('_inputs_spec')
         _outputs_spec = encode.pop('_outputs_spec')
         decode = {k:dill.loads(v,**kwargs) for k,v in encode.items()}
@@ -415,13 +420,16 @@ class _NodeWrap(tf.keras.layers.Layer):
         self.obj_name = getattr(obj, '__name__', repr(obj))
 
     def __repr__(self): 
+        """ representation """
         return repr(self.obj)
     
     def build(self, input_shape):
+        """ build function """
         super().build(input_shape)
 
     @property
     def __name__(self):
+        """ Returns the name of the class being wrapped """
         return f'_NodeWrap({self.obj.__class__.__name__})'
 
     def call(self, X, *args, **kwargs):
@@ -441,12 +449,14 @@ class _NodeWrap(tf.keras.layers.Layer):
         return out
 
     def get_config(self):
+        """ Keras from get_config for reconstruction """
         return super().get_config() | {
             'obj'      : self.obj, 
             'obj_name' : self.obj_name}
 
     @classmethod
     def from_config(cls, config):
+        """ Keras from_config for reconstruction """
         return cls(**config)
 
     def _add_histograms(self, X, scope: str, desc: str | None = None):

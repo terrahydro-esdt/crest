@@ -1,3 +1,7 @@
+"""
+This module implements a multipurpose logging utility.
+"""
+
 from __future__ import annotations
 import datetime as dt
 import json
@@ -70,10 +74,12 @@ class CrestJSONFormatter(logging.Formatter):
         self.fmt_keys = fmt_keys or {}
 
     def format(self, record: logging.LogRecord) -> str:
+        """ Dumps the log as a json """
         msg = self._prepare_log_dict(record)
         return json.dumps(msg, default=str, ensure_ascii=False)
 
     def _prepare_log_dict(self, record: logging.LogRecord) -> dict[str, any]:
+        """ Returns a dictionary of logged information """
         always = {
             "message": record.getMessage(),
             "timestamp": dt.datetime.fromtimestamp(record.created, tz=ZoneInfo("America/New_York")).isoformat(),
@@ -394,6 +400,7 @@ def install_global_exception_logger(logger_name: str = "crest"):
     original_hook = sys.excepthook
 
     def log_uncaught_exceptions(exc_type, exc_value, exc_traceback):
+        """ Captures and logs uncaught exceptions"""
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
             return

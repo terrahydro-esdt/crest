@@ -1,3 +1,8 @@
+"""
+This module impelents a utility used within Gridded Model
+to provide commmonly used extents / extent strategies
+"""
+
 import logging
 import zarr
 import xarray as xr
@@ -7,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class ExtentStrategy():
+    """ Common extent strategies to use with Gridded Model """
 
     def __init__(self, config):
         self.config = config
@@ -61,6 +67,7 @@ class ExtentStrategy():
             raise e
 
     def get_extent(self):
+        """ Returns the extent """
         return self.extent
 
     def get_datadiff(self, source: str) -> dict:

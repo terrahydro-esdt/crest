@@ -1,3 +1,9 @@
+"""
+This module implements a class that combines models with data
+within a configurable object intended to create
+configurable models that run over regions..
+"""
+
 from functools import partial
 from contextlib import contextmanager
 import xarray as xr
@@ -78,8 +84,11 @@ def process_batch_full(batcher, model_inputs, loader, schema, model_name, stagin
 
 
 class GriddedModel():
-    """ Handles the automatic generation of model predictions over multiple points based
-        on region. 
+    """ 
+
+    Handles the automatic generation of model 
+    predictions over multiple points based on region. 
+
     """
 
     def __init__(self, config: Config, database_path=None, alt_model_loader=None, process_model: dict = {}, process_output: dict = {}, benchmarking: dict = {}):
@@ -136,6 +145,13 @@ class GriddedModel():
         return getattr(module, func_name)
 
     def init_dataset(self, process_dataset: dict = {}):
+        """ 
+
+        Creates Datases and caches if not cached for performance. If cached,
+        it reads from the cache.
+
+        """
+
         try:
             logger.info("Updating Extents")
 
@@ -222,6 +238,7 @@ class GriddedModel():
             return None
 
     def predict(self, data_schema):
+        """ Predicts and archives over the Dataset """
         logger.info("Starting prediction phase")
 
         with self.sm.timed("model_load"):

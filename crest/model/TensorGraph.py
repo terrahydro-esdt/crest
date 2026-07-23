@@ -1,3 +1,5 @@
+""" Base class for TensorGraphs """
+
 from ..base import BaseAbstract
 
 

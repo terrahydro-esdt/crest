@@ -1,3 +1,5 @@
+""" This module implements the CREST tensorspec """
+
 import json
 import tensorflow as tf
 from tensorflow import keras
@@ -64,9 +66,11 @@ class TensorSpec(object):
         self.shape_type = str(type(self.spec_dict['shape']))
 
     def __repr__(self):
+        """ Shows spec values """
         return f'TensorSpec{tuple(self.spec_dict.values())}'
 
     def _modify_shape(self, shape):
+        """ Returns shape tuple for different spec types """
         if isinstance(shape, tf.TensorShape):
             return tuple(shape.as_list())\
 

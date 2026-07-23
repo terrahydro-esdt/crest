@@ -1,3 +1,7 @@
+"""
+This module implements a generic abstract driver class for Models.
+"""
+
 from __future__ import annotations
 import os
 import logging
@@ -163,22 +167,29 @@ class ModelEngine(Engine):
             return False
         
     def benchmark_targetdt(self, data: Dataset, database_path: str):
+        """ Ensures the Dataset has the correct temporal structure """
         pass
     
     def preprocess_dataset(self, **kwargs):
+        """ Preprocess dataset routine """
         raise NotImplementedError(f'{type(self).__name__} must implement preprocess_dataset')
 
     def postprocess_dataset(self, ds: Dataset, **kwargs):
+        """ Postprocess dataset routine """
         return ds
     
     def preprocess_model(self, **kwargs):
+        """ Preprocess routine before running the model """
         raise NotImplementedError(f'{type(self).__name__} must implement preprocess_model')
     
     def postprocess_model(self, **kwargs):
+        """ Postprocess routine after running the model """
         raise NotImplementedError(f'{type(self).__name__} must implement postprocess_model')
     
     def postprocess_output(self, **kwargs):
+        """ Postprocess for model output """
         raise NotImplementedError(f'{type(self).__name__} must implement postprocess_output')
 
     def data_schema_adapter(self, data: Dataset):
+        """ Data scheme adapter """
         raise NotImplementedError(f'{type(self).__name__} must implement data_schema_adapter')

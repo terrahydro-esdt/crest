@@ -1,3 +1,5 @@
+"This module implements a cross-stitch node using LSTMCell.py"
+
 from __future__ import annotations
 import dill
 from .LSTMCell import LSTMCell

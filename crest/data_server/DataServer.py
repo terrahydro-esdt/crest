@@ -1,3 +1,10 @@
+""" 
+This module implements a data server that downloads
+remote data sources. It's intended to be used to
+help set up examples and run tests that require
+data to run.
+"""
+
 import logging
 
 from crest.data.loading.StructuredDataset import StructuredDataset
@@ -221,8 +228,8 @@ class DataServer:
         else:
             path = os.path.join(path, 'soil_moisture')
 
-        # Custom processor for soil moisture files
         def soil_moisture_processor(data, base_path, filename):
+            """ Custom processor for soil moisture files """
             if filename in ['SMAP.nc', 'ERA5.nc']:
                 data.to_zarr(os.path.join(base_path, filename.split('.')[0] + '.zarr'))
             else:
@@ -277,6 +284,7 @@ class DataServer:
     
     @classmethod
     def load(cls, name, path=''):
+        """ Downloads a registered data set by name """
         if name == 'mnist':
             return DataServer.load_mnist(path)
         

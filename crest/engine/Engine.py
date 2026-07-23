@@ -1,3 +1,8 @@
+"""
+This module implements the base Engine class to be used to
+define required functionality for sub-classing
+"""
+
 from crest.base import BaseAbstract
 
 
@@ -7,4 +12,5 @@ class ImproperEngineError(Exception):
 
 
 class Engine(BaseAbstract):
+    """ Base Engine class """
     pass

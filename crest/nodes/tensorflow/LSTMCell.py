@@ -1,15 +1,19 @@
+""" A node version of the Keras LSTMCell """
+
 import dill
 import tensorflow as tf
 from ...model.Node import Node
 
 class InitialState(tf.keras.Layer):
+    """ Defines and returns the LSTMCell initial state set to all zeros. """
     def __init__(self,units):
         super().__init__()
         self.units = units
 
     def call(self,x):
-            batch_size = tf.shape(x)[0]
-            return tf.zeros([batch_size,self.units])
+        """ returns the initial state of all zeros """
+        batch_size = tf.shape(x)[0]
+        return tf.zeros([batch_size,self.units])
 
 
 class LSTMCell(Node):
@@ -72,6 +76,7 @@ class LSTMCell(Node):
 
     # Set the lstm cell
     def build(self):
+        """ build function creates the lstmcell """
         if not self._lstmcell:
             self._lstmcell = tf.keras.layers.LSTMCell(self.units,**self.kwargs)
 

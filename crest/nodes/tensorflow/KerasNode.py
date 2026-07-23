@@ -1,3 +1,4 @@
+"""KerasNode streamlines the creation of nodes from Keras objects"""
 from __future__ import annotations
 #from ...model import HierarchalTensorGraph
 from enum import Enum
@@ -9,6 +10,7 @@ from enum import Enum
 #
 #
 class KerasNodeType(Enum):
+    "KerasNodeType"
     pass
 #    """
 #    Enum for the different types of keras objects that can be used in KerasNode

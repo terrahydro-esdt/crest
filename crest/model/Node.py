@@ -1,3 +1,8 @@
+""" 
+This module implements the foundation Node class of graphs.
+All specialized Node classes should inherit from Node.
+"""
+
 from __future__ import annotations
 from collections.abc import Callable
 import dill
@@ -74,23 +79,27 @@ class Node(HTG):
 
     @property
     def is_basenode(self) -> bool:
-        """ Return basenode True """
+        """ This is how an HTG is recognized as a single node """
         return True
     
     @property
     def inputs(self):
+        """ input specs """
         return self._inputs
     
     @property
     def outputs(self):
+        """ output specs """
         return self._outputs
 
     def encode(self,type='dill',**kwargs):
+        """ Default serialization dict """
         self.build()
         encode = {k:dill.dumps(v,**kwargs) for k,v in self.config.items()}
         return encode
 
     @classmethod
     def decode(cls,encode,type='dill',**kwargs):
+        """ Default serialization decoder """
         decode = {k:dill.loads(v,**kwargs) for k,v in encode.items()}
         return cls(**decode)

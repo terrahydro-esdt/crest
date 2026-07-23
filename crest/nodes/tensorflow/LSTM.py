@@ -1,3 +1,5 @@
+"""This module provides an LSTM node based on LSTMCell.py"""
+
 import dill
 from .LSTMCell import LSTMCell
 from ...model import HierarchalTensorGraph

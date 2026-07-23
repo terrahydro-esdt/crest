@@ -1,3 +1,5 @@
+""" This module implements the Hierarchal Graph structure for building coupling models """
+
 from __future__ import annotations
 import logging
 import warnings
@@ -63,6 +65,10 @@ class HierarchalTensorGraph(TensorGraph):
         return logging.getLogger(__name__)
 
     def __new__(cls,*args,**kwargs):
+        """ Adds checks to subclass build functions
+            and sets the objects config to the parameters
+            used to initialize the instance
+        """
         obj = super().__new__(cls,*args,**kwargs)
 
         # Wrap build function
@@ -70,8 +76,9 @@ class HierarchalTensorGraph(TensorGraph):
 
         @wraps(og_build)
         def build_wrapper(*args,**kwargs):
+            """ Adds checks to the build function via the build attribute """ 
 
-            # If not subclass do nothin
+            # If not subclass do nothing
             if not obj.is_subclass:
                 return
 
@@ -85,8 +92,9 @@ class HierarchalTensorGraph(TensorGraph):
         # Set new build function 
         obj.build = build_wrapper
 
-        # Set config to __init__ params
+        #TODO: move this into BaseAbstract
         def set_config(obj,*args,**kwargs):
+            """ Set config to __init__ params """
             sig = inspect.signature(obj.__init__)
             config = {}
             config.update(sig.parameters)
@@ -131,9 +139,8 @@ class HierarchalTensorGraph(TensorGraph):
         # log the creation of the HTG
         self.logger.info("Created HierarchalTensorGraph %s",self.name)
 
-    # Automatically register all subclasses
-    # Runs once per subclass creation
     def __init_subclass__(cls,*args,**kwargs):
+        """ Automatically register all subclasses """
         # Set subclass to true
         cls.is_subclass = True
 
@@ -147,17 +154,23 @@ class HierarchalTensorGraph(TensorGraph):
 
     @property
     def inputs(self):
+        """ Returns graph inputs """
         return self._inputs
     
     @property
     def outputs(self):
+        """ Returns graph outputs """
         return self._outputs
 
     @property
     def config(self):
+        """ Returns class config (aka the init parameters used for instantiation) """
         return self._config
 
     def initial_state(self,X):
+        """ initial state interface for recurrent nodes. Only required
+            when a graph or node has the recurrent attribute set to true.
+        """
         message = f'HierarchalTensorGraph  = {self.name} must implement '
         message += 'a initial_state function since it is recurrent'
         raise NotImplementedError(message)
@@ -333,6 +346,7 @@ class HierarchalTensorGraph(TensorGraph):
         matches = []
 
         def action(path, node):
+            """ Collect all basenodes """
             if node.is_basenode:
                 matches.append((path, node))
 
@@ -362,6 +376,7 @@ class HierarchalTensorGraph(TensorGraph):
         self.logger.debug(f'Getting all sources in HTG {self.name}')
 
         def is_source(node): 
+            """ Check if node is a source node """
             return self.graph.in_degree(node) == 0
 
         return list(filter(is_source, self.graph.nodes))
@@ -373,6 +388,7 @@ class HierarchalTensorGraph(TensorGraph):
         self.logger.info("Getting all sinks in HTG %s",self.name)
 
         def is_sink(node): 
+            """ Check if node is a sink """
             return self.graph.out_degree(node) == 0
 
         return list(filter(is_sink, self.graph.nodes))
@@ -988,8 +1004,8 @@ class HierarchalTensorGraph(TensorGraph):
 
         self.logger.debug(f'Applying feature map to {io} in HTG {self.name}')
 
-        # flatten nested dict of inputs
         def flatten_dict(d, key):
+            """ flatten nested dict of inputs """
             for k, v in d.items():
                 if isinstance(k, str):
                     k = (k,)
@@ -1217,9 +1233,11 @@ class HierarchalTensorGraph(TensorGraph):
 
         # Recursive case: traverse graph in reverse, from output to input
         def nodes(name):
-            return dict(self.graph.in_edges(name))  # All input nodes
+            """ Returns dict of all input edges """
+            return dict(self.graph.in_edges(name))
 
         def search(name, depth):
+            """ Depth first call search """
             output_dict = {}
             rollout_dict = {}
 
@@ -1318,14 +1336,14 @@ class HierarchalTensorGraph(TensorGraph):
     @property
     def summary(self):
         """ 
-        Displays a summary of the graph and exchange
-        of tensors.
+        Displays a summary of the graph and exchange of tensors.
 
         """
         # Check lazy build for subclassing
         self.build()
 
         def node_table(node):
+            """ Creates a table of all nodes, IO, and edges """
             table = ColorTable([node.name, "Key", "Tensor Spec"],theme=Themes.GLARE_REDUCTION)
 
             if node.inputs:
@@ -1368,7 +1386,7 @@ class HierarchalTensorGraph(TensorGraph):
 
 
     def expand_graph_node(self, nodename: str, g=None):
-        """ expands the graph of nodename and returns a new graph with the expansion
+        """ Expands the graph of nodename and returns a new graph with the expansion
 
         Parameters:
 
@@ -1770,6 +1788,7 @@ class Recurrence:
         self.logger.info("Initializing Recurrence for node %s in HTG %s",name,node.name)
 
     def __iter__(self):
+        """ Recusive iter """
         i = 0
         while True:
             try:
@@ -1783,6 +1802,7 @@ class Recurrence:
     # This assumption will need to evaluated and changed in
     # the future.
     def __getitem__(self, index):
+        """ Getitem """
 
         self.logger.info(f'Getting item {index} in HTG {self.name}')
         is_recurrent = self.node.graph.get_node_attributes('recurrent')[self.name]
@@ -1848,8 +1868,10 @@ class Identity(HierarchalTensorGraph):
         self.node = lambda x : x
 
     def build(self):
+        """ Build function """
         pass
 
     @property
     def is_basenode(self):
+        """ Overwrites to mimic a basenode """
         return True

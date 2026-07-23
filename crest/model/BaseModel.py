@@ -1,3 +1,4 @@
+""" Base class for model to constrain all inheriting classes """
 from crest.base import BaseAbstract
 
 
@@ -7,4 +8,5 @@ class ImproperModelError(Exception):
 
 
 class BaseModel(BaseAbstract):
+    """ Model Base class """
     pass

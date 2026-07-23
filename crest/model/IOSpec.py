@@ -1,3 +1,5 @@
+""" This module implements the input/ouput spec object used by models """
+
 from __future__ import annotations
 from crest.base import BaseAbstract
 from collections.abc import Collection
@@ -50,6 +52,7 @@ class IOSpec(UserDict):
                 self[k] = v
 
     def __setitem__(self, label: str, value: dict):
+        """ sets items in IO spec with error handling and some utilities to reduce redundancy """
         if not isinstance(value,dict):
             raise ValueError("IOSpec items must be dictionaries")
         
@@ -144,14 +147,17 @@ class IOSpec(UserDict):
         return coord_shapes
     
     def __repr__(self):
+        """ Returns string listing keys in the IOSpec """
         return f'IOSpec({str(list(self.keys()))})'
     
     def encode(self):
+        """ Serialization dict """
         encode = dill.dumps(self.__dict__) 
         return encode
     
     @classmethod
     def decode(cls,encode):
+        """ Deserialization """
         decode = dill.loads(encode)
         io_spec = IOSpec()
         io_spec.__dict__.update(decode)

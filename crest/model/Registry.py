@@ -1,3 +1,10 @@
+""" 
+This module implements the HTG registry. 
+The registry tracks all subclasses that inherit
+from HTG to allow saving and loading with dynamic
+imports.
+"""
+
 import importlib
 
 class Registry:
@@ -32,6 +39,7 @@ class Registry:
         self.registry[name] = d
 
     def __getitem__(self,name):
+        """ Returns the type associated with the registry name """
         mod = importlib.import_module(self.registry[name]['module'])
         obj = getattr(mod, self.registry[name]['name'])
         return obj

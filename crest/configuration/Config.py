@@ -1,3 +1,8 @@
+"""
+This module implements a configuration loader based on reading YAML files
+"""
+
+
 import yaml
 import os
 import logging
@@ -70,6 +75,7 @@ class Config:
 
     @property
     def config(self):
+        """ Dictionary of loaded configruation parameters """
         return self._config
 
     def update(self, to_update: dict):
@@ -85,7 +91,9 @@ class Config:
         return None
     
     def __str__(self):
+        """ String representation of configuration dictionary """
         return f'Configuration: {self._config}'
 
     def __repr__(self):
+        """ Show configuration dictionary """
         return f'Config({self.config_file})'

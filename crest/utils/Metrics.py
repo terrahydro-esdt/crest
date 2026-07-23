@@ -1,3 +1,7 @@
+"""
+This module implements a metrics for Model.py.
+"""
+
 import collections
 import tensorflow as tf
 import numpy as np
@@ -401,302 +405,388 @@ class Metrics(object):
     
     from keras.metrics import Metric
     class BetaNSE(Metric):
+        """ 
+        The beta NSE decomposition is the difference of the mean 
+        simulation and mean observation divided by the standard deviation of the observations.
+        """
+
         def __init__(self, name='beta_nse', **kwargs):
             super(Metrics.BetaNSE, self).__init__(name=name, **kwargs)
             self.beta_nse = Metrics().beta_nse
 
         def update_state(self, y_true, y_pred, sample_weight=None):
+            """ computes and updates the metric value """
             self.metric = self.beta_nse(y_true, y_pred)
             return self.metric
 
         def result(self):
+            """ Returns the metric """
             return self.metric
 
         def reset_states(self):
+            """ Resets the metric to zero """
             self.metric = 0.0
 
         def get_config(self):
+            """ Serialization config """
             config = super(Metrics.BetaNSE, self).get_config()
             return config
 
         @classmethod
         def from_config(cls, config):
+            """ Deserialize """
             return cls(**config)
         
     class AlphaNSE(Metric):
+        """
+        The alpha NSE decomposition is the fraction of the 
+        standard deviations of simulations and observations.
+        """
         def __init__(self, name='alpha_nse', **kwargs):
             super(Metrics.AlphaNSE, self).__init__(name=name, **kwargs)
             self.alpha_nse = Metrics().alpha_nse
 
         def update_state(self, y_true, y_pred, sample_weight=None):
+            """ computes and updates the metric value """
             self.metric = self.alpha_nse(y_true, y_pred)
             return self.metric
 
         def result(self):
+            """ Returns the metric """
             return self.metric
 
         def reset_states(self):
+            """ Resets the metric to zero """
             self.metric = 0.0
 
         def get_config(self):
+            """ Serialization config """
+            """ Serialization config """
             config = super(Metrics.AlphaNSE, self).get_config()
             return config
 
         @classmethod
         def from_config(cls, config):
+            """ Deserialize """
             return cls(**config)
         
     class Pearson(Metric):
+        """ Pearson correlation coefficient """
         def __init__(self, name='pearson', **kwargs):
             super(Metrics.Pearson, self).__init__(name=name, **kwargs)
             self.pearson = Metrics().pearsonr
 
         def update_state(self, y_true, y_pred, sample_weight=None):
+            """ computes and updates the metric value """
             self.metric = self.pearson(y_true, y_pred)
             return self.metric
 
         def result(self):
+            """ Returns the metric """
             return self.metric
 
         def reset_states(self):
+            """ Resets the metric to zero """
             self.metric = 0.0
 
         def get_config(self):
+            """ Serialization config """
             config = super(Metrics.Pearson, self).get_config()
             return config
 
         @classmethod
         def from_config(cls, config):
+            """ Deserialize """
             return cls(**config)
         
     class LKGE(Metric):
+        """ Logarithmic Kling-Gupta Efficieny """
         def __init__(self, name='lkge', **kwargs):
             super(Metrics.LKGE, self).__init__(name=name, **kwargs)
             self.lkge = Metrics().lkge
 
         def update_state(self, y_true, y_pred, sample_weight=None):
+            """ computes and updates the metric value """
             self.metric = self.lkge(y_true, y_pred)
             return self.metric
 
         def result(self):
+            """ Returns the metric """
             return self.metric
 
         def reset_states(self):
+            """ Resets the metric to zero """
             self.metric = 0.0
 
         def get_config(self):
+            """ Serialization config """
             config = super(Metrics.LKGE, self).get_config()
             return config
 
         @classmethod
         def from_config(cls, config):
+            """ Deserialize """
             return cls(**config)
         
     class KGE(Metric):
+        """ Kling-Gupta Efficieny """
         def __init__(self, name='kge', **kwargs):
             super(Metrics.KGE, self).__init__(name=name, **kwargs)
             self.kge = Metrics().kge
 
         def update_state(self, y_true, y_pred, sample_weight=None):
+            """ computes and updates the metric value """
             self.metric = self.kge(y_true, y_pred)
             return self.metric
 
         def result(self):
+            """ Returns the metric """
             return self.metric
 
         def reset_states(self):
+            """ Resets the metric to zero """
             self.metric = 0.0
 
         def get_config(self):
+            """ Serialization config """
             config = super(Metrics.KGE, self).get_config()
             return config
 
         @classmethod
         def from_config(cls, config):
+            """ Deserialize """
             return cls(**config)
         
     class MSE(Metric):
+        """ Mean Squared Error """
         def __init__(self, name='mse', **kwargs):
             super(Metrics.MSE, self).__init__(name=name, **kwargs)
             self.mse = Metrics().mse
 
         def update_state(self, y_true, y_pred, sample_weight=None):
+            """ computes and updates the metric value """
             self.metric = self.mse(y_true, y_pred)
             return self.metric
 
         def result(self):
+            """ Returns the metric """
             return self.metric
 
         def reset_states(self):
+            """ Resets the metric to zero """
             self.metric = 0.0
 
         def get_config(self):
+            """ Serialization config """
             config = super(Metrics.MSE, self).get_config()
             return config
 
         @classmethod
         def from_config(cls, config):
+            """ Deserialize """
             return cls(**config)
         
     class NSE(Metric):
+        """ Nash-Sutcliffe Efficiency """
         def __init__(self, name='nse', **kwargs):
             super(Metrics.NSE, self).__init__(name=name, **kwargs)
             self.nse = Metrics().nse
 
         def update_state(self, y_true, y_pred, sample_weight=None):
+            """ computes and updates the metric value """
             self.metric = self.nse(y_true, y_pred)
             return self.metric
 
         def result(self):
+            """ Returns the metric """
             return self.metric
 
         def reset_states(self):
+            """ Resets the metric to zero """
             self.metric = 0.0
 
         def get_config(self):
+            """ Serialization config """
             config = super(Metrics.NSE, self).get_config()
             return config
 
         @classmethod
         def from_config(cls, config):
+            """ Deserialize """
             return cls(**config)
         
     class NSELog(Metric):
+        """ Log Nash-Sutcliffe Efficiency """
         def __init__(self, name='nse_log', **kwargs):
             super(Metrics.NSELog, self).__init__(name=name, **kwargs)
             self.nse_log = Metrics().nse_log
 
         def update_state(self, y_true, y_pred, sample_weight=None):
+            """ computes and updates the metric value """
             self.metric = self.nse_log(y_true, y_pred)
             return self.metric
 
         def result(self):
+            """ Returns the metric """
             return self.metric
 
         def reset_states(self):
+            """ Resets the metric to zero """
             self.metric = 0.0
 
         def get_config(self):
+            """ Serialization config """
             config = super(Metrics.NSELog, self).get_config()
             return config
 
         @classmethod
         def from_config(cls, config):
+            """ Deserialize """
             return cls(**config)
         
     class TripleCollocationError(Metric):
+        """ Triple Collocation Error """
         def __init__(self, name='triple_collocation_error', **kwargs):
             super(Metrics.TripleCollocationError, self).__init__(name=name, **kwargs)
             self.triple_collocation_error = Metrics().triple_collocation_error
 
         def update_state(self, y_true, y_pred, sample_weight=None):
+            """ computes and updates the metric value """
             self.metric = self.triple_collocation_error(y_true, y_pred)
             return self.metric
 
         def result(self):
+            """ Returns the metric """
             return self.metric
 
         def reset_states(self):
+            """ Resets the metric to zero """
             self.metric = 0.0
 
         def get_config(self):
+            """ Serialization config """
             config = super(Metrics.TripleCollocationError, self).get_config()
             return config
 
         @classmethod
         def from_config(cls, config):
+            """ Deserialize """
             return cls(**config)
         
     class RelativeError(Metric):
+        """ Relative Error """
         def __init__(self, name='relative_error', **kwargs):
             super(Metrics.RelativeError, self).__init__(name=name, **kwargs)
             self.relative_error = Metrics().relative_error
 
         def update_state(self, y_true, y_pred, sample_weight=None):
+            """ computes and updates the metric value """
             self.metric = self.relative_error(y_true, y_pred)
             return self.metric
 
         def result(self):
+            """ Returns the metric """
             return self.metric
 
         def reset_states(self):
+            """ Resets the metric to zero """
             self.metric = 0.0
 
         def get_config(self):
+            """ Serialization config """
             config = super(Metrics.RelativeError, self).get_config()
             return config
 
         @classmethod
         def from_config(cls, config):
+            """ Deserialize """
             return cls(**config)
         
     class MetricEntropy(Metric):
+        """ Metric Entropy """
         def __init__(self, name='metric_entropy', **kwargs):
             super(Metrics.MetricEntropy, self).__init__(name=name, **kwargs)
             self.metric_entropy = Metrics().metric_entropy
 
         def update_state(self, y_true, y_pred, sample_weight=None):
+            """ computes and updates the metric value """
             self.metric = self.metric_entropy(y_true, y_pred)
             return self.metric
 
         def result(self):
+            """ Returns the metric """
             return self.metric
 
         def reset_states(self):
+            """ Resets the metric to zero """
             self.metric = 0.0
 
         def get_config(self):
+            """ Serialization config """
             config = super(Metrics.MetricEntropy, self).get_config()
             return config
 
         @classmethod
         def from_config(cls, config):
+            """ Deserialize """
             return cls(**config)
         
     class FluctuationComplexity(Metric):
+        """ Fluctuation Complexity """
         def __init__(self, name='fluctuation_complexity', **kwargs):
             super(Metrics.FluctuationComplexity, self).__init__(name=name, **kwargs)
             self.fluctuation_complexity = Metrics().fluctuation_complexity
 
         def update_state(self, y_true, y_pred, sample_weight=None):
+            """ computes and updates the metric value """
             self.metric = self.fluctuation_complexity(y_true, y_pred)
             return self.metric
 
         def result(self):
+            """ Returns the metric """
             return self.metric
 
         def reset_states(self):
+            """ Resets the metric to zero """
             self.metric = 0.0
 
         def get_config(self):
+            """ Serialization config """
             config = super(Metrics.FluctuationComplexity, self).get_config()
             return config
 
         @classmethod
         def from_config(cls, config):
+            """ Deserialize """
             return cls(**config)
         
     class UnbiasedRMSE(Metric):
+        """ Unbiased Root Mean Squared Error """
         def __init__(self, name='unbiased_rmse', **kwargs):
             super(Metrics.UnbiasedRMSE, self).__init__(name=name, **kwargs)
             self.unbiased_rmse = Metrics().unbiased_rmse
 
         def update_state(self, y_true, y_pred, sample_weight=None):
+            """ computes and updates the metric value """
             self.metric = self.unbiased_rmse(y_true, y_pred)
             return self.metric
 
         def result(self):
+            """ Returns the metric """
             return self.metric
 
         def reset_states(self):
+            """ Resets the metric to zero """
             self.metric = 0.0
 
         def get_config(self):
+            """ Serialization config """
             config = super(Metrics.UnbiasedRMSE, self).get_config()
             return config
 
         @classmethod
         def from_config(cls, config):
+            """ Deserialize """
             return cls(**config)  
 
     def to_json(self):
