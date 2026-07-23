@@ -40,10 +40,15 @@ Repository = "https://github.com/terrahydro/crest"
 
 [project.optional-dependencies]
 dev = [
-  "pytest",
-  "black",
-  "isort",
-  "interrogate",
+    "pytest",
+    "pytest-cov",
+    "black",
+    "isort",
+    "ruff",
+    "mypy",
+    "interrogate",
+    "build",
+    "twine",
 ]
 docs = [
   "furo >=2023.9.10",
@@ -61,4 +66,15 @@ include = [
   "LICENSE",
   "README.rst"
 ]
-exclude = ["test*"]
+
+[tool.interrogate]
+fail-under = 80
+exclude = [
+    "tests/*",
+    "docs/*",
+]
+ignore-init-method = true
+ignore-init-module = true
+ignore-magic = true
+ignore-semiprivate = true
+verbose = 1

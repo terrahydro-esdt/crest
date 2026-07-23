@@ -392,6 +392,97 @@ from crest.graph import GraphBuilder
 - `crest/utils/Metrics.py` - Function documentation
 - `examples/metrics.ipynb` - Notebook structure
 
+## Notes on development tools
+
+If you look in `pyproject.toml`:
+
+```toml
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "black",
+  "isort",
+  "interrogate",
+]
+```
+
+`dev` is an **optional dependency group**, also known as an "extra" (PEP 621).
+
+It is **not installed by default**. Instead, it allows someone working on the project to request the development tools when installing. For example, for normal installation:
+
+```bash
+pip install .
+```
+
+or
+
+```bash
+pip install crest
+```
+
+That installs only the project's required dependencies.
+
+The packages
+
+* `pytest`
+* `black`
+* `isort`
+* `interrogate`
+
+are **not** installed.
+
+---
+
+### Installing the development dependencies
+
+In this case run
+
+```bash
+pip install ".[dev]"
+```
+
+from the source tree.
+
+This installs:
+
+* the `crest` package
+* `pytest`
+* `black`
+* `isort`
+* `interrogate`
+
+Note that if the package is on PyPI (or another package index), the syntax is
+
+```bash
+pip install "crest[dev]"
+```
+
+---
+
+### Multiple extras
+
+If you also want the documentation tools:
+
+```bash
+pip install ".[dev,docs]"
+```
+
+which installs
+
+* the package itself
+* everything in `dev`
+* everything in `docs`
+
+---
+
+### Why this is useful
+
+It separates dependencies by purpose.
+
+* **Users** installing the package don't need formatting or testing tools.
+* **Developers** working on the package do.
+
+
 ## FAQ
 
 **Q: Do I need a docstring for every function?**
