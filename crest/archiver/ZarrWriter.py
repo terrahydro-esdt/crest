@@ -38,7 +38,13 @@ class ZarrWriter(Writer):
         and f'{feature_name}__count'. If `delete_extra=True`, rather than 
         retaining them in the final zarr (thus using 3x larger space on disk),
         all of these extra variables will be deleted once the writer is closed.
-    
+    finalize_avg : bool
+        If True, only compute the final feature averages (sum/count) when
+        closing the writer. Otherwise, the feature averages will be computed
+        and written to the zarr on every flush.
+    **kwargs
+        Additional keyword arguments are discarded.
+        
     """
     
     def __init__(self,
@@ -46,19 +52,23 @@ class ZarrWriter(Writer):
         output_path  : Path | S3Path,
         stage_writer : StageWriter,
         delete_extra : bool = True,
+        finalize_avg : bool = False,
+        **kwargs        
     ):
         self.schema = data_schema
         self.output_path = output_path
         self.stage_writer = stage_writer
         self.delete_extra = delete_extra
-
+        self.finalize_avg = finalize_avg
 
     @property
     def is_open(self) -> bool:
+        """ Whether the writer is currently open """
         return hasattr(self, '_zarr_f')
         
     
     def open(self):
+        """ Open the writer and initialize all buffers """
         assert(not self.is_open), f'{self} is already open'
         
         # Delete the output if it already exists
@@ -73,17 +83,27 @@ class ZarrWriter(Writer):
         self.total_rows = 0
         
     
-    def close(self):
+    def close(self) -> int:
+        """ Close the writer, returning the number of rows written """
         if self.is_open:
             # Flush all remaining staged data to disk
             while self.flush(): pass
 
-            # Delete extra variables if requested
-            if self.delete_extra:
-                for name in self._arrays:
+            for name, arrays in self._arrays.items():
+
+                # Write the final averaged feature values
+                if self.finalize_avg:
+                    avg, totals, counts = arrays
+                    avg[:] = totals[:] / counts[:]
+
+                # Delete extra variables if requested
+                if self.delete_extra:
                     for key in self._extra_keys(name):
                         if key in self._zarr_f:
                             del self._zarr_f[key]
+
+            # One final consolidation if anything was modified
+            if self.finalize_avg or self.delete_extra:
                 consolidate_metadata(self.output_path)
                 
             # Reset object attributes
@@ -156,32 +176,94 @@ class ZarrWriter(Writer):
                 shape = tuple(s.stop - s.start for s in block)
                 n_ele = int(np.prod(shape))
 
-                # Calculate the flattened index and number of updates for each
-                index = np.ravel_multi_index(local.T, shape)
-                count = np.bincount(index, minlength=n_ele)
-                touch = np.nonzero(count)[0]
-                
-                # Update global average variables for each feature
-                for name, value in feature.items():
-                    
-                    # Calculate the sum total of the update for each index
-                    total = np.bincount(index, value[s:e], minlength=n_ele)
+                # Sort the flattened local indices 
+                locations = np.ravel_multi_index(local.T, shape)
+                idx_order = np.argsort(locations)
+                locations = locations[idx_order]
+
+                # Group into unique index locations
+                grouping = np.r_[0, np.flatnonzero(np.diff(locations)) + 1]
+                modified = locations[grouping]
+
+                # Stack feature values and replace NaNs with 0
+                names, value = zip(*feature.items())
+                value = np.column_stack([v[s:e] for v in value])[idx_order]
+                valid = np.isfinite(value)
+                value = np.where(valid, value, 0)
+
+                # Collect value totals and counts for unique locations
+                group_total = np.add.reduceat(value, grouping, axis=0).T
+                group_count = np.add.reduceat(valid, grouping, axis=0).T
+
+                for name, total, count in zip(names, group_total, group_count):
+                    valid = count > 0
+                    touch = modified[valid]
 
                     # 2. Load the full block region to update
                     arrays, totals, counts = self._get_feature(name)
                     blk_total = totals[block].reshape(-1)
                     blk_count = counts[block].reshape(-1)
-                    blk_array = arrays[block].reshape(-1)
-
+                
                     # 3. Apply updates to the block in memory
-                    blk_total[touch] += astype(total[touch])
-                    blk_count[touch] += astype(count[touch])
-                    blk_array[touch] = astype(blk_total[touch]/blk_count[touch])
-
+                    blk_total[touch] += astype(total[valid])
+                    blk_count[touch] += astype(count[valid])
+                
                     # 4. Write the updated block back into its region
                     totals[block] = blk_total.reshape(shape)
                     counts[block] = blk_count.reshape(shape)
-                    arrays[block] = blk_array.reshape(shape)
+                    
+                    if not self.finalize_avg:
+                        blk_array = arrays[block].reshape(-1)       
+                        blk_array[touch] = astype(
+                            blk_total[touch] / blk_count[touch]
+                        )
+                        arrays[block] = blk_array.reshape(shape)
+
+                """ Slightly slower, somewhat simpler implementation """
+                # # Calculate the flattened index and number of updates for each
+                # locations = np.ravel_multi_index(local.T, shape)
+                # all_count = np.bincount(locations, minlength=n_ele)
+                # all_touch = np.flatnonzero(all_count)
+
+                # # Update global average variables for each feature
+                # for name, value in feature.items():
+                    
+                #     # Calculate the sum total of the update for each index
+                #     valid = np.isfinite(value[s:e])
+
+                #     if valid.all():
+                #         count = all_count
+                #         touch = all_touch
+                #         total = np.bincount(locations, value[s:e], minlength=n_ele)
+                #     else:
+                #         value = np.where(valid, value[s:e], 0)
+                #         total = np.bincount(locations, value, minlength=n_ele)
+                #         n_nan = np.bincount(locations[~valid], minlength=n_ele)
+                #         count = all_count - n_nan
+                #         touch = np.flatnonzero(count)
+    
+                #         if touch.size == 0:
+                #             continue
+
+                #     # 2. Load the full block region to update
+                #     arrays, totals, counts = self._get_feature(name)
+                #     blk_total = totals[block].reshape(-1)
+                #     blk_count = counts[block].reshape(-1)
+                
+                #     # 3. Apply updates to the block in memory
+                #     blk_total[touch] += astype(total[touch])
+                #     blk_count[touch] += astype(count[touch])
+                
+                #     # 4. Write the updated block back into its region
+                #     totals[block] = blk_total.reshape(shape)
+                #     counts[block] = blk_count.reshape(shape)
+
+                #     if not self.finalize_avg:
+                #         blk_array = arrays[block].reshape(-1)       
+                #         blk_array[touch] = astype(
+                #             blk_total[touch] / blk_count[touch]
+                #         )
+                #         arrays[block] = blk_array.reshape(shape)
 
         # Cleanup consumed files
         if delete_after:
@@ -239,10 +321,12 @@ class ZarrWriter(Writer):
 
 
     def _extra_keys(self, name: str, suffixes=['sum', 'count']) -> list[str]:
+        """ Temporary intermediate output keys (i.e. avg = sum/count) """
         return [f'{name}__{suffix}' for suffix in suffixes]
 
     
     def _list_bucket_files(self, max_files_per_bucket: int) -> list[Path]:
+        """ List of parquet files in the staging area for each bucket """
         files = []
         for p in sorted(self.stage_writer.stage_path.glob('bucket-*')):
             parts = sorted(p.glob('part-*.parquet'))

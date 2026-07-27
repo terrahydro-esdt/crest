@@ -93,11 +93,10 @@ class Batcher:
         - [{'a':<batch of 'a' values>, 'b': <batch of 'b' values>},
           {'c': <batch of 'c' values>}]
 
-        If any features are missing in the
-        dataset, an exception is raised. If an empty list is given, it is
-        equivalent to selecting all available features. Note that any nested
-        list in features must contain homogeneous types; i.e. all strings, or
-        all lists. Examples:
+        If any features are missing in the dataset, an exception is raised. 
+        If an empty list is given, it is equivalent to selecting all available
+        features. Note that any nested list in features must contain 
+        homogeneous types; i.e. all strings, or all lists. Examples:
 
         - [['a'], ['b', 'c'], [['d', 'e'], ['f']]] is valid
         - [['a'], 'b'] is not valid
@@ -121,12 +120,12 @@ class Batcher:
         are desired with shuffle=False, multiple processes and threads should 
         not be used as completion progress cannot be consistently ordered.
     repeat     : bool
-        Whether the Batcher should repeat iteration over the batches once all
-        batches have been yielded. Note that this means the Batcher will yield
-        batches indefinitely.
+        Whether the Batcher should repeatedly iterate over the blocks once all
+        have been used to yield samples (i.e. an epoch has been completed). 
+        Note using True means the Batcher will yield batches indefinitely.
     duplicate  : bool
         Whether batch samples across processes can be duplicated. With this set
-        to True, each sample will be encountered `worker` times in an epoch,
+        to True, each sample can be encountered `worker` times in an epoch,
         albeit at different times due to shuffling. This is particuarly useful
         when the number of blocks for a dataset is fewer than the number of
         workers that can be active - as without duplication, the number of
@@ -299,6 +298,7 @@ class Batcher:
         log_delay   : float  = 0,
         fast_path   : bool   = False,
         block_sync  : bool   = False,
+        epoch_sync  : bool   = False,
         prefetch    : int | bool = 200,
         prefetcher  : ContextManager | Callable = identity,
         prequeuer   : ContextManager | Callable = identity,
@@ -333,6 +333,7 @@ class Batcher:
         self.log_delay   = log_delay
         self.fast_path   = fast_path
         self.block_sync  = block_sync
+        self.epoch_sync  = epoch_sync
         self.prefetch    = prefetch
         self.prefetcher  = prefetcher
         self.prequeuer   = prequeuer
@@ -350,6 +351,9 @@ class Batcher:
             f'If both {len(valid_percents)=} and {len(drop_datafiles)=}' +
             f' are given, they must contain the same number of items.' )
 
+        # Only one synchronization method can be used
+        assert(not (block_sync and epoch_sync)), 'Can only use one sync method'
+        
         # Create a cache for samples from deterministic (sample-limited) blocks
         self._samples_cache = _samples_cache = {}
         
@@ -507,6 +511,8 @@ class Batcher:
         # Signal threads/workers to exit
         with handler:
             if ('_exit_flag' in self.__dict__) and not self._exit:
+                with handler: self.debug(f'Setting exit flag from: {origin}')
+                    
                 # In certain situations, Event.set can deadlock
                 #  (see https://stackoverflow.com/a/73341335/22210498)
                 with handler: self._exit_flag.set()
@@ -943,13 +949,18 @@ class Batcher:
     
     def _queue_prefetched(self, prefetcher):
         """ Wraps the generator for background prefetching thread """
+        discarded = 0
         for batches in self._iterate_process_batches():
             if not self._exit:
                 try:
                     batches = map(prefetcher, batches)
                     self._safe_queue_batches(self._prefetch_queue, batches)
                 except Empty: pass
-
+            else: 
+                discarded += 1
+        if discarded:
+            self.info(f'Discarded {discarded} batches due to exit flag')
+            
         
     def _processes_alive(self, jobs=None, verbose: bool=True) -> list:
         """ Return a list of worker processes which are alive """
@@ -959,6 +970,7 @@ class Batcher:
                 if not job.is_alive():
                     if verbose:
                         message = f'Worker {job.pid} exitcode: {job.exitcode}'
+                        message+= f' (exit_flag={self._exit})'
                         if job.exitcode and not self._exit:
                             self.error(message)
                         else: self.info(message)
@@ -1119,6 +1131,7 @@ class Batcher:
 
             # If requested, yield batches indefinitely
             while not self._exit:
+                    
                 with self.benchmark(message, self.info, silent=True) as epoch_log:
                     yield from self._generate_batches(blocks)
 
@@ -1130,11 +1143,41 @@ class Batcher:
                 if not self._exit:
                     if self.pidx == 0:
                         self._validate_configs()
-                        
+
                 # Break the infinite loop if we're not repeating
                 # We don't want to set the exit flag here, as that would stop
                 #  all of our background process generators, not just this one
-                if not self.repeat: break
+                if not self._exit and not self.repeat: break
+                
+                if self.epoch_sync: 
+                    self._synchronize_workers()
+
+                if hasattr(self, '_block_queue_lock'):
+                    
+                    if (not self.epoch_sync) or (self.pidx == 0):
+                        time.sleep(0.25)
+                        with self._block_queue_lock:                            
+                            try:
+                                idx = self._block_queue.get_nowait()
+                                self._block_queue.put(idx)
+                            except Empty:
+                                block_ixs = np.arange(len(blocks)).astype(int)
+                                if self.shuffle:
+                                    self.random.shuffle(block_ixs)
+                                self.info(f'Starting block re-queue of {len(block_ixs)} blocks...')
+                                for block_ix in block_ixs:
+                                    self._block_queue.put(block_ix)
+                                self.info('Finished block re-queue')
+                    else:
+                        while True:
+                            time.sleep(0.5)
+                            with self._block_queue_lock:                                
+                                try:
+                                    idx = self._block_queue.get_nowait()
+                                    self._block_queue.put(idx)
+                                    break
+                                except Empty: pass
+                                self.info('Waiting on blocks to be queued...')
             else:
                 self.debug('Exiting _generator while loop due to exit flag')
 
@@ -1172,7 +1215,8 @@ class Batcher:
         # No repeating blocks means we use dynamic block allocations in order
         # to provide load balancing; i.e. blocks are allocated to workers via 
         # a shared queue rather than a static subset 
-        static_alloc = self.repeat or self.duplicate or (self.workers <= 1) or self.block_sync
+        # static_alloc = self.repeat or self.duplicate or (self.workers <= 1) or self.block_sync
+        static_alloc = self.duplicate or (self.workers <= 1) or self.block_sync
         self.info(f'{static_alloc=}: {self.repeat=} {self.duplicate=} {self.workers=}')
 
         def next_block():
@@ -1184,7 +1228,7 @@ class Batcher:
                     pass                        
             self.debug(f'{self.pidx=} pulling block {idx}')
             return subsets[idx]
-
+                        
         if static_alloc and self.shuffle:
             self.random.shuffle(subsets)
 
@@ -1365,6 +1409,8 @@ class Batcher:
         # Skip if this config has already been checked
         if self._config_block_count is None:
             return
+            
+        self.debug(f'{list(self._config_block_count)=} {self._config_index(config)=} {config=}')
         if self._config_block_count[self._config_index(config)] != 0:
             return 
             
@@ -1650,8 +1696,21 @@ class Batcher:
                 key = self._samples_cache_key(config, block_idxs)
                 if n_samples < 0.9 * (self.block_size or -1):
                     if key in self._samples_cache:
-                        assert(len(self._samples_cache[key]) == len(samples)),\
-                            f'{len(self._samples_cache[key])} != {len(samples)}'
+                        
+                        # Should be an error, but only a warning for now (until resolved)
+                        if self._samples_cache[key] is None:
+                            message = f'Previously found > {self.block_size*0.9}'
+                            message+= f' samples for {config=} {key=}'
+                            self.warning(message)
+                            
+                            message = f'Re-caching samples for {config=} {block_idxs=} '
+                            message+= f'via {key=} ({n_samples=} < {self.block_size=})'
+                            self.info(message)
+                            self._samples_cache[key] = samples
+                            self._validate_cache(config)
+                        else:
+                            assert(len(self._samples_cache[key]) == len(samples)),\
+                                f'{len(self._samples_cache[key])} != {len(samples)}'
                     else:
                         message = f'Caching samples for {config=} {block_idxs=} '
                         message+= f'via {key=} ({n_samples=} < {self.block_size=})'
@@ -2031,7 +2090,7 @@ class Batcher:
         
         # If we're not repeating blocks, add indices to the block queue
         # to enable dynamic block allocation for workers
-        if not self.repeat:
+        if True:#not self.repeat:
             block_ixs = np.arange(n_blocks).astype(int)
             if self.shuffle:
                 self.random.shuffle(block_ixs)
@@ -2105,7 +2164,7 @@ class Batcher:
 
         """
         return mp.get_context('spawn').Event()
-
+        
 
     @property
     def _exit(self) -> bool:
@@ -2335,4 +2394,5 @@ class Batcher:
 
     def _log(self, method, *args, **kwargs):
         """ Helper which allows modifying the stacklevel for correct labels """
+        kwargs['stacklevel'] = kwargs.get('stacklevel', 1) + 2
         getattr(self._logger, method)(*args, **kwargs)

@@ -12,6 +12,8 @@ import seaborn as sns
 import numpy as np
 import logging
 import hashlib
+import keras
+import jax
 import tlz
 import re
 
@@ -37,6 +39,9 @@ COORD_TYPE = dict[str, Collection[int] | int | None]
 # IO_TYPE defines the full inputs/outputs annotation
 IO_TYPE = dict[str, dict[str, COORD_TYPE]]
 
+# Handle all Keras backend types
+GenericSpec = keras.InputSpec | tf.TensorSpec
+GenericTensor = keras.KerasTensor | tf.Tensor | jax.Array | np.ndarray
 
 class BaseNode(BaseAbstract):
     """BaseNode provides a template for machine learning models to inherit from. 
@@ -93,6 +98,13 @@ class BaseNode(BaseAbstract):
     inputs  : IO_TYPE
     outputs : IO_TYPE 
 
+    # Setting this to True in an inheriting class will automatically add
+    # distance-based features to the input dictionary given to the model
+    # call function; e.g. a 'distance:ERA5.zarr:SMAP.zarr' feature which
+    # contains the dict {'latitude': latitude_distance, ...} for all dims
+    include_distances = False
+
+    
     def __init__(self, 
         normalize      = (),
         loss           : str | Callable | dict[str, str | Callable | dict] = 'mse',
@@ -117,7 +129,7 @@ class BaseNode(BaseAbstract):
 
 
     @abstractmethod
-    def call(self, X: dict[str, tf.Tensor], training: bool) -> dict[str, tf.Tensor]:      
+    def call(self, X: dict[str, GenericTensor], training: bool) -> dict[str, GenericTensor]:      
         """ Inheriting classes must define a `call` method, which takes
             as input a dictionary of {feature name: Input Tensor}, and
             returns a dictionary of {output feature: Output Tensor}. """
@@ -147,9 +159,9 @@ class BaseNode(BaseAbstract):
     def losses(self) -> dict[str, Callable]:
         """ Return a dictionary of losses, one per output feature """
         get_loss = lambda loss: (loss if not isinstance(loss, (str, dict))
-                                      else tf.keras.losses.get(loss))
+                                      else keras.losses.get(loss))
 
-        # Allow loss specification via config dict (see tf.keras.losses.get)
+        # Allow loss specification via config dict (see keras.losses.get)
         if isinstance(self.loss, dict) and ('class_name' not in self.loss):
             losses = {k: get_loss(loss) for k, loss in self.loss.items()}
         else:
@@ -171,29 +183,29 @@ class BaseNode(BaseAbstract):
 
 
     @classproperty
-    def inputs_spec(cls) -> dict[str, tf.TensorSpec]:
+    def inputs_spec(cls) -> dict[str, GenericSpec]:
         """ Convert input shape dictionary into TensorSpec objects """
         return cls._generate_spec(cls.inputs, 'inp')
     @classproperty
-    def input_spec(cls) -> dict[str, tf.TensorSpec]:
+    def input_spec(cls) -> dict[str, GenericSpec]:
         """ Backward compatibility """
         return cls.inputs_spec
         
     @classproperty
-    def outputs_spec(cls) -> dict[str, tf.TensorSpec]:
+    def outputs_spec(cls) -> dict[str, GenericSpec]:
         """ Convert output shape dictionary into TensorSpec objects """
         return cls._generate_spec(cls.outputs, 'out')
     @classproperty
-    def output_spec(cls) -> dict[str, tf.TensorSpec]:
+    def output_spec(cls) -> dict[str, GenericSpec]:
         """ Backward compatibility """
         return cls.outputs_spec
 
-    @staticmethod
-    def _generate_spec(io_shapes_spec: IO_TYPE, suffix: str) -> dict[str, tf.TensorSpec]:
+    @classmethod
+    def _generate_spec(cls, io_shapes_spec: IO_TYPE, suffix: str) -> dict[str, keras.InputSpec]:
         """ Generate a TensorSpec dict from the given input/output config """
 
         _valid_first = re.compile(r"^[A-Za-z0-9.]")
-        _valid_rest  = re.compile(r"[^A-Za-z0-9_.\\/>-]")
+        _valid_rest  = re.compile(r"[^A-Za-z0-9_.>-]")
         
         def safe_name(k: str) -> str:
             s = _valid_rest.sub("_", k.strip())
@@ -211,10 +223,19 @@ class BaseNode(BaseAbstract):
             _,ordered = zip(*sorted(coord_shapes.items(), key=lambda kv:kv[0]))
             return [None] + list(map(get_total, ordered))
 
-        return {feature: tf.TensorSpec(shape=parse(coord_shapes), name=safe_name(feature))
+        # return {feature: tf.TensorSpec(shape=parse(coord_shapes), name=safe_name(feature))
+        specs = {feature: keras.InputSpec(shape=parse(coord_shapes), name=safe_name(feature), dtype='float32')
                 for source, feature_shapes in io_shapes_spec.items()
                 for feature,  coord_shapes in feature_shapes.items()}
-
+        
+        if suffix == 'inp' and getattr(cls, 'include_distances', False):
+            for s1, features in cls.inputs.items():
+                inp_shape = dict(list(features.values())[0]) | {'z': 3}
+                
+                for s2 in cls.outputs:
+                    name = f'distance:{s1}:{s2}'
+                    specs[name] = keras.InputSpec(shape=parse(inp_shape), name=safe_name(name), dtype='float32')
+        return specs
 
     def _add_data_transform(self):
         from crest.model import Node
@@ -252,14 +273,29 @@ class BaseNode(BaseAbstract):
         ])
 
 
-    def _call(self, X, training=False):
+    def _call(self, X: dict[str, GenericTensor | list], training=False):
         """ Wraps self.call to provide data parsing / shape validation """
+        def unstack(v):
+            if isinstance(v, list):
+                return v
+            return [v]
+            if v.shape[0] is not None:
+                return tf.unstack(v)
+            return [v]
+                    
         # Group features by source
         Z = getattr(X, 'copy', lambda: X)()
         Y = {source: {k: Z.pop(k) for k, coords in features.items()} 
                 for source, features in self.inputs.items()}
+        
+        if getattr(self, 'include_distances', False):
+            for k in list(Z):
+                if k.startswith('distance:'):
+                    _, src, tgt = k.split(':')
+                    for i, v in enumerate(keras.ops.unstack(Z.pop(k), axis=-1)):                
+                        Y[src][f'distance:{tgt}:{i}'] = v           
         X = Z | Y
-
+        
         for source, features in X.items():
             if isinstance(features, dict):
                 # Handle any coordinate features
@@ -272,6 +308,7 @@ class BaseNode(BaseAbstract):
                     'tvl' : (20, [0, 1, 6, 8, 9, 10, 12, 15, 16, 19]),
                     'tvh' : (20, [2, 3, 4, 5, 17, 18]),
                 })
+            X[source] = {k: unstack(v) for k,v in features.items()}
 
         # Wrap output(s) with output_spec dictionary if not already
         out = self.call(X, training)
@@ -282,21 +319,55 @@ class BaseNode(BaseAbstract):
                 raise Exception(f'Expected {len(self.output_spec)} outputs'
                         + f' from {self}, but received {len(out)} value(s)')
             out = dict(zip(self.output_spec.keys(), out))
-
+        
         def match_shape(feature):
-            """ Match output shapes to the respective output_spec shape """
-            # TODO: Handle case where tgt_shape has internal dimensions sized 1
-            #       e.g. tgt_shape=(64,1,4,4) will cause this to fail even if
-            #            the given out tensor has the same shape initially, as
-            #            it will be squeezed and reshaped to (64,4,4,1)
-            squeezed  = tf.squeeze(out[feature])
-            tgt_shape = self.output_spec[feature].shape
-            rank_diff = tgt_shape.rank-tf.rank(squeezed)
-            extra_dim = tf.ones(tf.math.abs(rank_diff), dtype=tf.int32)
-            new_shape = tf.concat([tf.shape(squeezed), extra_dim], 0)
-            matched   = tf.reshape(squeezed, shape=new_shape)
-            return tf.ensure_shape(matched, tgt_shape)
-
+            """ Match output to spec shape by adding any necessary dims """
+            matching = output = out[feature]
+            expected = self.output_spec[feature].shape
+            
+            # If all dims accounted for, just perform a verification
+            current = keras.ops.shape(matching)
+            if len(current) == len(expected):
+                for c, e in zip(current, expected):
+                    if (e is None) or not isinstance(c, int):
+                        continue
+                    if c != e:
+                        err = f'{feature} output shape {expected=}: {output}'
+                        raise Exception(err)
+                return matching
+                        
+            # Remove all empty dimensions
+            empty = [i for i, shape in enumerate(current)
+                     if isinstance(shape, int) and shape == 1]
+            
+            # Only dims which are not None can be removed
+            for i in list(empty):
+                if len(expected) > i and expected[i] is None:
+                    empty.remove(i)
+            matching = keras.ops.squeeze(matching, empty)
+            
+            # Verify all dimension shapes match the respective spec shape
+            for i, shape in enumerate(expected):
+                if shape is None:
+                    continue
+                current = keras.ops.shape(matching)
+                
+                # Add empty dim at the end (e.g. [2, 2] -> [2, 2, 1])
+                if len(current) <= i:
+                    matching = keras.ops.expand_dims(matching, i)
+                    current = keras.ops.shape(matching)
+            
+                # Only validate dims with known shapes
+                if isinstance(current[i], int):
+                    if shape not in [1, current[i]]:
+                        err = f'{feature} output shape {expected=}: {output}'
+                        raise Exception(err)
+                        
+                    # Add empty dim prior to others (e.g. [2, 2] -> [2, 1, 2])
+                    if current[i] != shape:
+                        matching = keras.ops.expand_dims(matching, i)
+            return matching
+        
         # Ensure output shapes match their output spec shape
         return dict(zip(out, map(match_shape, out)))
 
@@ -390,8 +461,8 @@ class BaseNode(BaseAbstract):
             if feature in X:
                 values = X.pop(feature)
                 if not values.dtype.is_integer:
-                    values = tf.cast(values, tf.int32)
-                onehot = tf.one_hot(values, total_cls)
+                    values = keras.ops.cast(values, 'int32')
+                onehot = keras.ops.one_hot(values, total_cls)
                 for i in include_cls or range(total_cls):
                     X[f'{feature}_{i}'] = onehot[..., i]
         return X
@@ -400,19 +471,21 @@ class BaseNode(BaseAbstract):
     def convert_coords(self, X: dict) -> dict:
         """ Reshape coordinates to be stackable alongside other features """
         coord_names = ['datetime', 'latitude', 'longitude']
-        coord_shape = tf.shape(tlz.first(tlz.dissoc(X, *coord_names).values()))
-
+        first_coord = tlz.first(tlz.dissoc(X, *coord_names).values())
+        coord_shape = keras.ops.shape(first_coord[0] if isinstance(first_coord, list) else first_coord)
+        format_list = lambda v: [v] if isinstance(first_coord, list) else v
+        
         # Expected shape of other features is [batch, datetime, lat, lon]. If
         # we don't find a tensor with four dimensions, just return the original
         # dict. Better handling for other tensor shapes (e.g. static) should be
         # implemented in the future.
-        if coord_shape.shape[0] != 4: return X
-
+        if len(coord_shape) != 4: return X
+   
         def add_hist(data, days, label): 
             """ Add histogram of converted datetime values for final items """
             if not self.plot_histogram: return
             def add():
-                with tf.name_scope(''):
+                with keras.name_scope(''):
                     tf.summary.histogram(**{
                         'name' : f'{self}-call/datetime_{days}_last{label}',
                         'data' : data,
@@ -426,33 +499,35 @@ class BaseNode(BaseAbstract):
                 # Tile coordinate features into 3d cube
                 coordinate = X.pop(name)
                 tiles, idx = {
-                    'datetime'  : ([1, 1, nlt, nln], [slice(None), slice(None), None, None]),
-                    'latitude'  : ([1, ndt, 1, nln], [slice(None), None, slice(None), None]),
-                    'longitude' : ([1, ndt, nlt, 1], [slice(None), None, None, slice(None)]),
+                    'datetime'  : ([1, 1, nlt, nln], (slice(None), slice(None), None, None)),
+                    'latitude'  : ([1, ndt, 1, nln], (slice(None), None, slice(None), None)),
+                    'longitude' : ([1, ndt, nlt, 1], (slice(None), None, None, slice(None))),
                 }[name]
-                
+    
+                if isinstance(coordinate, list):
+                    coordinate = coordinate[0]
+                    
                 # Just duplicate latitude and longitude along other dimensions
                 if name != 'datetime':
-                    X[name] = tf.tile(coordinate[idx], tiles)
+                    X[name] = format_list( keras.ops.tile(coordinate[idx], tiles) )
                     continue
                     
-                # Convert datetime to value between [0, seconds in day & year]
-                for n_days in [1, 365]:
-                    sec_in_day = 60 * 60 * 24 * n_days
-                    coord_secs = 60 * tf.cast(coordinate, tf.float64) # datetime[m] -> seconds
-                    coord_secs = tf.math.floormod(coord_secs, sec_in_day)
+                # Convert datetime to value between [0, minutes in day & year]
+                for n_days in [1, 365.2425]:
+                    phase_mins = 60 * 24 * n_days
+                    coord_mins = keras.ops.mod(coordinate, phase_mins)
 
                     # Histograms of datetime for final timestep and sample
-                    add_hist(coord_secs[:,-1], n_days, 'step')
-                    add_hist(coord_secs[-1], n_days, 'sample')
+                    add_hist(coord_mins[:,-1], n_days, 'step')
+                    add_hist(coord_mins[-1], n_days, 'sample')
 
                     # Convert to radians
-                    coord_rads = tf.cast(coord_secs * 2 * np.pi / sec_in_day, tf.float32)
+                    coord_rads = coord_mins * 2 * np.pi / phase_mins
         
                     # Convert datetime to set of two periodic sin/cos features
                     for op in ['sin', 'cos']:
-                        periodic = getattr(tf.math, op)(coord_rads)
-                        X[f'{op}_{n_days}'] = tf.tile(periodic[idx], tiles)
+                        periodic = getattr(keras.ops, op)(coord_rads)
+                        X[f'{op}_{n_days:.0f}'] = format_list( keras.ops.tile(periodic[idx], tiles) )
                         
                         # Histograms of final periodic value for step & sample
                         add_hist(periodic[:,-1], n_days, f'step_{op}')
@@ -461,7 +536,7 @@ class BaseNode(BaseAbstract):
 
 
 
-class _NodeWrap(tf.keras.layers.Layer):
+class _NodeWrap(keras.layers.Layer):
     """ Wraps a callable / object in a keras layer, adding any internal 
         tensorflow / keras objects to the wrapped object to allow keras
         to track the weights correctly.
@@ -511,8 +586,8 @@ class _NodeWrap(tf.keras.layers.Layer):
 
     def call(self, X, *args, **kwargs):
         """ Adds output histograms for tensorboard visualization """
-        with tf.name_scope(''):
-            with tf.name_scope(self.name):
+        with keras.name_scope(''):
+            with keras.name_scope(self.name):
                 self._add_histograms(X, 'input')
                 if 'args' in kwargs and 'kwargs' in kwargs:
                     args, kwargs = kwargs['args'], kwargs['kwargs']
@@ -614,48 +689,40 @@ def loss_wrapper(
     def calculate_loss(y_true, y_pred):
         """ Mask NaNs and apply normalization before calculating loss """
 
-        def mask_nans(*arrs) -> tuple:
-            """ Mask the union of NaN indices for given arrays """
-            # Extract feature value if a dict is given, then mask NaNs
-            arrs = [tf.reshape(a[feature], (-1,)) if isinstance(a, dict) else a for a in arrs]               
-            mask = reduce(and_, map(tf.math.is_finite, arrs))
-            return tuple((tf.boolean_mask(a, mask) for a in arrs))
+        def gather_and_log(key, **kwargs):
+            """ Extract, log, and return feature values and valid indicator """
+            labels, values = map(list, zip(*kwargs.items()))
 
-        # Sanity check that y_true and y_pred have the same sizes
-        tf.debugging.assert_equal(tf.size(y_true), tf.size(y_pred))
-        
-        # Select the requested feature and valid samples
-        arrs = [a[feature] if isinstance(a, dict) else a for a in [y_true, y_pred]]               
-        mask = reduce(and_, map(tf.math.is_finite, arrs))
-        flag = tf.math.reduce_any(mask)
+            for i, val in enumerate(values):
+                if isinstance(val, dict):
+                    values[i] = val[feature]
+
+            flat = [keras.ops.reshape(v, (-1,)) for v in values]
+            mask = reduce(and_, map(keras.ops.isfinite, flat))
+            flag = keras.ops.any(mask)
+            logging(f'{scope}/{feature}/{key}/', dict(zip(labels, flat)))
+            return values, flag
 
         # Label the targets/predictions with their transformation
-        y_label = lambda y,f: y if f is None else f'{getattr(f,"__name__",f)}({y})'
-
-        # Mask NaNs in both targets and predictions, and log results
-        masked = mask_nans(y_true, y_pred)
-        labels = ['y_true', y_label('y_pred', postprocess)]
-        logging(f'{scope}/{feature}/original/', dict(zip(labels, masked)))
-
+        ylabel = lambda y,f: y if f is None else f'{getattr(f,"__name__",f)}({y})'
+        labels = ['y_true', ylabel('y_pred', postprocess)]
+        y_dict = dict(zip(labels, [y_true, y_pred]))
+        values, flag = gather_and_log('original', **y_dict)
+        
         # Preprocess the target if we want to calculate normalized loss
         if transform is not None:
+            y_true, y_pred = values
             y_true = transform({feature: y_true})
             y_pred = (y_pred_raw or (lambda: transform({feature: y_pred})))()
+            
+            labels = [ylabel('y_true', transform), 'y_pred']
+            y_dict = dict(zip(labels, [y_true, y_pred]))
+            values, flag = gather_and_log('transform', **y_dict)
 
-            arrs = [a[feature] if isinstance(a, dict) else a for a in [y_true, y_pred]]               
-            mask = reduce(and_, map(tf.math.is_finite, arrs))
-            flag = tf.math.reduce_any(mask)
-
-            masked = mask_nans(y_true, y_pred)
-            labels = [y_label('y_true', transform), 'y_pred']
-            logging(f'{scope}/{feature}/transform/', dict(zip(labels, masked)))
-
-        # Calculate and log the final loss, then return if any exist
-        loss = loss_func(*masked)
-        # zero = tf.size(loss) == 0
+        # Calculate and log the final loss, then return if any values are valid
+        loss = loss_func(*values)
         logging(f'{scope}/{feature}/loss/', {'loss': loss}, False)
-        # return tf.cond(zero, lambda: 0., lambda: tf.reduce_mean(loss))
-        return tf.cond(flag, lambda: tf.reduce_mean(loss), lambda: 0.)
+        return keras.ops.cond(flag, lambda: keras.ops.mean(loss), lambda: 0.)
 
     # Accumulate batches over multiple steps for more efficient plotting
     batches = {}
@@ -663,7 +730,7 @@ def loss_wrapper(
     # Defines various logging functionality in a separate helper method
     def logging(scope: str, arrs: dict, do_scatter=plot_scatter) -> None:
         """ Output debug logs, scatter plots, histograms """
-
+        
         def scatter(y1: np.ndarray, y2: np.ndarray, **kwargs) -> np.ndarray:
             """ Create scatter plot and return the image as a numpy array """
             scope = kwargs['key']
@@ -674,22 +741,28 @@ def loss_wrapper(
             k2 = kwargs.get('y2_label', 'y_pred')
             y2 = batches[scope][k2]
 
-            y1 = np.concatenate(y1, axis=0)
-            y2 = np.concatenate(y2, axis=0)
+            y1 = np.concatenate(y1, axis=0).flatten()
+            y2 = np.concatenate(y2, axis=0).flatten()
             batches[scope].clear()
 
+            mask = np.isfinite(y1) & np.isfinite(y2)
+            y1 = y1[mask]
+            y2 = y2[mask]
+            
             # Write the plot image to the array variable
             with plot_to_array(dpi=150, width=4, height=3.8) as array:
-                ys = y1,y2 = y1.flatten(), y2.flatten()
-                try:    r2 = linregress(*ys)[2] ** 2 # pyright: ignore
+                try:    r2 = linregress(y1, y2)[2] ** 2 # pyright: ignore
                 except: r2 = np.nan
-                try:    R2 = r2_score(*ys)
+                try:    R2 = r2_score(y1, y2)
                 except: R2 = np.nan
                     
                 # Scatter plot with KDE contours
-                sns.jointplot(x=y2, y=y1).plot_joint(sns.kdeplot, 
-                    color='r', zorder=1, levels=6, alpha=0.7)
-                
+                p = sns.jointplot(x=y2, y=y1)
+                try:
+                    p.plot_joint(sns.kdeplot, color='r', zorder=1, levels=6, alpha=0.7)
+                except ValueError as e:
+                    print(f'\nWarning "{e}": {scope=}\n\t{k1}={y1}\n\t{k2}={y2}')
+                    
                 # 1:1 diagonal line
                 plt.axline((0,0), slope=1,ls='--',color='k',alpha=0.5,zorder=2)
 
@@ -710,6 +783,15 @@ def loss_wrapper(
                 plt.ylim((minim, maxim))
                 return array
 
+        # Only tensorflow supported for logging to tensorboard
+        if keras.backend.backend() != 'tensorflow':
+            return
+        
+        # Remove NaNs
+        mask = reduce(and_, map(tf.math.is_finite, arrs.values()))
+        arrs = {k: tf.boolean_mask(v, mask) if len(mask.shape) else v 
+                for k,v in arrs.items()}
+        
         # Print various statistics for debugging
         if debug:
             align = max(map(len, arrs))
@@ -720,8 +802,10 @@ def loss_wrapper(
                 for output in [f'\n{k:>{align}}'] + stats(arr) ])
 
         record = tf.summary.should_record_summaries()
-        if isinstance(record, bool) and record:
+        # record = any(v.size > 100 for vals in batches.values() for v in vals.values())
+        if record:#isinstance(record, bool) and record:
             # Log array histograms to tensorboard
+            # with keras.name_scope(scope.replace("@",".")): # Can't contain '/'?
             with tf.name_scope(scope.replace("@",".")):
                 for k, v in arrs.items(): 
                     tf.summary.histogram(k, v)
@@ -742,7 +826,8 @@ def loss_wrapper(
             # Accumulate outside of the TF context across graph executions
             tf.numpy_function(accumulate_batch, (y1, y2), tf.int64)
             
-            if isinstance(record, bool) and record:
+            if record:#if isinstance(record, bool) and record:
+                # with keras.name_scope(f'scatter/{scope.replace("@",".")}'): # Can't contain '/'?
                 with tf.name_scope(f'scatter/{scope.replace("@",".")}'):
                     image = lambda label, *y, **kw: tf.summary.image(label,
                         tf.numpy_function(partial(scatter, **kw), y, tf.uint8))

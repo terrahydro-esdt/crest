@@ -1,24 +1,26 @@
 """ This module implements the Hierarchal Graph structure for building coupling models """
 
 from __future__ import annotations
-import logging
-import warnings
-import re
-from functools import cached_property,wraps
-from functools import cache
-from typing import Union
-from collections.abc import Callable
-import inspect
-import numpy as np
 from prettytable.colortable import ColorTable, Themes
-import tensorflow as tf
+from collections.abc import Callable
+from functools import cached_property, cache, wraps
+from typing import Union
+
 import networkx as nx
+import numpy as np
+import warnings
+import inspect
+import logging
+import keras
 import dill
+import re
+
 from .TensorGraph import TensorGraph, ImproperTensorGraphError
 from .graphs.NetworkXGraph import NetworkXGraph
 from .Registry import Registry
 
 logger = logging.getLogger(__name__)
+
 
 class HierarchalTensorGraph(TensorGraph):
     """
@@ -1122,8 +1124,8 @@ class HierarchalTensorGraph(TensorGraph):
         if edge['labels']:
             for k in _X:
                 # If it does not  have label remove it
-                if '>>' in k:
-                    label = k.split('>>')[0]
+                if '__' in k:
+                    label = k.split('__')[0]
                     lbls.append(label)
                     if label in edge['labels']:
                         keep.append(k)
@@ -1162,15 +1164,15 @@ class HierarchalTensorGraph(TensorGraph):
         # Get list of all labels
         labels = []
         for k in X:
-            if '>>' in k:
-                labels.append(k.split('>>')[0])
+            if '__' in k:
+                labels.append(k.split('__')[0])
 
         labels = list(set(labels))
         
         grouped = {k : {} for k in labels}
         for k,v in X.items():
-            if '>>' in k:
-                label,key = k.split('>>')
+            if '__' in k:
+                label,key = k.split('__')
                 grouped[label][key] = v
             else:
                 grouped[k] = v
@@ -1291,13 +1293,12 @@ class HierarchalTensorGraph(TensorGraph):
                                     collect[m] = []
                                 collect[m].append(n)
                         else:
-                            collect = tf.stack(v) if return_seq else v[-1] 
+                            collect = keras.ops.stack(v) if return_seq else v[-1] 
 
                     if isinstance(collect,dict):
                         for m,n in collect.items():
                             if return_seq:
-                                #TODO: should not have tf functions here
-                                collect[m] = tf.stack(n)
+                                collect[m] = keras.ops.stack(n)
                             else:
                                 collect[m] = v[-1]
 

@@ -20,6 +20,7 @@ class Indexer:
 
     
     def __post_init__(self):
+        """ Perform checks and determine coord order after initialization """
         if self.coords.ndim != 1:
             raise ValueError(f'Coordinate "{self.name}" must be 1-D')
         inc = np.all(self.coords[1:] >= self.coords[:-1])
@@ -31,10 +32,12 @@ class Indexer:
     
     @property
     def size(self) -> int:
+        """ Total size of the coordinates """
         return int(self.coords.size)
 
     
     def find(self, coords: np.ndarray) -> np.ndarray:
+        """ Find the location of a set of coordinates within the schema """
         schema = self.coords[::1 if self._asc else -1]
         search = np.searchsorted(schema, coords, side='left')
         index = np.clip(search, 0, self.size)

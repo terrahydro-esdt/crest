@@ -157,6 +157,7 @@ class Sample:#(BaseAbstract):
         """ Extract the requested features into a list """
         # Load data / groups lazily
         data = None
+        dims = None
         grps = None
         vals = []
 
@@ -164,29 +165,36 @@ class Sample:#(BaseAbstract):
             i = str(i).replace('$', '/')
             if i in self.key_label:
                 return self.key_label.index(i)
-            try: 
-                return int(i)
-            except:
-                raise Exception(f'Unknown format: {i=} {self.key_label=}')
+            try:    return int(i)
+            except: pass
+            raise Exception(f'Unknown key/format: {i=} {self.key_label=}')
                 
         for feature_index in (features or self.features):
             if isinstance(feature_index, str):
-                # Handle feature differences (i.e. A-B)
-                # if feature_index.startswith('difference:'):
-                #     if data is None: data = self.data
-                #     _, d1, d2 = feature_index.split(':')
-                #     f1, i1, *_ = d1.split('@')
-                #     f2, i2, *_ = d2.split('@')
-                #     assert(i1 != i2), f'{feature_index=} {i1=} {i2=}'
-                #     v1 = data[f1][get_index(i1)]
-                #     v2 = data[f2][get_index(i2)]
-                #     diff = v1 - v2
-                #     diff[diff != 0] = abs(diff[diff != 0]) ** 0.5 * np.sign(diff[diff != 0])
-                #     vals.append(diff)
 
-                if '>>' in feature_index:
+                # Handle distance between datafile coordinates
+                # e.g. 'distance:ERA5.zarr:SMAP.zarr' or 'distance:3:7'
+                if feature_index.startswith('distance:'):
                     if data is None: data = self.data
-                    label,feature = feature_index.split('>>',1)
+                    if dims is None: dims = self.dims
+                    if feature_index.count(':') != 2:
+                        raise ValueError(f'{feature_index=} does not match the'
+                            + ' expected format "distance:{{key1}}:{{key2}}"')
+                        
+                    d1, d2 = feature_index.split(':')[1:]
+                    i1, i2 = get_index(d1), get_index(d2)
+                    d1, d2 = self.key_label[i1], self.key_label[i2]
+                    assert(i1 != i2), f'{feature_index=}: {i1=} == {i2=}'
+
+                    miss = lambda k: np.array([np.nan]).astype(
+                                    'datetime64' if k=='datetime' else 'float32')
+                    item = lambda i,k: self.container[i]['coords'].get(k, miss(k))
+                    diff = lambda k: item(i1, k)[:, None] - item(i2, k)[None]
+                    vals.append({k: diff(k) for k in dims if k != 'features'})
+
+                elif '__' in feature_index:
+                    if data is None: data = self.data
+                    label,feature = feature_index.split('__',1)
                     # Labels are ignored if not found
                     if label not in self.key_label:
                         label = self._features.get(feature, [0])[0]

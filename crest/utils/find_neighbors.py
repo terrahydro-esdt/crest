@@ -333,13 +333,47 @@ def multiset_single(
     # num_samples  > 0: generate the requested number of samples (num_samples)
     # num_samples  < 0: generate all samples with full
     sampler = multiset_single_numba if num_samples == 0 else multiset_full_numba
-
+    assert(len(array_len) > 1), [len(coordinates), [c.shape for c in coordinates]]
     locus = method == 'locus'
     table = sampler(c, array_len, array_idx, num_samples, seed, shuffle, locus)
     order = np.argsort(ordered)
     table = np.array([i[t] for t,i in zip(table.T[order], orig_idxs)]).T
     return table[np.lexsort(table.T[::-1])]
+
+
+def format_resolutions(coordinates, resolutions, method, radius, eps):
+    formatted = []
     
+    # Format resolutions into (left side, right side) 2D resolution arrays
+    for i, res in enumerate(resolutions):
+        c_shp = coordinates[i].shape 
+
+        # Uniform resolution, simply duplicate for left/right side
+        if res.ndim == 1:
+            res = np.tile(res, (2, 1)).T[None]
+            assert(res.shape == (1, c_shp[-1], 2)), [res.shape, c_shp]
+        
+        # Non-uniform resolution, extend to endpoints for left and right
+        elif res.ndim == 2:
+            assert(res.shape[1] == (c_shp[0]-1)), [res.shape, c_shp]
+            res = np.stack([
+                np.c_[res[:, :1], res].T,
+                np.c_[res, res[:,-1:]].T,
+            ], axis=-1)
+            assert(res.shape[0] == c_shp[0]), [res.shape, c_shp]
+
+        # Full left/right resolution vectors already provided
+        else: assert(res.shape[0] == c_shp[0]), [res.shape, c_shp]
+        assert(res.shape[-1] == 2), res.shape
+
+        # Place left/right dimension on the first axis
+        if method == 'brute': 
+            res = np.moveaxis(res, -1, 0)
+
+        # Left/right tolerance is half the resolution (plus a small epsilon)
+        formatted.append(res * radius + eps)
+    return formatted
+                    
     
 def find_neighbors(
     coordinates : Collection[np.ndarray], 
@@ -630,53 +664,28 @@ def find_neighbors(
             # Ensure resolutions are in the correct format
             # resolutions = list(map(np.atleast_1d, resolutions))
             if method in ['brute', 'locus', 'multi']:
-                # Format resolutions into (left side, right side) 2D resolution arrays
-                for i, res in enumerate(resolutions):
-                    c_shp = coordinates[i].shape 
+                resolutions = format_resolutions(coordinates, resolutions, method, radius, eps)
 
-                    # Uniform resolution, simply duplicate for left/right side
-                    if res.ndim == 1:
-                        res = np.tile(res, (2, 1)).T[None]
-                        assert(res.shape == (1, c_shp[-1], 2)), [res.shape, c_shp]
-                    
-                    # Non-uniform resolution, extend to endpoints for left and right
-                    elif res.ndim == 2:
-                        assert(res.shape[1] == (c_shp[0]-1)), [res.shape, c_shp]
-                        res = np.stack([
-                            np.c_[res[:, :1], res].T,
-                            np.c_[res, res[:,-1:]].T,
-                        ], axis=-1)
-                        assert(res.shape[0] == c_shp[0]), [res.shape, c_shp]
-
-                    # Full left/right resolution vectors already provided
-                    else: assert(res.shape[0] == c_shp[0]), [res.shape, c_shp]
-                    assert(res.shape[-1] == 2), res.shape
-
-                    # Place left/right dimension on the first axis
-                    if method == 'brute': 
-                        resolutions[i] = np.moveaxis(res, -1, 0)
-                    else: resolutions[i] = res
-
-                    # Left/right tolerance is half the resolution (plus a small epsilon)
-                    resolutions[i] *= radius
-                    resolutions[i] += eps
             else:
                 resolutions = [r[..., 0] if len(r.shape) > 2 else r for r in resolutions]
                 resolutions = [np.nanmean(r, axis=0) if len(r.shape) > 1 else r for r in resolutions]
                 resolutions = list(map(np.atleast_1d, resolutions))
-
+            
             coordinates_not_req = [c for c,r in zip(coordinates, is_required) if not r]
             resolutions_not_req = [c for c,r in zip(resolutions, is_required) if not r]
             
             coordinates_original = [c for c,r in zip(coordinates, is_required) if r]
             resolutions_original = [c for c,r in zip(resolutions, is_required) if r]
-
+            
             coordinates = list(coordinates_original)
             resolutions = list(resolutions_original)
             
             if method in ['locus', 'multi']:
-                seed  = (seed or 0) + rng.integers(1e8)
-                table = multiset_single(method, coordinates, resolutions, is_required, num_samples, shuffle, logger, seed)
+                if len(coordinates) > 1:
+                    seed  = (seed or 0) + rng.integers(1e8)
+                    table = multiset_single(method, coordinates, resolutions, is_required, num_samples, shuffle, logger, seed)
+                else:
+                    table = np.arange(len(coordinates[0]))[:, None]
                 order = grid_order = np.arange(len(coordinates_original))
             else:
 

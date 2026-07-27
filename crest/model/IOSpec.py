@@ -1,12 +1,9 @@
 """ This module implements the input/ouput spec object used by models """
 
 from __future__ import annotations
-from crest.base import BaseAbstract
+from .TensorSpec import TensorSpec
 from collections.abc import Collection
 from collections import UserDict
-import numpy as np
-import tensorflow as tf
-from .TensorSpec import TensorSpec 
 import dill
 
 class IOSpec(UserDict):
@@ -116,7 +113,7 @@ class IOSpec(UserDict):
                 shape = self._genshape(v['coord_shapes'][key])
 
                 if v['labeled']:
-                    _key = k + '>>' + key
+                    _key = k + '__' + key
 
                 ts = {'shape' : shape, 'name' : _key, 'dtype' : v['dtype'][key]}
                 spec[_key] = TensorSpec(ts)
@@ -142,13 +139,13 @@ class IOSpec(UserDict):
             # Add labels if appropriate
             for key in v['keys']:
                 if v['labeled']:
-                    _key = k + '>>' + key
+                    _key = k + '__' + key
                 coord_shapes[_key] = v['coord_shapes'][key]
         return coord_shapes
     
     def __repr__(self):
         """ Returns string listing keys in the IOSpec """
-        return f'IOSpec({str(list(self.keys()))})'
+        return f'IOSpec({str(list(self.keys))})'
     
     def encode(self):
         """ Serialization dict """

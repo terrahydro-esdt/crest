@@ -2,7 +2,7 @@
 
 import dill
 from .LSTMCell import LSTMCell
-from ...model import HierarchalTensorGraph
+from ..model import HierarchalTensorGraph
 
 class LSTM(HierarchalTensorGraph):
     """ 

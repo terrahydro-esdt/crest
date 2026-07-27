@@ -41,6 +41,11 @@ class TensorSpec(object):
             self.spec_dict['dtype'] = specs[0].dtype.name
             self.spec_dict['name'] = specs[0].name
 
+        elif len(specs) == 1 and isinstance(specs[0], keras.InputSpec):
+            self.spec_dict['shape'] = self._modify_shape(specs[0].shape)
+            self.spec_dict['dtype'] = keras.backend.standardize_dtype(specs[0].dtype)
+            self.spec_dict['name'] = specs[0].name
+        
         # specs is a tuple
         elif len(specs) >= 1:
             self.spec_dict['shape'] = self._modify_shape(specs[0])
@@ -117,7 +122,7 @@ class TensorSpec(object):
     @property
     def keras(self):
         """ Keras input tensor """
-        return keras.Input(
+        return keras.InputSpec(
             shape=self.shape,
             dtype=self.dtype,
             name=self.name)

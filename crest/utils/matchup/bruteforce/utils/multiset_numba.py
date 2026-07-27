@@ -1609,6 +1609,14 @@ def multiset_full_numba(arrays, array_lens, array_idxs, num_samples, seed, shuff
     tasks_size = [np.empty((max_tasks[0],), dtype=np.int32) for _ in range(n_threads)]
     tasks_swap = [np.empty((n_arrays,), dtype=np.int32) for _ in range(n_threads)]
 
+    # Keep track of the number of tasks for each task size
+    tasks_size_count = [np.zeros(n_arrays+1, dtype=np.int32) for _ in range(n_threads)]
+    tasks_size_probs = np.zeros(n_arrays+1, dtype=np.float32)
+
+    sampling_alpha = 2.0
+    for size in range(1, n_arrays+1):
+        tasks_size_probs[size] = size ** -sampling_alpha
+    
     # Source arrays to match against the target array
     # source = np.zeros((n_threads, n_arrays, n_cols), dtype=dtype)
     # if debug: 
@@ -1733,8 +1741,9 @@ def multiset_full_numba(arrays, array_lens, array_idxs, num_samples, seed, shuff
         tasks_queue[tid][:t_rows, 0] = thread_indices  # Array 0 coordinate row index
         tasks_order[tid][:t_rows, 0] = 0           # Order of arrays composing the task (only contains array 0)
         tasks_size[tid][:t_rows] = 1               # Size of the task (only one array in task starting out)
+        tasks_size_count[tid][1] += 1
         tasks_left = t_rows                       # Only one task remaining to begin with
-
+        
         match_count = 0  # 0 matches found for current zero_index
         n_task = 0       # 0 tasks processed
         
@@ -1759,24 +1768,62 @@ def multiset_full_numba(arrays, array_lens, array_idxs, num_samples, seed, shuff
 
             if shuffle and tasks_left:
                 # Get a random task index, and swap it with the last task index
-                task_index = np.random.randint(0, tasks_left+1)
+                # task_index = np.random.randint(0, tasks_left+1)
                 
-                # Numpy requires the use of a temporary variable to swap
-                tasks_swap[tid][0] = tasks_size[tid][tasks_left]
-                tasks_size[tid][tasks_left] = tasks_size[tid][task_index] 
-                tasks_size[tid][task_index] = tasks_swap[tid][0]
-    
-                tasks_swap[tid][:] = tasks_order[tid][tasks_left]
-                tasks_order[tid][tasks_left] = tasks_order[tid][task_index] 
-                tasks_order[tid][task_index] = tasks_swap[tid]
-    
-                tasks_swap[tid][:] = tasks_queue[tid][tasks_left]
-                tasks_queue[tid][tasks_left] = tasks_queue[tid][task_index] 
-                tasks_queue[tid][task_index] = tasks_swap[tid]
+                # # Selection inversely weighted with respect to task length
+                # prob_alpha = 0.
+                # task_probs = tasks_size[tid][:tasks_left+1] ** (-prob_alpha)
+                # task_probs = task_probs / task_probs.sum()
+
+                # # Manually perform np.random.choice since `p` is unsupported
+                # task_index = np.searchsorted(np.cumsum(task_probs), np.random.random(), side='right')
+
+                # Rejection sampling
+                max_prob = 0.0
+                for size in range(1, n_arrays+1):
+                    if tasks_size_count[tid][size] > 0:
+                        max_prob = tasks_size_probs[size]
+                        break
+
+                task_index = np.int32(-1)
+                max_attempts = 100
+                for _ in range(max_attempts):
+                    task_index = np.random.randint(0, tasks_left+1)
+                    if np.random.random() < (tasks_size_probs[tasks_size[tid][task_index]] / max_prob):
+                        break
+                    task_index = -1
+                if task_index == -1:
+                    total = 0.0
+                    for size in tasks_size[tid][:tasks_left+1]:
+                        total += tasks_size_probs[size]
+                    
+                    total *= np.random.random()
+                    running = 0.0
+                    for i, size in enumerate(tasks_size[tid][:tasks_left+1]):
+                        running += tasks_size_probs[size]
+                        if total < running:
+                            task_index = np.int32(i)
+                            break
+                            
+                if task_index > -1:
+                    
+                    # Numpy requires the use of a temporary variable to swap
+                    tasks_swap[tid][0] = tasks_size[tid][tasks_left]
+                    tasks_size[tid][tasks_left] = tasks_size[tid][task_index] 
+                    tasks_size[tid][task_index] = tasks_swap[tid][0]
+        
+                    tasks_swap[tid][:] = tasks_order[tid][tasks_left]
+                    tasks_order[tid][tasks_left] = tasks_order[tid][task_index] 
+                    tasks_order[tid][task_index] = tasks_swap[tid]
+        
+                    tasks_swap[tid][:] = tasks_queue[tid][tasks_left]
+                    tasks_queue[tid][tasks_left] = tasks_queue[tid][task_index] 
+                    tasks_queue[tid][task_index] = tasks_swap[tid]
 
             # Get info for the current task (last index in queue)
             task_size = tasks_size[tid][tasks_left]
             task_order = tasks_order[tid][tasks_left, :task_size]
+            tasks_size_count[tid][task_size] -= 1
 
             # if max(task_order) >= n_arrays:
             #     print('ERROR:',tid)
@@ -2181,6 +2228,7 @@ def multiset_full_numba(arrays, array_lens, array_idxs, num_samples, seed, shuff
                 # tasks_order[tid][:n_match2, task_size] = target
 
                 # --- Store new tasks at the end of the array ---
+                tasks_size_count[tid][task_size+1] += n_match2
                 tasks_size[tid][tasks_left:tasks_left+n_match2] = task_size+1
                 tasks_order[tid][tasks_left:tasks_left+n_match2, :task_size] = tasks_order[tid][tasks_left, :task_size]
                 tasks_order[tid][tasks_left:tasks_left+n_match2, task_size] = target

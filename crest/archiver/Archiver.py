@@ -49,6 +49,9 @@ class Archiver(Writer):
         Allow removing an already existing zarr at the output path.
     verbose     : bool
         Whether information should be printed when writing to the output zarr.
+    **kwargs
+        Additional keyword arguments are used during writer initialization. See
+        StageWriter and ZarrWriter class docstrings for available options.
         
     """
     
@@ -60,6 +63,7 @@ class Archiver(Writer):
         write_every : int = 1000,
         overwrite   : bool = False,
         verbose     : bool = False,
+        **kwargs
     ):
         # Make a Path-like object
         if isinstance(output_path, str):
@@ -88,15 +92,15 @@ class Archiver(Writer):
         if chunksizes or (not data_schema.chunksizes):
             data_schema = data_schema.chunk(chunksizes or 'auto')
             
-        self.stage_writer = StageWriter(**{
+        self.stage_writer = StageWriter(**({
             'data_schema' : data_schema, 
             'stage_path'  : stage_path
-        })
-        self.zarr_writer = ZarrWriter(**{
+        } | kwargs))
+        self.zarr_writer = ZarrWriter(**({
             'data_schema' : data_schema, 
             'output_path' : output_path, 
             'stage_writer': self.stage_writer,
-        })
+        } | kwargs))
         self.schema = data_schema
         self.verbose = verbose
         self.write_every = write_every

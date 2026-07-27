@@ -4,6 +4,7 @@ from .ensure_with      import ensure_with
 from .find_neighbors   import find_neighbors
 from .induce_bins      import induce_bins
 from .interactive      import interactive
+from .json_safe        import json_safe
 from .limit_calls      import limit_calls
 from .Metrics          import Metrics
 from .optimize_blocks  import optimize_blocks
@@ -15,4 +16,4 @@ from .silence_warnings import silence_warnings
 from .Stopwatch        import Stopwatch
 from .synthetic_data   import synthetic_data
 from .TimedHandler     import TimedHandler
-from .sys_metrics       import SysMetrics
+from .sys_metrics      import SysMetrics

@@ -4,7 +4,24 @@ import time
 
 
 class MultiBatcherQueue:
+    """ Replicates multiprocessing Queue API while wrapping multiple Queues.
 
+    Notes
+    -----
+    This class handles abstracting an interface over multiple Queues in order
+    to allow each BlockConfig to pass samples via its own independent pipe.
+
+    Parameters
+    ----------
+    size : int
+        Size of the Queue (same for every Queue object).
+    combiner : BatchCombiner
+        The BatchCombiner object in the current MultiBatcher pipeline that is
+        handling combining batches sourced from different BlockConfigs.
+    context : 
+
+    """
+    
     def __init__(self, size: int, combiner, context):
         self.combiner = combiner
         self.queues = {c: context.Queue(size) for c in combiner.configs}

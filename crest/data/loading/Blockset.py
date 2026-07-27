@@ -293,7 +293,7 @@ class Blockset(BaseSet):
         task_mb = f'Task={task_bytes/1e6:.0f} MB'
         with self.benchmark(f'_grouped (shape={matches.shape} | {task_mb})'):
             matches, divs, lengths = self._grouped(matches, counts, task_bytes, task_samples)
-
+    
         # Create a dask dataframe first, then transform into a dask
         # array (in order to satisfy dask's built in assumptions)
         kwargs = {
@@ -450,12 +450,121 @@ class Blockset(BaseSet):
                 
         # Skip the full check for any actual valid windows
         if fast: return True
-        # print(f'is_valid: {self}:')
+        
         with self.benchmark('valid_windows.size'):
             for block in by_sparsity:
-                # print(f'\t{block=} {block.is_required=} {block.valid_windows.size=}')
                 if block.is_required and not block.valid_windows.size:
                     self.logger.debug(f'\t{block} failed valid_windows.size')
                     return False
         return True
+
+
+    def diagnose_empty(self, drop_datafiles : list | None = None, label='Block') -> str:
+        """ Diagnostic function to determine why no samples are produced """
+        self = self._exclude(drop_datafiles or [], None)
         
+        # Sort by sparsity, assuming higher values are more likely to fail
+        by_sparsity = sorted(self, key=lambda b:b.sparsity, reverse=True)
+
+        # Include coordinate bounds
+        def bound(f, coords, labels):
+            values = f([f(c, axis=tuple(range(c.ndim-1))) for c in coords], axis=0)
+            bounds = dict(zip(labels, values))
+            for k,v in bounds.items():
+                if k == 'datetime':
+                    bounds[k] = np.atleast_1d(v).astype('datetime64[m]')[0]
+                else:
+                    bounds[k] = f'{v:.3f}'
+            return ' | '.join(f'{k}={v}' for k,v in bounds.items())
+        
+        coord = self.coords
+        minim = bound(np.nanmin, coord, self.dims[0])
+        maxim = bound(np.nanmax, coord, self.dims[0])
+        message = f'\tMin Coord: {minim}\n\t\tMax Coord: {maxim}\n\t\t'
+        
+        for block in by_sparsity:
+            if block.fast_invalid_check:
+                return f'{message}No data available in {block=}'
+
+        for block in by_sparsity:
+            if block.is_required and not block.valid_windows.size:
+                with xr.set_options(display_max_rows=999):
+                    message = f'{message}No windows available in {block=}\n'
+                    message+= f'\t{block.dataset.notnull().sum().compute()}'
+                return message
+                    
+        # There must exist at least one Block that independently fails to match
+        for i in range(len(self)):
+            b1 = self[i]
+            
+            for j in range(i+1, len(self)):
+                b2 = self[j]
+
+                matches, counts = find_neighbors(
+                    [b.valid_coords.copy() for b in [b1, b2]], 
+                    [b.valid_resolution.copy() for b in [b1, b2]],
+                    [b.is_required for b in [b1, b2]],
+                    grid_labels = [str(b) for b in [b1, b2]],
+                    axis_labels = [b.dims for b in [b1, b2]],
+                    num_samples = 10,
+                    method  = 'multi',
+                    logger  = None,
+                    shuffle = self.shuffle,
+                    debug   = False,
+                    seed    = 0,
+                )
+
+                if matches.size == 0:
+                    # d1 = b1.dataset.to_array('features').notnull().mean('features').compute()
+                    d1 = b1.dataset.to_array('features').notnull().any('features').compute()
+                    d2 = b2.dataset.to_array('features').notnull().any('features').compute()
+
+                    # Discard NaN coordinate values
+                    d1 = d1.isel(**{k: d1[k].notnull() for k in d1.coords})
+                    d2 = d2.isel(**{k: d2[k].notnull() for k in d2.coords})
+                    
+                    import matplotlib.pyplot as plt
+                    f, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+                    def p(a, ax):
+                        a = a.mean('datetime')
+                        import sparse
+                        if isinstance(a.data, sparse.COO):
+                            x = a['longitude'].values[a.data.coords[a.dims.index('longitude')]]
+                            y = a['latitude'].values[a.data.coords[a.dims.index('latitude')]]
+                            ax.scatter(x, y, c=a.data.data)
+                        else:
+                            y, x = np.meshgrid(a['latitude'].values, a['longitude'].values, indexing='ij')
+                            ax.scatter(x.ravel(), y.ravel(), c=a.values.ravel(), zorder=1)
+
+                    d1.mean('datetime').plot(zorder=0, alpha=0.4, ax=axes[0])
+                    p(d2, axes[0])
+                    # d2.sum('datetime').plot.scatter(zorder=1, ax=axes[0])
+                    axes[0].set_title(f'{b2.label} points')
+                    
+                    d2.mean('datetime').plot(zorder=0, alpha=0.4, ax=axes[1])
+                    p(d1, axes[1])
+                    # d2.sum('datetime').plot.scatter(zorder=1, ax=axes[0])
+                    axes[1].set_title(f'{b1.label} points')
+                                        
+                    
+                    # d1.sum('datetime').plot(zorder=0, alpha=0.4, ax=axes[0])
+                    # d2.sum('datetime').plot.scatter(zorder=1, ax=axes[0])
+                    # axes[0].set_title(f'{b2.label} points')
+                    
+                    # d2.sum('datetime').plot(zorder=0, alpha=0.4, ax=axes[1])
+                    # d1.sum('datetime').plot.scatter(zorder=1, ax=axes[1])
+                    # axes[1].set_title(f'{b1.label} points')
+
+                    import seaborn as sns
+                    sns.barplot(d1.mean(['latitude', 'longitude']).to_dataset(name='Fraction'), x='datetime', label=b1.label, ax=axes[2])
+                    sns.barplot(d2.mean(['latitude', 'longitude']).to_dataset(name='Fraction'), x='datetime', label=b2.label, ax=axes[2])
+
+                    filename = f'{label}.png'
+                    plt.tight_layout()
+                    plt.savefig(filename)
+                    plt.clf()
+                    plt.close(f)
+                    return message + filename
+                    
+        return f'{message}ERROR: all block pairs generate samples'
