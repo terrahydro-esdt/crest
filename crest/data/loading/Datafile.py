@@ -545,8 +545,11 @@ class Datafile(BaseAbstract):
     @property
     def name(self) -> str:
         """ Return a name for this Datafile using the location if possible """
+        if self.key_label:
+            path = Path(self.key_label)
+        
         # Any locations that are Path-like 
-        if isinstance(self.location, FSMap):
+        elif isinstance(self.location, FSMap):
             path = Path(self.location.root)
         elif isinstance(self.location, str):
             path = Path(self.location)
