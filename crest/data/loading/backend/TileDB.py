@@ -1,4 +1,5 @@
 from __future__ import annotations
+from crest.utils import json_safe
 from .BaseBackend import BaseBackend
 
 from dask.diagnostics import ProgressBar
@@ -14,6 +15,7 @@ import numpy as np
 import threading
 import sparse
 import dask
+import json
 import time
 import sys
 
@@ -116,14 +118,16 @@ def tiledb_to_xarray(path: Path | str, **kwargs) -> xr.Dataset:
 
     coords = {}
     arrays = {}
-
+    xattrs = {}
+    
     # Iterate over all Array objects within the TileDB group at the given path
     with tdb.Group(str(path)) as items:
         for item in items:
             data = tdb.open(item.uri, config=config) 
             dims = [d.name for d in data.domain]
             name = item.name
-
+            xattrs[name] = data.meta.get('xarray.attrs', {})
+            
             # Coordinates have a single dimension with the same name
             if (len(dims) == 1) and (dims[0] == name):
                 coords[name] = data[:]['data']
@@ -149,9 +153,14 @@ def tiledb_to_xarray(path: Path | str, **kwargs) -> xr.Dataset:
                          np.empty((0,), dtype=dtype), 
                         shape=(0,) * len(dims), fill_value=fillv),
                 }))
-    return xr.Dataset(arrays, coords=coords)
-
-
+        
+        dataset = xr.Dataset(arrays, coords=coords)
+        dataset.attrs = json.loads(items.meta.get('xarray.attrs', '{}'))
+        for key, attrs in xattrs.items():
+            if attrs:
+                dataset[key].attrs = json.loads(attrs)
+    return dataset
+    
 
 class TileDB(BaseBackend):
     
@@ -186,7 +195,8 @@ class TileDB(BaseBackend):
         #  sure tiledb is imported first, before other libraries.
         tdb.group_create(dest.as_posix())
         with tdb.Group(dest.as_posix(), mode='w') as group:
-
+            group.meta['xarray.attrs'] = json_safe(data.attrs, True)
+            
             # Add coordinates
             dims = {}
             for dim in data.dims:
@@ -195,7 +205,13 @@ class TileDB(BaseBackend):
                     val = val.view('int64')
 
                 chunksize = max(data.chunks[dim])
-                dimension = dims[dim] = tdb.Dim(name=dim, domain=(0, val.size-1), tile=chunksize, dtype=np.int64)
+                dimension = dims[dim] = tdb.Dim(**{
+                    'name'   : dim, 
+                    'domain' : (0, val.size-1), 
+                    'tile'   : chunksize, 
+                    'dtype'  : np.int64,
+                })
+                
                 domain = tdb.Domain(dimension)
                 schema = tdb.ArraySchema(**{
                     'domain' : domain, 
@@ -207,13 +223,15 @@ class TileDB(BaseBackend):
                 tdb.Array.create(path, schema)
                 with tdb.open(path, mode='w') as A:
                     A[:] = val
+                    A.meta['xarray.attrs'] = json_safe(data[dim].attrs, True)
                     A.meta['chunks'] = data.chunks[dim]
                 group.add(str(dim), str(dim), relative=True)
 
             # Add features
             jobs = []
             handles = []
-            for feature in data:
+            from tqdm import tqdm
+            for feature in tqdm(data, file=stream):
                 if feature == 'valid_mask': 
                     continue
 
@@ -228,6 +246,7 @@ class TileDB(BaseBackend):
                 path = dest.joinpath(feature).as_posix()
                 tdb.Array.create(path, schema)
                 with tdb.open(path, mode='w') as A:
+                    A.meta['xarray.attrs'] = json_safe(values.attrs, True)
                     for key, chunks in values.chunksizes.items():
                         A.meta[key] = chunks
                 group.add(str(feature), str(feature), relative=True)

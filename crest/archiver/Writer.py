@@ -15,9 +15,11 @@ class Writer(BaseAbstract):
     """
     
     def open(self):
+        """ Opens the writer and initializes any containers """
         pass
     
     def close(self):
+        """ Closes the writer and handles and pending data writes """
         pass
 
     def __enter__(self):

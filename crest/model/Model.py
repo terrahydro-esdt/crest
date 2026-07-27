@@ -52,23 +52,32 @@ class Model(BaseModel):
         for k, v in self.graph.inputs.items():
             if v is not None:
                 if isinstance(v, TensorSpec):
-                    v = v.tf
+                    v = v.keras
+
                 # Compatibility with future TF versions
                 try:
-                    self.inputs[k] = Input(type_spec=v, name=k)
+                    self.inputs[k] = Input(type_spec=v, name=v.name)
                 except:
-                    self.inputs[k] = Input(shape=v.shape[1:], dtype=v.dtype, name=k)
+                    self.inputs[k] = Input(shape=v.shape[1:], dtype=v.dtype, name=v.name)
             else:
                 self.inputs[k] = None
 
         self.outputs = self.graph(self.inputs)
-        self.metrics = Metrics()
-        self._model = KerasModel(inputs=self.inputs, outputs=self.outputs)
-
+        
+        # Silence warnings about dict key / tensor name mismatch
+        # The mismatch exists because TF does not allow certain characters
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', category=UserWarning)
+            self._model = KerasModel(inputs=self.inputs, outputs=self.outputs)
+            try:    
+                self.metrics = Metrics()
+            except Exception as e: 
+                print(f'Failed to initialize Metrics in crest Model: {e}')
+        
         # Explicitly set model output_names for correct logging labels
         if isinstance(self.outputs, dict):
             self._model.output_names = sorted(self.outputs)
-
+       
     @property
     def model(self):
         return self._model

@@ -1,9 +1,9 @@
 from collections.abc import Callable
-from functools import partial
+from functools import partial, update_wrapper, wraps
 from pathlib import Path
 from typing import get_args, get_origin, get_type_hints, _type_repr
 from typing import Union, Iterator, TypeVar, ForwardRef
-from types import UnionType
+from types import UnionType, MethodType
 from abc import ABC
 
 import weakref
@@ -122,10 +122,10 @@ class EnsureTypes:
     def __init__(self, cls_obj: 'BaseAbstract', callable_obj: Callable):
         self._cls_repr = repr(cls_obj)
         self._callable = callable_obj
-
+        
 
     def __repr__(self):
-        return f'{self._cls_repr}.{self._callable.__code__.co_name}'
+        return f'EnsureTypes({self._cls_repr}.{self._callable.__code__.co_name})'
 
 
     def __call__(self, *args, **kwargs):
@@ -135,12 +135,15 @@ class EnsureTypes:
         function = self._callable
         annotate = get_type_hints(function)
         keyvalue = inspect.getcallargs(function, *args, **kwargs)
-        keyvalue |= {'return': function(*args, **kwargs)}
 
         # Iterate over all parameters and verify types match the annotations
         [self.verify_type(value, annotate[key], f'{self} parameter "{key}"')
          for key, value in keyvalue.items() if key in annotate]
-        return keyvalue['return']
+
+        key, value = 'return', function(*args, **kwargs)
+        if key in annotate:
+            self.verify_type(value, annotate[key], f'{self} parameter "{key}"')
+        return value
 
 
     def __getattr__(self, attr):
@@ -152,11 +155,20 @@ class EnsureTypes:
     def wrap(cls, obj, obj_attr):
         """ Wrap the object attribute if valid, and return it otherwise """
         # 1) not EnsureTypes; 2) callable; 3) not bytecode; 4) annotated
-        if (not isinstance(obj_attr, cls)
+        if (not isinstance(getattr(obj_attr, '__type_checker__', obj_attr), cls)
                 and callable(obj_attr)
                 and hasattr(obj_attr, '__code__')
                 and getattr(obj_attr, '__annotations__', {})):
-            return cls(obj, obj_attr)
+            function = getattr(obj_attr, '__func__', obj_attr)
+            type_obj = cls(obj, obj_attr)
+
+            # Create wrapper to ensure signature/help/docstring is transferred
+            @wraps(function)
+            def wrapper(obj, *args, **kwargs):
+                return type_obj(*args, **kwargs)
+            wrapper.__type_checker__ = type_obj
+            wrapper.__signature__ = inspect.signature(obj_attr)
+            return MethodType(wrapper, obj)
         return obj_attr
 
 
@@ -260,7 +272,7 @@ class BaseAbstract(ABC):
         # called from an instance of a class, rather than by a class itself,
         # due to type check wrapping performed in this file
         filename = inspect.currentframe().f_back.f_code.co_filename
-        n_prior_frames += Path(filename).stem == 'BaseAbstract'
+        n_prior_frames += 2 * (Path(filename).stem == 'BaseAbstract')
 
         from crest.utils import interactive
         interactive(environment, n_prior_frames + 1, **kwarg)

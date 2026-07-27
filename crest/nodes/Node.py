@@ -14,12 +14,18 @@ import tensorflow as tf
 import seaborn as sns
 import numpy as np
 import tlz 
+import jax
+import keras
 
 from crest.utils import classproperty, plot_to_array
 from crest.base import BaseAbstract
 from crest.model import HierarchalTensorGraph as HTG
 from crest.model.IOSpec import IOSpec
 
+
+# Handle all Keras backend types
+GenericSpec = keras.InputSpec | tf.TensorSpec
+GenericTensor = keras.KerasTensor | tf.Tensor | jax.Array | np.ndarray
 class Node(HTG,BaseAbstract):
     """ Node provides a template for machine learning models to inherit from. 
 
@@ -94,7 +100,7 @@ class Node(HTG,BaseAbstract):
         self._outputs_spec = getattr(self,'outputs_spec')
 
     @abstractmethod
-    def call(self, X: dict[str, tf.Tensor], training: bool) -> dict[str, tf.Tensor]:      
+    def call(self, X: dict[str, GenericTensor], training: bool) -> dict[str, GenericTensor]:      
         """ Inheriting classes must define a `call` method, which takes
             as input a dictionary of {feature name: Input Tensor}, and
             returns a dictionary of {output feature: Output Tensor}. """
@@ -116,9 +122,9 @@ class Node(HTG,BaseAbstract):
     def losses(self) -> dict[str, Callable]:
         """ Return a dictionary of losses, one per output feature """
         get_loss = lambda loss: (loss if not isinstance(loss, (str, dict))
-                                      else tf.keras.losses.get(loss))
+                                      else keras.losses.get(loss))
 
-        # Allow loss specification via config dict (see tf.keras.losses.get)
+        # Allow loss specification via config dict (see keras.losses.get)
         if isinstance(self.loss, dict) and ('class_name' not in self.loss):
             losses = {k: get_loss(loss) for k, loss in self.loss.items()}
         else:
@@ -175,12 +181,6 @@ class Node(HTG,BaseAbstract):
 
     def _call(self, X, training=True):
         """ Wraps self.call to provide data parsing / shape validation """
-        # Group features by source
-        #Z = getattr(X, 'copy', lambda: X)()
-        #Y = {source: {k: Z.pop(k) for k, coords in features.items()} 
-        #        for source, features in self.inputs.items()}
-        #X = Z | Y
-
         for source, features in X.items():
             if isinstance(features, dict):
                 # Handle any coordinate features
@@ -205,18 +205,47 @@ class Node(HTG,BaseAbstract):
             out = dict(zip(self._outputs.keys(), out))
 
         def match_shape(feature):
-            """ Match output shapes to the respective outputs shape """
-            # TODO: Handle case where tgt_shape has internal dimensions sized 1
-            #       e.g. tgt_shape=(64,1,4,4) will cause this to fail even if
-            #            the given out tensor has the same shape initially, as
-            #            it will be squeezed and reshaped to (64,4,4,1)
-            squeezed  = tf.squeeze(out[feature])
-            tgt_shape = self.outputs[feature].tf.shape
-            rank_diff = tgt_shape.rank-tf.rank(squeezed)
-            extra_dim = tf.ones(tf.math.abs(rank_diff), dtype=tf.int32)
-            new_shape = tf.concat([tf.shape(squeezed), extra_dim], 0)
-            matched   = tf.reshape(squeezed, shape=new_shape)
-            return tf.ensure_shape(matched, tgt_shape)
+            """ Match output to spec shape by adding any necessary dims """
+            matching = output = out[feature]
+            expected = self.outputs_spec.spec[feature].shape
+
+            # If all dims accounted for, just perform a verification
+            current = keras.ops.shape(matching)
+            if len(current) == len(expected):
+                for c, e in zip(current, expected):
+                    if (e is None) or not isinstance(c, int):
+                        continue
+                    if c != e:
+                        err = f'{feature} output shape {expected=}: {output}'
+                        raise Exception(err)
+                return matching
+                        
+            # Remove all empty dimensions
+            empty = [i for i, shape in enumerate(current)
+                        if isinstance(shape, int) and shape == 1]
+            matching = keras.ops.squeeze(matching, empty)
+
+            # Verify all dimension shapes match the respective spec shape
+            for i, shape in enumerate(expected):
+                if shape is None:
+                    continue
+                current = keras.ops.shape(matching)
+                
+                # Add empty dim at the end (e.g. [2, 2] -> [2, 2, 1])
+                if len(current) <= i:
+                    matching = keras.ops.expand_dims(matching, i)
+                    current = keras.ops.shape(matching)
+
+                # Only validate dims with known shapes
+                if isinstance(current[i], int):
+                    if shape not in [1, current[i]]:
+                        err = f'{feature} output shape {expected=}: {output}'
+                        raise Exception(err)
+                        
+                    # Add empty dim prior to others (e.g. [2, 2] -> [2, 1, 2])
+                    if current[i] != shape:
+                        matching = keras.ops.expand_dims(matching, i)
+            return matching
 
         # Ensure output shapes match their output spec shape
         return dict(zip(out, map(match_shape, out)))
@@ -309,23 +338,33 @@ class Node(HTG,BaseAbstract):
             if feature in X:
                 values = X.pop(feature)
                 if not values.dtype.is_integer:
-                    values = tf.cast(values, tf.int32)
-                onehot = tf.one_hot(values, total_cls)
+                    values = keras.ops.cast(values, 'int32')
+                onehot = keras.ops.one_hot(values, total_cls)
                 for i in include_cls or range(total_cls):
                     X[f'{feature}_{i}'] = onehot[..., i]
         return X
 
-
     def convert_coords(self, X: dict) -> dict:
         """ Reshape coordinates to be stackable alongside other features """
         coord_names = ['datetime', 'latitude', 'longitude']
-        coord_shape = tf.shape(tlz.first(tlz.dissoc(X, *coord_names).values()))
+        coord_shape = keras.ops.shape(tlz.first(tlz.dissoc(X, *coord_names).values()))
 
         # Expected shape of other features is [batch, datetime, lat, lon]. If
         # we don't find a tensor with four dimensions, just return the original
         # dict. Better handling for other tensor shapes (e.g. static) should be
         # implemented in the future.
-        if coord_shape.shape[0] != 4: return X
+        if len(coord_shape) != 4: return X
+
+        def add_hist(data, days, label): 
+            """ Add histogram of converted datetime values for final items """
+            if not self.plot_histogram: return
+            def add():
+                with keras.name_scope(''):
+                    tf.summary.histogram(**{
+                        'name' : f'{self}-call/datetime_{days}_last{label}',
+                        'data' : data,
+                    })
+            tf.cond(tf.summary.should_record_summaries(), add, lambda: None)
 
         ndt,nlt,nln = coord_shape[1], coord_shape[2], coord_shape[3]
         for name in coord_names:
@@ -334,34 +373,36 @@ class Node(HTG,BaseAbstract):
                 # Tile coordinate features into 3d cube
                 coordinate = X.pop(name)
                 tiles, idx = {
-                    'datetime'  : ([1, 1, nlt, nln], [slice(None), slice(None), None, None]),
-                    'latitude'  : ([1, ndt, 1, nln], [slice(None), None, slice(None), None]),
-                    'longitude' : ([1, ndt, nlt, 1], [slice(None), None, None, slice(None)]),
+                    'datetime'  : ([1, 1, nlt, nln], (slice(None), slice(None), None, None)),
+                    'latitude'  : ([1, ndt, 1, nln], (slice(None), None, slice(None), None)),
+                    'longitude' : ([1, ndt, nlt, 1], (slice(None), None, None, slice(None))),
                 }[name]
+                
+                # Just duplicate latitude and longitude along other dimensions
+                if name != 'datetime':
+                    X[name] = keras.ops.tile(coordinate[idx], tiles)
+                    continue
+                    
+                # Convert datetime to value between [0, minutes in day & year]
+                for n_days in [1, 365.2425]:
+                    phase_mins = 60 * 24 * n_days
+                    coord_mins = keras.ops.mod(coordinate, phase_mins)
 
-                if name == 'datetime':
-                    # Convert datetime to value between [0, seconds in 24 hours]
-                    for mult in [1, 365]:
-                        sec_in_day = 60 * 60 * 24 * mult
-                        coord_secs = 60 * tf.cast(coordinate, tf.float64) # datetime[m] -> seconds
-                        coord_secs = tf.math.floormod(coord_secs, sec_in_day)
-    
-                        with tf.name_scope(''):
-                            tf.summary.histogram(f'{self.name}-call/datetime_{mult}_laststep', coord_secs[:, -1])
-                            tf.summary.histogram(f'{self.name}-call/datetime_{mult}_lastsample', coord_secs[-1])
-    
-                        # Convert to radians
-                        coord_rads = tf.cast(coord_secs * 2 * np.pi / sec_in_day, tf.float32)
-            
-                        # Convert datetime to a set of two periodic sin/cos features
-                        for name in ['sin', 'cos']:
-                            sin_cos_dt = getattr(tf.math, name)(coord_rads)
-    
-                            with tf.name_scope(''):
-                                tf.summary.histogram(f'{self.name}-call/datetime_{mult}_laststep_{name}', sin_cos_dt[:, -1])
-                                tf.summary.histogram(f'{self.name}-call/datetime_{mult}_lastsample_{name}', sin_cos_dt[-1])
-                            X[f'{name}_{mult}'] = tf.tile(sin_cos_dt[idx], tiles)
-                else: X[name] = tf.tile(coordinate[idx], tiles)
+                    # Histograms of datetime for final timestep and sample
+                    add_hist(coord_mins[:,-1], n_days, 'step')
+                    add_hist(coord_mins[-1], n_days, 'sample')
+
+                    # Convert to radians
+                    coord_rads = coord_mins * 2 * np.pi / phase_mins
+        
+                    # Convert datetime to set of two periodic sin/cos features
+                    for op in ['sin', 'cos']:
+                        periodic = getattr(keras.ops, op)(coord_rads)
+                        X[f'{op}_{n_days:.0f}'] = keras.ops.tile(periodic[idx], tiles)
+                        
+                        # Histograms of final periodic value for step & sample
+                        add_hist(periodic[:,-1], n_days, f'step_{op}')
+                        add_hist(periodic[-1], n_days, f'sample_{op}')
         return X
     
     def encode(self,type='dill',**kwargs):
@@ -386,7 +427,7 @@ class Node(HTG,BaseAbstract):
         obj._outputs_spec = _outputs_spec
         return obj
 
-class _NodeWrap(tf.keras.layers.Layer):
+class _NodeWrap(keras.layers.Layer):
     """ Wraps a callable / object in a keras layer, adding any internal 
         tensorflow / keras objects to the wrapped object to allow keras
         to track the weights correctly.
@@ -407,7 +448,7 @@ class _NodeWrap(tf.keras.layers.Layer):
             default to the name of the passed object if nothing is passed.
 
     """  
-    def __init__(self, obj: Callable, name: str = ''):
+    def __init__(self, obj: Callable, name: str = '', plot_histogram: bool = False):
         super().__init__(name=name or getattr(obj, 'name', str(obj)))
 
         # Add all tensorflow/keras objects to allow weight tracking
@@ -418,6 +459,8 @@ class _NodeWrap(tf.keras.layers.Layer):
         
         self.obj = obj
         self.obj_name = getattr(obj, '__name__', repr(obj))
+        self.plot_histogram = plot_histogram
+
 
     def __repr__(self): 
         """ representation """
@@ -434,8 +477,8 @@ class _NodeWrap(tf.keras.layers.Layer):
 
     def call(self, X, *args, **kwargs):
         """ Adds output histograms for tensorboard visualization """
-        with tf.name_scope(''):
-            with tf.name_scope(self.name):
+        with keras.name_scope(''):
+            with keras.name_scope(self.name):
                 self._add_histograms(X, 'input')
                 if 'args' in kwargs and 'kwargs' in kwargs:
                     args, kwargs = kwargs['args'], kwargs['kwargs']
@@ -443,9 +486,9 @@ class _NodeWrap(tf.keras.layers.Layer):
                 getattr(self.obj, '__self__', self.obj)._raw_model_out = out
                 self._add_histograms(out, 'output', desc=self.obj_name)
 
-            # Add histograms for all weights
-            for w in self.weights: 
-                tf.summary.histogram(f'{self.obj_name}_{w.path}', w, description=w.name)
+            ## Add histograms for all weights
+            #for w in self.weights: 
+            #    tf.summary.histogram(f'{self.obj_name}_{w.path}', w, description=w.name)
         return out
 
     def get_config(self):
@@ -461,20 +504,18 @@ class _NodeWrap(tf.keras.layers.Layer):
 
     def _add_histograms(self, X, scope: str, desc: str | None = None):
         """ Log the given X dict/tensor(s) histograms under the given scope """
-
-        #TODO: make recursive
-        if isinstance(X, dict):
-            for key,value in X.items():
-                if isinstance(value,dict): 
-                    for k, v in value.items():
-                        label = k.replace('@', '.') + f'/{scope}'
-                        tf.summary.histogram(label, tf.identity(v), description=desc)
-                else:
-                    label = key.replace('@', '.') + f'/{scope}'
-                    tf.summary.histogram(label, tf.identity(value), description=desc)
-        else: tf.summary.histogram(scope, tf.identity(X), description=desc) 
-
-
+        if not self.plot_histogram: return
+        def add():
+            hist = lambda k, v: tf.summary.histogram(**{
+                'name'        : k.replace('@', '.'), 
+                'data'        : tf.identity(v),
+                'description' : desc,
+            })
+            if isinstance(X, dict):
+                for k, v in X.items():
+                    hist(f'{k}/{scope}', v)
+            else: hist(scope, X) 
+        tf.cond(tf.summary.should_record_summaries(), add, lambda: None)
 
 def loss_wrapper(
     feature      : str, 
@@ -532,80 +573,93 @@ def loss_wrapper(
     def calculate_loss(y_true, y_pred):
         """ Mask NaNs and apply normalization before calculating loss """
 
-        def mask_nans(*arrs) -> tuple:
-            """ Mask the union of NaN indices for given arrays """
-            # Extract feature value if a dict is given, then mask NaNs
-            arrs = [a[feature] if isinstance(a, dict) else a for a in arrs]               
-            mask = reduce(and_, map(tf.math.is_finite, arrs))
-            return tuple((tf.boolean_mask(a, mask) for a in arrs))
+        def gather_and_log(key, **kwargs):
+            """ Extract, log, and return feature values and valid indicator """
+            labels, values = map(list, zip(*kwargs.items()))
 
-        # Sanity check that y_true and y_pred have the same sizes
-        tf.debugging.assert_equal(tf.size(y_true), tf.size(y_pred))
-        
-        # Select the requested feature and valid samples
-        arrs = [a[feature] if isinstance(a, dict) else a for a in [y_true, y_pred]]               
-        mask = reduce(and_, map(tf.math.is_finite, arrs))
-        flag = tf.math.reduce_any(mask)
+            for i, val in enumerate(values):
+                if isinstance(val, dict):
+                    values[i] = val[feature]
+
+            flat = [keras.ops.reshape(v, (-1,)) for v in values]
+            mask = reduce(and_, map(keras.ops.isfinite, flat))
+            flag = keras.ops.any(mask)
+            logging(f'{scope}/{feature}/{key}/', dict(zip(labels, flat)))
+            return values, flag
 
         # Label the targets/predictions with their transformation
-        y_label = lambda y,f: y if f is None else f'{getattr(f,"__name__",f)}({y})'
-
-        # Mask NaNs in both targets and predictions, and log results
-        masked = mask_nans(y_true, y_pred)
-        labels = ['y_true', y_label('y_pred', postprocess)]
-        logging(f'{scope}/{feature}/original/', dict(zip(labels, masked)))
-
+        ylabel = lambda y,f: y if f is None else f'{getattr(f,"__name__",f)}({y})'
+        labels = ['y_true', ylabel('y_pred', postprocess)]
+        y_dict = dict(zip(labels, [y_true, y_pred]))
+        values, flag = gather_and_log('original', **y_dict)
+        
         # Preprocess the target if we want to calculate normalized loss
         if transform is not None:
+            y_true, y_pred = values
             y_true = transform({feature: y_true})
             y_pred = (y_pred_raw or (lambda: transform({feature: y_pred})))()
+            
+            labels = [ylabel('y_true', transform), 'y_pred']
+            y_dict = dict(zip(labels, [y_true, y_pred]))
+            values, flag = gather_and_log('transform', **y_dict)
 
-            arrs = [a[feature] if isinstance(a, dict) else a for a in [y_true, y_pred]]               
-            mask = reduce(and_, map(tf.math.is_finite, arrs))
-            flag = tf.math.reduce_any(mask)
-
-            masked = mask_nans(y_true, y_pred)
-            labels = [y_label('y_true', transform), 'y_pred']
-            logging(f'{scope}/{feature}/transform/', dict(zip(labels, masked)))
-
-        # Calculate and log the final loss, then return if any exist
-        loss = loss_func(*masked)
-        zero = tf.size(loss) == 0
+        # Calculate and log the final loss, then return if any values are valid
+        flat = [keras.ops.reshape(v, (-1,)) for v in values]
+        loss = loss_func(*flat)
         logging(f'{scope}/{feature}/loss/', {'loss': loss}, False)
-        # return tf.cond(zero, lambda: 0., lambda: tf.reduce_mean(loss))
-        return tf.cond(flag, lambda: tf.reduce_mean(loss), lambda: 0.)
+        return keras.ops.cond(flag, lambda: keras.ops.mean(loss), lambda: 0.)
 
+    # Accumulate batches over multiple steps for more efficient plotting
+    batches = {}
 
     # Defines various logging functionality in a separate helper method
     def logging(scope: str, arrs: dict, do_scatter=plot_scatter) -> None:
         """ Output debug logs, scatter plots, histograms """
-        
+
         def scatter(y1: np.ndarray, y2: np.ndarray, **kwargs) -> np.ndarray:
             """ Create scatter plot and return the image as a numpy array """
-            ys = y1,y2 = y1.flatten(), y2.flatten()
-            try:    r2 = linregress(*ys)[2] ** 2 # pyright: ignore
-            except: r2 = np.nan
-            try:    R2 = r2_score(*ys)
-            except: R2 = np.nan
+            scope = kwargs['key']
+            if scope not in batches:
+                return np.empty((0,0,0), dtype=np.uint8)
+            k1 = kwargs.get('y1_label', 'y_true')
+            y1 = batches[scope][k1]
+            k2 = kwargs.get('y2_label', 'y_pred')
+            y2 = batches[scope][k2]
 
+            y1 = np.concatenate(y1, axis=0).flatten()
+            y2 = np.concatenate(y2, axis=0).flatten()
+            batches[scope].clear()
+
+            mask = np.isfinite(y1) & np.isfinite(y2)
+            y1 = y1[mask]
+            y2 = y2[mask]
+            
             # Write the plot image to the array variable
-            with plot_to_array() as array:
+            with plot_to_array(dpi=150, width=4, height=3.8) as array:
+                try:    r2 = linregress(y1, y2)[2] ** 2 # pyright: ignore
+                except: r2 = np.nan
+                try:    R2 = r2_score(y1, y2)
+                except: R2 = np.nan
+                    
                 # Scatter plot with KDE contours
-                sns.jointplot(x=y2, y=y1).plot_joint(sns.kdeplot, 
-                    color='r', zorder=1, levels=6, alpha=0.7)
-                
+                p = sns.jointplot(x=y2, y=y1)
+                try:
+                    p.plot_joint(sns.kdeplot, color='r', zorder=1, levels=6, alpha=0.7)
+                except ValueError as e:
+                    print(f'\nWarning "{e}": {scope=}\n\t{k1}={y1}\n\t{k2}={y2}')
+                    
                 # 1:1 diagonal line
                 plt.axline((0,0), slope=1,ls='--',color='k',alpha=0.5,zorder=2)
 
                 # Plot labels 
                 plt.ticklabel_format(style='sci',axis='both',scilimits=(-2,3))
-                plt.ylabel(kwargs.get('y1_label', 'y_true'), fontsize=14)
-                plt.xlabel(kwargs.get('y2_label', 'y_pred'), fontsize=14)
+                plt.ylabel(kwargs.get('y1_label', 'y_true'), fontsize=18)
+                plt.xlabel(kwargs.get('y2_label', 'y_pred'), fontsize=18)
                 plt.title('  '.join([
                     rf'$R^{{2}}$ = {R2:.2f}',
                     rf'$r^{{2}}$ = {r2:.2f}',
                     f'N = {len(y1)}',
-                ]), fontsize=14)
+                ]), fontsize=18, y=0.95)
 
                 # Use the same extent limits for both axes
                 minim = min(plt.xlim()[0], plt.ylim()[0])
@@ -623,18 +677,36 @@ def loss_wrapper(
                 for k, arr in arrs.items()
                 for output in [f'\n{k:>{align}}'] + stats(arr) ])
 
-        with tf.name_scope(scope.replace("@",".")):
-            # Log array histograms to tensorboard
-            for k, v in arrs.items(): 
-                tf.summary.histogram(k, v)
+        record = tf.summary.should_record_summaries()
+        # record = any(v.size > 100 for vals in batches.values() for v in vals.values())
+        # if record:#isinstance(record, bool) and record:
+        #     # Log array histograms to tensorboard
+        #     # with keras.name_scope(scope.replace("@",".")): # Can't contain '/'?
+        #     with tf.name_scope(scope.replace("@",".")):
+        #         for k, v in arrs.items(): 
+        #             tf.summary.histogram(k, v)
 
-        with tf.name_scope(f'scatter/{scope.replace("@",".")}'):
-            # Create scatter plot and log to tensorboard (very slow)
-            if do_scatter: 
-                (k1, k2, *_), (y1, y2, *_) = zip(*arrs.items())
-                image = lambda label, *y, **kw: tf.summary.image(label,
-                    tf.numpy_function(partial(scatter, **kw), y, tf.uint8))
-                image('image', y1, y2, y1_label=k1, y2_label=k2)
+        # # Create scatter plot and log to tensorboard (very slow)
+        # if do_scatter and (len(arrs) > 1):
+        #     (k1, k2, *_), (y1, y2, *_) = zip(*arrs.items())
 
+        #     def accumulate_batch(y1, y2, k1=k1, k2=k2, scope=scope) -> int:
+        #         """ Gather the new batch outside of the tensorflow graph """
+        #         if scope not in batches:
+        #             batches[scope] = {}
+        #         scatters = batches[scope]
+        #         scatters[k1] = scatters.get(k1, []) + [y1]
+        #         scatters[k2] = scatters.get(k2, []) + [y2]
+        #         return len(scatters[k1])
+
+        #     # Accumulate outside of the TF context across graph executions
+        #     tf.numpy_function(accumulate_batch, (y1, y2), tf.int64)
+            
+        #     if record:#if isinstance(record, bool) and record:
+        #         # with keras.name_scope(f'scatter/{scope.replace("@",".")}'): # Can't contain '/'?
+        #         with tf.name_scope(f'scatter/{scope.replace("@",".")}'):
+        #             image = lambda label, *y, **kw: tf.summary.image(label,
+        #                 tf.numpy_function(partial(scatter, **kw), y, tf.uint8))
+        #             image('image', y1, y2, y1_label=k1, y2_label=k2, key=scope)
+                
     return calculate_loss
-

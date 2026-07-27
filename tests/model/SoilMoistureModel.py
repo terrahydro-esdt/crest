@@ -1,7 +1,7 @@
 import dill
-import tensorflow as tf
-from tensorflow.keras.layers import Dense,LSTM
-from crest.nodes.tensorflow import Node
+import keras
+from keras.layers import Dense,LSTM
+from crest.nodes.Node import Node
 from crest.data.transform import Transform
 from crest.model import IOSpec
 
@@ -45,12 +45,12 @@ class SoilMoistureModel(Node):
         self._head = Dense(1, activation='relu')
 
     def call(self,X,training=True):
-        era5 = tf.stack(list(X['ERA5'].values()), axis=-1)
-        era5 = tf.squeeze(era5, axis=[2,3])
+        era5 = keras.ops.stack(list(X['ERA5'].values()), axis=-1)
+        era5 = keras.ops.squeeze(era5, axis=[2,3])
         x = self._temporal(era5)
-        soil = tf.stack(list(X['Soil'].values()), axis=-1)
-        soil = tf.squeeze(tf.cast(soil, dtype=float), axis=[1,2])
-        irrigation = tf.stack(list(X['Irrigation'].values()), axis=-1)
-        irrigation = tf.squeeze(tf.cast(irrigation, dtype=float), axis=[1,2])
-        x = tf.concat([x, soil, irrigation], axis=-1)
-        return {'SMAP>>soil_moisture' : self._head(x)}
+        soil = keras.ops.stack(list(X['Soil'].values()), axis=-1)
+        soil = keras.ops.squeeze(keras.ops.cast(soil, dtype=float), axis=[1,2])
+        irrigation = keras.ops.stack(list(X['Irrigation'].values()), axis=-1)
+        irrigation = keras.ops.squeeze(keras.ops.cast(irrigation, dtype=float), axis=[1,2])
+        x = keras.ops.concatenate([x, soil, irrigation], axis=-1)
+        return {'SMAP__soil_moisture' : self._head(x)}

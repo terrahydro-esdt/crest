@@ -23,7 +23,6 @@ import io
 
 from crest.utils import Stopwatch, optimize_blocks, S3Path
 from crest.base import BaseSet
-from crest.nodes.tensorflow import Node as TFNode
 from crest.model import HierarchalTensorGraph
 from crest.model import IOSpec
 from .Datafile import Datafile
@@ -93,7 +92,7 @@ class Dataset(BaseSet):
         return logger
 
 
-    def summaries(self, compute=True, keep='last') -> xr.DataArray:
+    def summaries(self, compute=True, keep='last', verbose=False) -> xr.DataArray:
         """ Gather summary statistics of all component Datafiles """
         summary = self.summary.map_blocks(xr.DataArray.as_numpy)
         summary = xr.concat(summary, dim='features', join='outer')
@@ -102,8 +101,10 @@ class Dataset(BaseSet):
         # summary = xr.concat(summary, dim='features')
         summary = summary.drop_duplicates('features', keep=keep)
         if compute:
-            with ProgressBar():
-                print(f'{summary=}\n\nComputing summaries...')
+            pbar = ProgressBar() if verbose else nullcontext(None) 
+            with pbar:
+                if verbose: 
+                    print(f'{summary=}\n\nComputing summaries...')
                 summary = summary.compute() 
         return summary
 
@@ -252,10 +253,10 @@ class Dataset(BaseSet):
 
         finally: 
             # Log the accumulated text prior to starting block computation
-            # if verbose: 
             message = (log_txt+buffer.getvalue())# if cache_path is None else ''
             self.logger.info(message + log_sep)
-
+            # if verbose: print(message + log_sep)
+                
         # Find all samples in parallel across the created blocksets
         if compute:
             with nullcontext() if not verbose else ProgressBar():
@@ -713,10 +714,13 @@ class Dataset(BaseSet):
         verbose   : bool
             Additional information printed.
         fast_check : bool
-            Allow skipping intensive computation if all datafile hashes are
-            available in the cache location. Note that this could result in
-            unexpected characteristics for the data being loaded (e.g. with
-            a different number of blocks than requested). 
+            Allow skipping the more rigorous check of whether already existing
+            data caches match the current Dataset, thus enabling a much faster
+            cache invalidation step by only checking whether matching datafile
+            hashes already exist. Because of the less rigorous equality check,
+            this opens the (rare) possibility of using cached data that is not
+            the same as the current Dataset (if important data attributes have
+            not been included in the Datafile hash calculation). 
 
         Returns
         -------
@@ -945,16 +949,15 @@ class Dataset(BaseSet):
         elif isinstance(database_folder, FSMap):
             database_folder = S3Path(database_folder)
 
-        def get_kwargs(source, label: str | None = None) -> dict:
+        def get_kwargs(source, labels: list[str] = []) -> dict:
             """ Get any kwargs from datafile_kwargs which matches source """
             path = Path(source) if isinstance(source, str) else source
-            
             # Multiple formats are accepted when specifying the Datafile name
             if isinstance(path, (Path, S3Path)):
                 options = [path, path.stem, path.name, path.as_posix()]
             else: options = [path]
 
-            for option in [label] + options:
+            for option in labels + options:
                 if option in datafile_kwargs:
                     unused_df_kwargs.difference_update({option})
                     return universal_kwargs | datafile_kwargs[option]
@@ -989,7 +992,6 @@ class Dataset(BaseSet):
             assert(path.exists()), f'Unknown location for {io_spec}: {source}'
             return source, path
 
-
         def shape_key(io_spec, feature, shape) -> tuple[(str, (Int, Int))]:
             """ Create a dictionary key from the given shape, replacing None
                 shape size with variable_depths value where possible, and 
@@ -1006,7 +1008,6 @@ class Dataset(BaseSet):
                 v = (int(v//2),)*2 if isinstance(v, Number) else tuple(v)
                 key.append((k, v))
             return tuple(key)
-
 
         def add_coord(shape_features, size, dims) -> None:
             """ Add coordinate dims with given size to location features """
@@ -1026,49 +1027,44 @@ class Dataset(BaseSet):
                     else: shape_features[key].add(dim)
                 else: shape_features[key].add(dim)
 
-
-        def create_datafile(source, location, window_depth, feature_set) -> Datafile:
+        def create_datafile(label, source, location, window_depth, feature_set) -> Datafile:
             """ Create a Datafile object with the given parameters """
             # Remove any @ specifiers for the features
             # Format: feature@source or source>>feature
-            remove_at = lambda f: f.split('@')[0].split('>>')[-1]
-
+            remove_at = lambda f: f.split('@')[0].split('__')[-1]
+ 
             # Collect all parameters and create Datafile
             df_kwargs = {
                 'location'     : location,
                 'features'     : sorted(map(remove_at, feature_set)),
                 'window_depth' : dict(window_depth),
-                'key_label'    : source
-            } | get_kwargs(location, source)
-
+                'key_label'    : label
+            } | get_kwargs(location, [source, label])
+ 
             if verbose:
                 print(f'\nCreating Datafile for {location.stem} with kwargs:')
                 pprint(df_kwargs, compact=True, indent=4)
             return Datafile(**df_kwargs)
 
-
-        # {DB name : {(window shape,) : [features, ..]}
-        # {ERA5: {(None, 3, 3): ['skt', 'sp', ...]}}
         features    = dd(lambda: dd(set))
         coordinates = dd(lambda: dd(set))
         for io in io_specs:
-            
             # Examine each source (zarr database) the io_spec needs
             for label, specs in io.items():
-                
+
                 # If source in sources get location
                 source = (sources or {}).get(label, label)
-                location = get_location(io, source, find_location)
-
+                location = label, *get_location(io, source, find_location)
+ 
                 # Group features by their requested window shape
                 for feature, shape in specs.get('coord_shapes', specs).items():
                     key = (dim,size), *_ = shape_key(io, feature, shape)
-
+ 
                     # Include coordinate features with other features later
                     if (len(key) == 1) and (dim == feature):
                         coordinates[location][size].add(dim)
                     else: features[location][key].add(feature)
-
+ 
         # Group coordinate features with other features of the same size 
         for location, coord in coordinates.items():
             [*starmap(partial(add_coord, features[location]), coord.items())]
@@ -1077,13 +1073,13 @@ class Dataset(BaseSet):
         dfs = [ create_datafile(*location, window_depth, feature_set)
                  for location, size_features in features.items()
                  for window_depth, feature_set in size_features.items() ]
-
+ 
         # Warn if any datafile_kwargs were unused
         if len(unused): print(f'WARNING unused datafile_kwargs: {unused}')
         if verbose: print(f'Dataset with {len(dfs)} Datafiles:\n   {dfs}')
         return Dataset(dfs)
 
-        
+
 def uniform_chunks(
     bins : int, 
     data : list[np.ndarray], 
@@ -1154,3 +1150,40 @@ def uniform_chunks(
             chunks = chunks[::-1]
         chunks = np.array(chunks).T
     return list(map(tuple, chunks))
+
+
+def find_numblocks_config(dataset, targets: dict[int], max_search=20, n_options=2):
+    def get_chunks(size, blocks):
+        if size is None: 
+            return 1
+        if blocks > 0:
+            chunks = (size + blocks - 1) // blocks
+            if chunks * (blocks - 1) < size:
+                return chunks
+                
+    dimsize = [dict(zip(df.dims, df.shape)) for df in dataset]
+    lengths = [[ds.get(dim, None) for dim, target in targets.items()] for ds in dimsize]
+    numblocks = []
+    
+    for sizes, target in zip(zip(*lengths), targets.values()):
+        if not any(get_chunks(s, target) is None for s in sizes):
+            numblocks.append([target])
+            continue
+            
+        options = []
+        n_found = 0
+        for i in range(1, max_search):
+            found = []
+            if not any(get_chunks(s, target+i) is None for s in sizes):
+                found.append(target+i)
+            if not any(get_chunks(s, target-i) is None for s in sizes):
+                found.append(target-i)
+                
+            if found:
+                options += found
+                n_found += 1
+                if n_found >= n_options:
+                    break
+                    
+        numblocks.append(options)
+    return numblocks

@@ -395,13 +395,13 @@ def test_recurrent_single():
     htg = SingleRecurrent()
     result = htg({'x_1': np.array([[1, 2, 3]])})
     assert ('s_1' in result)
-    assert(np.any(result['s_1'].numpy() == np.array([[1],[3],[6]])))
+    assert(np.any(np.array(result['s_1']) == np.array([[1],[3],[6]])))
 
 
 def test_recurrent_single_order():
     htg = IdentityPlusSingleRecurrent()
     result = htg({'x_1': np.array([[1, 2, 3]])})
-    assert(np.any(result['s_1'].numpy() == np.array([[1],[3],[6]])))
+    assert(np.any(np.array(result['s_1']) == np.array([[1],[3],[6]])))
 
 def test_recurrent_dual():
     htg = DualRecurrent()
@@ -425,7 +425,7 @@ def test_recurrent_renaming():
     htg.add_edge('input',sr)
     htg.add_edge(sr,'output')
     result = htg({'x_1': np.array([[1, 2, 3]])})
-    assert(np.any(result['s_1'].numpy() == np.array([[1],[3],[6]])))
+    assert(np.any(np.array(result['s_1']) == np.array([[1],[3],[6]])))
 
 def test_key_labels():
     def f(X):
@@ -434,14 +434,14 @@ def test_key_labels():
     node = Node(**{
         'name' : 'labels',
         'node' : lambda x : f(x),
-        'inputs' : {'ifs>>x' : 1, 
-                    'ifs>>y' : 1 , 
-                    'era5>>x' : 1, 
+        'inputs' : {'ifs__x' : 1, 
+                    'ifs__y' : 1 , 
+                    'era5__x' : 1, 
                     'y' : 1
                     },
-        'outputs' : {'ifs>>x' : 1, 
-                    'ifs>>y' : 1,
-                    'era5>>x' : 1, 
+        'outputs' : {'ifs__x' : 1, 
+                    'ifs__y' : 1,
+                    'era5__x' : 1, 
                     'y' : 1
                     },
     })
@@ -449,39 +449,40 @@ def test_key_labels():
     htg = HierarchalTensorGraph('labels')
     htg.add_edge('input',node)
     htg.add_edge(node,'output',labels='ifs')
-    res = htg({'ifs>>x' : 1, 
-               'ifs>>y' : 2, 
-               'era5>>x' : 3,
+    res = htg({'ifs__x' : 1, 
+               'ifs__y' : 2, 
+               'era5__x' : 3,
                'y' : 4}
                )
-    assert res == {'ifs>>x' : 1, 'ifs>>y' : 2}
-    
+    # print(res)
+    assert res == {'ifs__x' : 1, 'ifs__y' : 2}
+    # return
     htg.remove_edge(node,'output')
     htg.add_edge(node,'output',labels='era5')
-    res = htg({'ifs>>x' : 1, 
-               'ifs>>y' : 2, 
-               'era5>>x' : 3,
+    res = htg({'ifs__x' : 1, 
+               'ifs__y' : 2, 
+               'era5__x' : 3,
                'y' : 4}
                )
-    assert res == {'era5>>x' : 3}
+    assert res == {'era5__x' : 3}
     
     htg.remove_edge(node,'output')
     htg.add_edge(node,'output',labels=['ifs','era5'])
-    res = htg({'ifs>>x' : 1, 
-               'ifs>>y' : 2, 
-               'era5>>x' : 3,
+    res = htg({'ifs__x' : 1, 
+               'ifs__y' : 2, 
+               'era5__x' : 3,
                'y' : 4}
                )
-    assert res == {'ifs>>x' : 1, 'ifs>>y' : 2, 'era5>>x' : 3}
+    assert res == {'ifs__x' : 1, 'ifs__y' : 2, 'era5__x' : 3}
     
     htg.remove_edge(node,'output')
     htg.add_edge(node,'output',features=['y'],labels=['ifs'])
-    res = htg({'ifs>>x' : 1, 
-               'ifs>>y' : 2, 
-               'era5>>x' : 3,
+    res = htg({'ifs__x' : 1, 
+               'ifs__y' : 2, 
+               'era5__x' : 3,
                'y' : 4}
                )
-    assert res == {'ifs>>x' : 1, 'ifs>>y' : 2, 'y' : 4}
+    assert res == {'ifs__x' : 1, 'ifs__y' : 2, 'y' : 4}
 
     # Test grouped inputs 
     def f(X):
@@ -490,26 +491,26 @@ def test_key_labels():
     node = Node(**{
         'name' : 'groups',
         'node' : lambda x : f(x),
-        'inputs' : {'ifs>>x' : 1, 
-                    'ifs>>y' : 1 , 
-                    'era5>>z' : 1, 
+        'inputs' : {'ifs__x' : 1, 
+                    'ifs__y' : 1 , 
+                    'era5__z' : 1, 
                     't' : 1
                     },
         'outputs' : {'x':1, 'y':2, 'z':3},
         **{'grouped_inputs' : True}
     })
 
-    res = node({'ifs>>x' : 1, 
-               'ifs>>y' : 2, 
-               'era5>>z' : 3,
+    res = node({'ifs__x' : 1, 
+               'ifs__y' : 2, 
+               'era5__z' : 3,
                't' : 4}
                )
     htg = HierarchalTensorGraph('groups')
     htg.add_edge('input',node)
     htg.add_edge(node,'output')
-    res = htg({'ifs>>x' : 1, 
-               'ifs>>y' : 2, 
-               'era5>>z' : 3,
+    res = htg({'ifs__x' : 1, 
+               'ifs__y' : 2, 
+               'era5__z' : 3,
                't' : 4}
                )
     assert res == {'x': 1, 'y': 2, 'z': 3}

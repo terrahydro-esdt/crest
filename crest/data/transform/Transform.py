@@ -3,13 +3,14 @@ from functools import cached_property, wraps, partial
 from typing import Union, Callable
 from scipy.stats import norm
 
-import tensorflow as tf
 import xarray as xr
 import numpy as np
+import keras
 import traceback
 
 from crest.base import BaseAbstract
 from crest.utils import classproperty
+
 
 
 class Transform(BaseAbstract):
@@ -106,11 +107,11 @@ class Transform(BaseAbstract):
 
     # Log transform
     def forward_logexp(self, data, **kwargs):
-        base = tf.math if isinstance(data, tf.Tensor) else np
+        base = keras.ops if self._is_tensor_type(data) else np
         return base.log(data + self.eps)
 
     def inverse_logexp(self, data, **kwargs): 
-        base = tf.math if isinstance(data, tf.Tensor) else np
+        base = keras.ops if self._is_tensor_type(data) else np
         return base.exp(data) - self.eps
 
     @property
@@ -121,11 +122,11 @@ class Transform(BaseAbstract):
     
     # Log(data+1) transform
     def forward_logexpp1(self, data, **kwargs):
-        base = tf.math if isinstance(data, tf.Tensor) else np
+        base = keras.ops if self._is_tensor_type(data) else np
         return base.sign(data) * base.log1p(base.abs(data)+self.eps)
 
     def inverse_logexpp1(self, data, **kwargs): 
-        base = tf.math if isinstance(data, tf.Tensor) else np
+        base = keras.ops if self._is_tensor_type(data) else np
         return base.sign(data) * (base.expm1(base.abs(data))-self.eps)
 
     @property
@@ -229,12 +230,12 @@ class Transform(BaseAbstract):
     # asinh scaling
     def forward_asinh(self, data, **kwargs):
         scale = (self.p75 - self.p25) / 1.349
-        base = tf.math if isinstance(data, tf.Tensor) else np
-        return base.asinh(data / (scale + self.eps))
+        base = keras.ops if self._is_tensor_type(data) else np
+        return base.arcsinh(data / (scale + self.eps))
 
     def inverse_asinh(self, data, **kwargs): 
         scale = (self.p75 - self.p25) / 1.349
-        base = tf.math if isinstance(data, tf.Tensor) else np
+        base = keras.ops if self._is_tensor_type(data) else np
         return (scale + self.eps) * base.sinh(data)
         
     @property
@@ -598,39 +599,40 @@ class Transform(BaseAbstract):
         """ Transform using the data quantiles and the target distribution """
 
         def _do_transform(x):
-            x = tf.cast(x, tf.float32)
+            x = keras.ops.cast(x, 'float32')
             
             # Clip input values to quantile bounds to avoid extrapolation
-            x_clipped = tf.clip_by_value(x, quantiles[0], quantiles[-1])
+            x_clipped = keras.ops.clip(x, quantiles[0], quantiles[-1])
     
             # Flatten input to [N] for easier processing
-            x_flat = tf.reshape(x_clipped, [-1])  # shape [N]
-            n_bins = tf.shape(quantiles)[0]
+            x_flat = keras.ops.reshape(x_clipped, [-1])  # shape [N]
+            n_bins = keras.ops.shape(quantiles)[0]
     
             # Find bin index for each value
             # Right bin: smallest i such that x <= quantiles[i]
-            bin_idx = tf.searchsorted(quantiles, x_flat, side='right') - 1
-            bin_idx = tf.clip_by_value(bin_idx, 0, n_bins - 2)  
+            # Note: exception here likely due to needing keras>=3.12.0
+            bin_idx = keras.ops.searchsorted(quantiles, x_flat, side='right') - 1
+            bin_idx = keras.ops.clip(bin_idx, 0, n_bins - 2)  
     
             # Gather quantile bounds
-            q_lo = tf.gather(quantiles, bin_idx)
-            q_hi = tf.gather(quantiles, bin_idx + 1)
-            t_lo = tf.gather(targets, bin_idx)
-            t_hi = tf.gather(targets, bin_idx + 1)
+            q_lo = keras.ops.take(quantiles, bin_idx)
+            q_hi = keras.ops.take(quantiles, bin_idx + 1)
+            t_lo = keras.ops.take(targets, bin_idx)
+            t_hi = keras.ops.take(targets, bin_idx + 1)
     
             # Linear interpolation of new value
-            slope = (t_hi - t_lo) / tf.maximum(q_hi - q_lo, 1e-4)
+            slope = (t_hi - t_lo) / keras.ops.maximum(q_hi - q_lo, 1e-4)
             value = t_lo + slope * (x_flat - q_lo)
     
             # Where q_low == q_high, just assign t_lo directly
-            same_bin = tf.equal(q_lo, q_hi)
-            t_interp = tf.where(same_bin, t_lo, value)
+            same_bin = keras.ops.equal(q_lo, q_hi)
+            t_interp = keras.ops.where(same_bin, t_lo, value)
     
             # Reshape back to original input shape
-            return tf.reshape(t_interp, tf.shape(x))
+            return keras.ops.reshape(t_interp, keras.ops.shape(x))
 
         # Handle non-tensorflow objects
-        not_tensor = not any(k in str(type(x)) for k in ['tensorflow', 'keras'])
+        not_tensor = not self._is_tensor_type(x)
         if not_tensor:
             data = getattr(x, 'values', x)
             x_clipped = np.clip(data, quantiles[0], quantiles[-1])
@@ -642,16 +644,19 @@ class Transform(BaseAbstract):
                 return x
             return transform
 
-            # Does not work if inside symbolic graph
-            original, x = x, tf.constant(getattr(x, 'values', x))
-
         z = _do_transform(x)
-        if not_tensor:
-            z = getattr(z, 'numpy', lambda: z)()
+        # if not_tensor:
+        #     z = getattr(z, 'numpy', lambda: z)()
             
-            # Handle xarray objects
-            if 'xarray' in str(type(original)):
-                original.values = z
-                return original
-            return z
+        #     # Handle xarray objects
+        #     if 'xarray' in str(type(original)):
+        #         original.values = z
+        #         return original
+        #     return z
         return z
+
+
+    @classmethod
+    def _is_tensor_type(cls, x, keys=['keras', 'tensorflow', 'jax', 'pytorch']) -> bool:
+        """ Returns True if the given value is a keras-like tensor object """
+        return any(k in str(type(x)) for k in keys)

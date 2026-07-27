@@ -271,7 +271,7 @@ class BlockConfig(dict):
         self.repeated_empty[self.bin_index] += 1
         if self.repeated_empty[self.bin_index] > 5:
             raise Exception(f'{self} cannot generate batches from any blocks')
-        return [0]
+        return [-1]
         
 
     @property
@@ -376,7 +376,7 @@ class BlockConfig(dict):
                         # key = {feature: edges[left.index(edge)]}
                         # idx = self.sampling_edges.index(key)
                         for i, feature_edges in enumerate(self.sampling_edges):
-                            if feature_edges[feature][0] == edge:
+                            if feature_edges.get(feature, [None])[0] == edge:
                                 self.empty_blocks[i][index] = True
                                 removed.add(i)
             if removed:

@@ -15,6 +15,7 @@ import xarray as xr
 import pandas as pd 
 import numpy as np
 import warnings
+import reprlib
 import hashlib
 import logging
 import shutil
@@ -323,6 +324,12 @@ class Datafile(BaseAbstract):
         keys = sorted(self.features or data.keys())
         keys = keys + (['valid_mask'] if 'valid_mask' in data.keys() else [])
         data = data[keys]
+        
+        # Add virtual dimensions here, after dropping extra features (which may
+        # have dropped some dimensions as a side-effect)
+        missing = {k:v for k,v in self._virtual_dims.items() if k not in data}
+        if missing: 
+            data = data.expand_dims(dim=missing)
 
         # Remove summary statistics
         data = data.drop_vars(['summary', 'features', 'statistics'], errors='ignore')
@@ -340,10 +347,24 @@ class Datafile(BaseAbstract):
         # Create a mask for valid data elements, to pre-compute when caching
         if 'valid_mask' not in data:
             if not any(hasattr(type(data[f].data._meta), 'todense') for f in data):
-                data['valid_mask'] = (~data.to_array('features').isnull()).all('features')
+                # If at least some part of a window needs to be valid, all
+                # features must be simultaneously valid
+                if np.prod(list(self._valid_percent.values())) > 0:
+                    data['valid_mask'] = (~data.to_array('features').isnull()).all('features')
+                
+                # If empty windows are allowed, any features can be valid
+                else:
+                    data['valid_mask'] = (~data.to_array('features').isnull()).any('features')
         if 'valid_mask' in self.features:
             self.features.remove('valid_mask')
 
+        # Only rectilinear (separable-coordinate) grids are currently supported
+        for name, coord in data.coords.items():
+            n_dims = len(list(coord.dims))
+            if n_dims > 1:
+                err = f'{self}.{name} has {n_dims} dims ({coord.dims})' 
+                raise ValueError(f'Only rectilinear grids are supported: {err}')
+        
         # Convert to a DataArray and ensure data is backed by dask
         data = data.to_array('features').chunk({})
 
@@ -619,7 +640,8 @@ class Datafile(BaseAbstract):
         """ Datafile is deemed sparse if sparsity > 99% """
         if hasattr(type(self.data.data._meta), 'todense'):
             return True
-        return self.sparsity(compute) > threshold
+        return False
+        # return self.sparsity(compute) > threshold
 
 
     @property
@@ -706,7 +728,7 @@ class Datafile(BaseAbstract):
         uniform = lambda vec: (vec.max()-vec.min()) < 1e-3
 
         if self.is_sparse() and not self.match_radius:
-            raise ValueError(f'Must set match_radius for sparse datasets')
+            raise ValueError(f'{self} Must set match_radius for sparse datasets')
             
         # Adjust the resolution vector based on the requested match radius
         for dim, radius in self.match_radius.items():
@@ -757,11 +779,17 @@ class Datafile(BaseAbstract):
 
         if missing:
             # Add the new dimension(s) to the raw data and valid_percents
-            missing_to_nan = dict(zip(missing, [[np.nan]]*len(missing)))
-            self._raw_data = self._raw_data.expand_dims(dim=missing_to_nan)
+            missing_to_nan = lambda m: dict(zip(m, [[np.nan]]*len(m)))
+            missing_in_raw = missing_to_nan(missing - set(self._raw_data.dims))
+            missing_in_dat = missing_to_nan(missing)
+            
+            # raw data can have dimensions dropped when features are selected,
+            # whereas the full self._raw_data object still contains those dims
+            if missing_in_raw:
+                self._raw_data = self._raw_data.expand_dims(dim=missing_in_raw)
 
             # Add the new dimension(s) to virtual_dims to track numblocks
-            self._virtual_dims.update(missing_to_nan)
+            self._virtual_dims.update(missing_in_dat)
             self.dims = sorted(dims)
 
             # Force a cache refresh for these values
@@ -962,7 +990,7 @@ class Datafile(BaseAbstract):
             if any(block != db for block, db in zip(numblocks, self.numblocks)):
                 newchunks = [shape // block for block, shape in block_shape]
                 self.data = self.chunk(dict(zip(self.dims, newchunks)))
-
+                
                 if any(block != db for block, db in zip(numblocks, self.numblocks)):
                     raise ValueError(f'{self}: blocks={numblocks}, created {self.numblocks}')
         return newchunks
@@ -1372,6 +1400,12 @@ class Datafile(BaseAbstract):
             try: 
                 cache = backend.open()
                 attrs = ['dims', 'chunksizes']
+
+                # Temporary check for updated attrs format
+                if 'cache_uid' not in cache.attrs:
+                    reason = 'Update cache attrs'
+                    overwrite = True
+                    
                 for a in attrs:
                     curr = getattr(data,  a, None)
                     prev = getattr(cache, a, None)
@@ -1380,9 +1414,9 @@ class Datafile(BaseAbstract):
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore", category=FutureWarning)
                         if curr != prev:
-                            curr = f'{curr=}'[:80]
-                            prev = f'{prev=}'[:80]
-                            reason = f'differing {a}\n\t{curr}\n!=\n\t{prev}'
+                            # curr = reprlib.repr(curr) # f'{curr=}'[:80]
+                            # prev = reprlib.repr(prev) # f'{prev=}'[:80]
+                            reason = f'differing {a}\n\t{curr=}\n!=\n\t{prev=}'
                             overwrite = True
                             break
                 else:
@@ -1393,7 +1427,7 @@ class Datafile(BaseAbstract):
             except Exception as e: 
                 reason = f'exception {e}'
                 overwrite = True
-
+        
         if overwrite or (not dest.exists()):
             logger = get_logger(__name__)
             logger.info(f'Caching {self.name} to {dest}...')
@@ -1423,6 +1457,11 @@ class Datafile(BaseAbstract):
 
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore')
+
+                # Add a unique random identifier for this specific cache
+                randint = str(np.random.default_rng().integers(1e8)).encode('utf-8')
+                data.attrs['cache_uid'] = hashlib.sha256(randint).hexdigest()
+                
                 try:
                     # Put coordinates into single chunk
                     encoding = {c: {'chunks': (-1,)} for c in data.coords}
@@ -1485,13 +1524,14 @@ class Datafile(BaseAbstract):
         # Write the data and the padding sizes to a new zarr
         array += [([f'_s_{i}' for i in range(len(sizes.shape))], sizes.rechunk(-1))]
         xdata = xr.Dataset(dict(zip(dims+['sizes'], array)))
-
+        xdata.attrs['cache_uid'] = self._raw_data.attrs['cache_uid']
+        
         # Verify cached data is equivalent
         reason = 'user passed overwrite=True to _cache_blocks'
         if (not overwrite) and dest.exists():
             try: 
                 cache = xr.open_zarr(dest)
-                attrs = ['sizes', 'dims', 'chunksizes']
+                attrs = ['sizes', 'dims', 'chunksizes', 'attrs']
                 for a in attrs:
                     curr = getattr(xdata, a, None)
                     prev = getattr(cache, a, None)
@@ -1500,9 +1540,9 @@ class Datafile(BaseAbstract):
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore", category=FutureWarning)
                         if curr != prev:
-                            name = lambda n:n[:80]+(' ..' if len(n)>80 else '')
-                            curr = name(repr(curr)) 
-                            prev = name(repr(prev))
+                            # name = lambda n:n[:80]+(' ..' if len(n)>80 else '')
+                            # curr = reprlib.repr(curr) # name(repr(curr)) 
+                            # prev = reprlib.repr(prev) # name(repr(prev))
                             reason = f'differing {a}\n\t{curr=}\n!=\n\t{prev=}'
                             overwrite = True
                             break

@@ -1,19 +1,20 @@
 """ A node version of the Keras LSTMCell """
 
 import dill
-import tensorflow as tf
-from ...model.Node import Node
+import keras
+from ..model.Node import Node
 
-class InitialState(tf.keras.Layer):
+class InitialState(keras.Layer):
     """ Defines and returns the LSTMCell initial state set to all zeros. """
+
     def __init__(self,units):
         super().__init__()
         self.units = units
 
-    def call(self,x):
+    def call(self, x):
         """ returns the initial state of all zeros """
-        batch_size = tf.shape(x)[0]
-        return tf.zeros([batch_size,self.units])
+        batch_size = keras.ops.shape(x)[0]
+        return keras.ops.zeros([batch_size, self.units])
 
 
 class LSTMCell(Node):
@@ -78,7 +79,7 @@ class LSTMCell(Node):
     def build(self):
         """ build function creates the lstmcell """
         if not self._lstmcell:
-            self._lstmcell = tf.keras.layers.LSTMCell(self.units,**self.kwargs)
+            self._lstmcell = keras.layers.LSTMCell(self.units,**self.kwargs)
 
 
     # Initialize states to zero
@@ -91,7 +92,7 @@ class LSTMCell(Node):
     def call(self,x) -> dict:
         """ Node callable """
         features = {k : v for k,v in x.items() if k not in self.state_names}
-        inp = tf.keras.layers.Concatenate(axis=-1)(list(features.values()))
+        inp = keras.layers.Concatenate(axis=-1)(list(features.values()))
         [h,c] = [x[k] for k in self.state_names]
         _,[h,c] = self._lstmcell(inp,(h,c))
 

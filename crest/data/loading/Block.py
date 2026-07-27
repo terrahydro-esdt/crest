@@ -354,7 +354,12 @@ class Block(BaseAbstract):
             if invalid.all(): return invalid
 
             keys, percent = keys_pct
-            
+
+            # Valid percent is handled in a way that allows a small percent
+            # to be used in indicating 'at least one element'. For example,
+            # in a 3x3 spatial window a valid percent of 0.01 could be used
+            # to ensure at least one element in windows are valid. In other
+            # words, percentages are interpreted as ceil(n_elements * pct).
             n_total = np.prod([self.window_total[k] for k in keys])
             maximum = int((1-percent) * n_total)
 
@@ -410,7 +415,7 @@ class Block(BaseAbstract):
         # Note that continuing if percent == 0 implies NaNs outside of the data
         #   are treated as always invalid, compared to NaNs in the data itself
         for keys, percent in self.valid_percent.items():
-            if percent == 0: continue
+            # if percent == 0: continue
 
             for dim in keys:
                 offset = (slice(None),) * self.axes[dim]
@@ -457,7 +462,13 @@ class Block(BaseAbstract):
         if self.is_uniform: 
             return np.array(self.resolution)
         assert(not self.is_sparse), f'{self.resolution=}'
-        res = [r[v] for r,v in zip(self.resolution, self.valid_windows)]
+        try:
+            res = [r[v] for r,v in zip(self.resolution, self.valid_windows)]
+        except IndexError as e:
+            raise Exception(
+                'An index error here is likely due to blocks needing to be ' +
+                're-cached (not the Dataset cache); this can be done by ' +
+                'passing overwrite=True during Batcher creation.') from e
         return np.stack(res, axis=1)
 
 
@@ -743,7 +754,8 @@ class Block(BaseAbstract):
         def gen_xr_dict(data: np.ndarray, *coords: np.ndarray) -> dict:
             """ Generate the xr.Dataset dict for given data/coord windows """  
             return { 'data'   : list(map(cast_dtype, features, data)), 
-                     'coords' : dict(zip(keep_dims, coords)) | {
+                     'coords' : dict(zip(keep_dims, 
+                                    map(cast_dtype, keep_dims, coords))) | {
                     'features': features} } | dict(xr_kwargs)
 
         nan_matches = ~np.isfinite(matches)

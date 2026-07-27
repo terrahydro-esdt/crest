@@ -4,6 +4,29 @@ import time
 
 
 class FutureSampler(NonzeroSampler):
+    """ Chooses a BlockConfig that has the minimum expected samples.
+
+    Notes
+    -----
+    Rather than choosing a BlockConfig that has the least number of samples
+    currently queued (like NonzeroSampler), this sampler takes into account
+    the number of samples expected to be queued in the future. As well, it
+    handles the logic of waiting until a queue has room for more samples if
+    all BlockConfig queues are currently full.
+
+    Parameters
+    ----------
+    *args
+        See NonzeroSampler for the standard Sampler arguments.
+    batch_size : int
+        Number of samples contained in a batch.
+    max_queue : int
+        Max number of samples that should be contained in a BlockConfig queue.
+    **kwargs
+        See NonzeroSampler for the standard Sampler arguments.
+
+    """
+    
     def __init__(self, *args, batch_size: int=32, max_queue: int=100, **kwargs):
         super().__init__(*args, **kwargs)
         self.batch_size = batch_size

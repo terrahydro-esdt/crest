@@ -51,7 +51,9 @@ class StageWriter(Writer):
         match exactly with datetimes that are contained in the schema; but
         e.g. latitude values would not need to match exactly, and would
         instead be written to the nearest value contained within the schema.
-    
+    **kwargs
+        Additional keyword arguments are discarded.
+        
     """
     
     def __init__(self,
@@ -60,6 +62,7 @@ class StageWriter(Writer):
         max_queue   : int = 100000,
         n_buckets   : int = 128,
         strict_dims : list[str] = ['datetime'],
+        **kwargs,
     ):
         self.schema = data_schema
         self.max_queue = max_queue
@@ -76,10 +79,12 @@ class StageWriter(Writer):
 
     @property
     def is_open(self) -> bool:
+        """ Whether the writer is currently open """
         return hasattr(self, '_directory')
         
     
     def open(self):
+        """ Open the writer and initialize all buffers """
         assert(not self.is_open), f'{self} is already open'
         
         # Create the temporary staging directory
@@ -97,6 +102,7 @@ class StageWriter(Writer):
             
                 
     def close(self):
+        """ Close the writer, flushing any pending data to disk """
         if self.is_open:
             self.flush()
             if hasattr(self._directory, 'cleanup'):
@@ -108,6 +114,7 @@ class StageWriter(Writer):
     
     @property
     def stage_path(self):
+        """ Path to the staging area for intermediate data storage """
         assert(self.is_open), f'{self} is not open'
         if isinstance(self._directory, TemporaryDirectory):
             return Path(self._directory.name)
@@ -153,7 +160,7 @@ class StageWriter(Writer):
         # Ensure all given arrays are actually vectors
         coords = {k: c.ravel() for k,c in coords.items()}
         values = {k: v.ravel() for k,v in values.items()}
-        
+
         # Verify all coordinate dimensions are present
         if not all(d in coords for d in self.dims):
             raise ValueError(f'Expected {self.dims}, found {list(coords)}')

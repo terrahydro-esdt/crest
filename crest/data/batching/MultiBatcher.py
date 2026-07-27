@@ -282,12 +282,14 @@ class MultiBatcher(Batcher):
     @property
     def n_total_config(self) -> int:
         """ Number of block configurations, including binning configs """
-        return max(super().n_total_config, sum(map(len, self.sampling_edges)))
+        n_edge_configs = sum(max(len(e), 1) for e in self.sampling_edges)
+        return max(super().n_total_config, n_edge_configs)
 
     
     def _config_index(self, config) -> int:
         """ Index of the configuration within the n_total_config """
         n_totals = sum(map(len, self.sampling_edges[:config.config_index]))
+        self.debug(f'{n_totals=} {config.bin_index=} {config=} {self.sampling_edges=} {config.config_index=}')
         return n_totals + config.bin_index
     
     
@@ -355,11 +357,15 @@ class MultiBatcher(Batcher):
         self.debug(f'All configs: {string}')
         if not self.directed_sampling:
             nonzero = [c for c in self._block_configs if any(c.valid_blocks[i]==1 for i in block_idxs)]
-            assert(len(nonzero)), f'No configurations generate samples for block {block_idxs}'
-            config = min(nonzero)
-            self.info(f'Selected {config}')
-            return blocks, block_idxs, config.add_worker() # Increment the number of workers            
-            
+            if len(nonzero):
+                # assert(len(nonzero)), f'No configurations generate samples for block {block_idxs}'
+                config = min(nonzero)
+                self.info(f'Selected {config}')
+                return blocks, block_idxs, config.add_worker() # Increment the number of workers            
+            else: 
+                self.info(f'No configurations generate samples for {block_idxs=}')
+                return blocks, block_idxs, None
+                
         # Enforce a soft-cap on the number of batches queued for each config
         config = min(self._block_configs)
         count = 0
@@ -444,6 +450,8 @@ class MultiBatcher(Batcher):
                 key = self._samples_cache_key(config, [i])
                 if key not in self._samples_cache:
                     self._samples_cache[key] = []
+                assert(self._samples_cache[key] is not None), \
+                    f'Previously found > {self.block_size*0.9} samples for {config=} {key=}'
                 assert(len(self._samples_cache[key]) == 0), \
                     f'Cache {key=} should be empty: {len(self._samples_cache[key])}'
 
@@ -471,6 +479,7 @@ class MultiBatcher(Batcher):
         sampling_edges = list(sampling_edges)
         safelen = lambda v: getattr(v, '__len__', lambda: None)()
         summary = None
+        self.debug(f'Parsing schema {sampling_edges=}')
         
         def parse_schema(feature, schema) -> list[tuple[float, float]]:
             """ Parse a binning schema into the (left, right) edge format """
@@ -564,7 +573,7 @@ class MultiBatcher(Batcher):
 
     def _remove_empty(self, independent):
         """ Remove configurations that specify bins with no data """
-
+        self.debug(f'Removing empty bins from {independent}')
         # # This version is significantly simpler, but does not short-circuit
         # names = set()
         # tasks = []
