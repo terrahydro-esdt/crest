@@ -297,8 +297,11 @@ class Block(BaseAbstract):
         """ Determine valid sample window indices for sparse data """
         # If no window is requested, we can just use the sparse coords directly
         if not self.uses_window:
-            return np.isfinite(self.sparse_data).all(-1).coords
-            return self.sparse_data.coords[:-1]
+            total_percent = np.round(np.prod(list(self.valid_percent.values())), 5)
+            if total_percent >= (1-1e-4):
+                return np.isfinite(self.sparse_data).all(-1).coords
+            return (np.isfinite(self.sparse_data).mean(-1) >= total_percent).coords
+            # return self.sparse_data.coords[:-1]
 
         # Note that the sparse API isn't fully solidified - there are a few
         # different ways to handle extracting the valid windows (e.g. using
