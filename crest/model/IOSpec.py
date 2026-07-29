@@ -1,10 +1,14 @@
 """ This module implements the input/ouput spec object used by models """
 
 from __future__ import annotations
-from .TensorSpec import TensorSpec
-from collections.abc import Collection
+
 from collections import UserDict
+from collections.abc import Collection
+
 import dill
+
+from .TensorSpec import TensorSpec
+
 
 class IOSpec(UserDict):
     """
@@ -51,7 +55,7 @@ class IOSpec(UserDict):
     def __setitem__(self, label: str, value: dict):
         """ sets items in IO spec with error handling and some utilities to reduce redundancy """
         if not isinstance(value,dict):
-            raise ValueError("IOSpec items must be dictionaries")
+            raise TypeError("IOSpec items must be dictionaries")
         
         io_spec = {
                    'keys' : None,
@@ -145,7 +149,7 @@ class IOSpec(UserDict):
     
     def __repr__(self):
         """ Returns string listing keys in the IOSpec """
-        return f'IOSpec({str(list(self.keys))})'
+        return f'IOSpec({list(self.keys)!s})'
     
     def encode(self):
         """ Serialization dict """

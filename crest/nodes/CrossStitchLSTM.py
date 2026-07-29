@@ -1,10 +1,11 @@
 "This module implements a cross-stitch node using LSTMCell.py"
 
 from __future__ import annotations
-import dill
-from .LSTMCell import LSTMCell
+
 from ..model import HierarchalTensorGraph
 from ..model.TensorGraph import ImproperTensorGraphError
+from .LSTMCell import LSTMCell
+
 
 class CrossStitchLSTM(HierarchalTensorGraph):
     """

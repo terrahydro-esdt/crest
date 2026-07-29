@@ -4,30 +4,31 @@ within a configurable object intended to create
 configurable models that run over regions..
 """
 
-from functools import partial
-from contextlib import contextmanager
-import xarray as xr
+import importlib
 import logging
-import toolz as tlz
+import os
+import shutil
+import sys
+from contextlib import contextmanager
+from functools import partial
+
+import dask
 import numpy as np
 import pandas as pd
-import shutil
-import importlib
-import os
-from crest.configuration.Config import Config
-from crest.data.loading.Dataset import Dataset
-from crest.data.loading.Datafile import Datafile
-from crest.data.batching.Batcher import Batcher
+import tensorflow as tf
+import toolz as tlz
+import xarray as xr
+from dask.diagnostics import ProgressBar
+from tensorflow.python.framework import ops
+
 from crest.archiver.Archiver import Archiver
 from crest.archiver.StageWriter import StageWriter
-from crest.utils.sys_metrics import SysMetrics
+from crest.configuration.Config import Config
+from crest.data.batching.Batcher import Batcher
+from crest.data.loading.Datafile import Datafile
+from crest.data.loading.Dataset import Dataset
 from crest.model.ExtentStrategy import ExtentStrategy
-from tensorflow.python.framework import ops
-import tensorflow as tf
-from dask.diagnostics import ProgressBar
-import dask
-import pickle
-import sys
+from crest.utils.sys_metrics import SysMetrics
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
@@ -83,7 +84,7 @@ def process_batch_full(batcher, model_inputs, loader, schema, model_name, stagin
         yield process
 
 
-class GriddedModel():
+class GriddedModel:
     """ 
 
     Handles the automatic generation of model 
@@ -301,8 +302,8 @@ class GriddedModel():
                                 a.zarr_writer.flush()
 
                 logger.info(
-                    f'Successfully completed generating and archiving predictions.')
-                logger.info(f"Started output postprocess")
+                    'Successfully completed generating and archiving predictions.')
+                logger.info("Started output postprocess")
 
             with self.sm.timed("postprocess_output"):
                 with dask.config.set(scheduler="synchronous", num_workers=24):
@@ -316,7 +317,7 @@ class GriddedModel():
                     elif (not self.config.temperature_unit == 'C'):
                         raise ValueError('Unknown Temperature Unit')
 
-                    mask = mask.where(mask>=0.5).isel({'datetime': -1}).drop_vars(('datetime')).compute()
+                    mask = mask.where(mask>=0.5).isel({'datetime': -1}).drop_vars('datetime').compute()
 
                     # pickle_path = os.path.join(self.config.archive_kwargs['output_path'], f"{base_name}_post_process.pkl")
                     # with open(pickle_path, 'wb') as f:
@@ -336,9 +337,9 @@ class GriddedModel():
 
                 shutil.rmtree(output_path)
                 os.rename(post_process_output, output_path)
-                logger.info(f"Renamed postprocessed output")
+                logger.info("Renamed postprocessed output")
 
-                logger.info(f"Completed output postprocess.")
+                logger.info("Completed output postprocess.")
                 self.sm.emit("run_complete", status="success")
 
             return True

@@ -1,10 +1,12 @@
 """ This module implements the CREST tensorspec """
 
 import json
+
 import tensorflow as tf
 from tensorflow import keras
 
-class TensorSpec(object):
+
+class TensorSpec:
     """ Specifies the shape of tensors withing crest """
 
     def __init__(self, *specs):
@@ -21,12 +23,7 @@ class TensorSpec(object):
             self.spec_dict['dtype'] = specs[0].type_spec.dtype.name
             self.spec_dict['name'] = specs[0].type_spec.name
 
-        elif len(specs) == 1 and isinstance(specs[0], list):
-            self.spec_dict['shape'] = self._modify_shape(specs[0])
-            self.spec_dict['dtype'] = 'float32'
-            self.spec_dict['name'] = None
-
-        elif len(specs) == 1 and isinstance(specs[0], tuple):
+        elif len(specs) == 1 and isinstance(specs[0], list) or len(specs) == 1 and isinstance(specs[0], tuple):
             self.spec_dict['shape'] = self._modify_shape(specs[0])
             self.spec_dict['dtype'] = 'float32'
             self.spec_dict['name'] = None
@@ -99,7 +96,7 @@ class TensorSpec(object):
         if hasattr(shape, '__iter__'):
             return shape
         else:
-            return tuple([shape])
+            return tuple(shape)
 
     @property
     def dtype(self):
@@ -157,10 +154,7 @@ class TensorSpec(object):
 
         if same_keys:
             if self.specs['shape'] == tuple(other.specs['shape']):
-                if self.specs['dtype'] == other.specs['dtype']:
-                    return True
-                else:
-                    return False
+                return self.specs['dtype'] == other.specs['dtype']
             else:
                 return False
 

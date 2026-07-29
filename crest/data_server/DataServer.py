@@ -6,12 +6,13 @@ data to run.
 """
 
 import logging
-
-from crest.data.loading.StructuredDataset import StructuredDataset
-from urllib.request import urlretrieve
 import os
 import pickle as pkl
+from urllib.request import urlretrieve
+
 import xarray as xr
+
+from crest.data.loading.StructuredDataset import StructuredDataset
 
 logger = logging.getLogger(__name__)
 
@@ -62,12 +63,7 @@ class DataServer:
 
             if not os.path.isfile(file) and not os.path.exists(file_zarr):
                 logger.debug(f'Downloading {netcdf_name} from {url}')
-                try:
-                    urlretrieve(url + netcdf_name, file)
-                    logger.info(f'Successfully downloaded {netcdf_name}')
-                except Exception as e:
-                    logger.error(f'Could not retrieve file from url: {url}{netcdf_name} - {e}')
-                    return None
+                urlretrieve(url + netcdf_name, file)
 
                 # Convert files to zarr format
                 logger.debug(f'Converting {netcdf_name} to Zarr format')
@@ -130,11 +126,7 @@ class DataServer:
 
             # Download from server if needed
             if not os.path.isfile(file):
-                try:
-                    urlretrieve(url + name, file)
-                except Exception as e:
-                    logger.error('Could not retrieve file from url:' + url, e)
-                    return None
+                urlretrieve(url + name, file)
 
             # Create StructuredDatasets
             with open(file, 'r') as f:
@@ -186,11 +178,7 @@ class DataServer:
 
         # Download from server if needed
         if not os.path.isfile(file):
-            try:
-                urlretrieve(url + name, file)
-            except Exception as e:
-                loger.error('Could not retrieve file from url: ' + url, e)
-                return None
+            urlretrieve(url + name, file)
 
         # Create StructuredDatasets
         with open(file, 'rb') as f:
@@ -298,4 +286,4 @@ class DataServer:
             return DataServer.load_evapotranspiration(path)
 
         exc = f'No dataset called {name} on DataServer'
-        raise Exception(exc)
+        raise ValueError(exc)

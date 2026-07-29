@@ -3,15 +3,16 @@ This module impelents a utility used within Gridded Model
 to provide commmonly used extents / extent strategies
 """
 
-import logging
-import zarr
-import xarray as xr
 import importlib
+import logging
+
+import xarray as xr
+import zarr
 
 logger = logging.getLogger(__name__)
 
 
-class ExtentStrategy():
+class ExtentStrategy:
     """ Common extent strategies to use with Gridded Model """
 
     def __init__(self, config):
@@ -147,7 +148,7 @@ class ExtentStrategy():
 
         current_time_ind = last_time_ind + timesteps
         if (current_time_ind >= len(data.datetime.values)):
-            logger.error(f'Invalid window size based on previous index')
+            logger.error('Invalid window size based on previous index')
 
             if (last_time_ind < (len(data.datetime.values) - 1)):
                 current_time_ind = -1

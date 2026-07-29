@@ -3,9 +3,11 @@ This module implements a NetworkX graph
 object with only the required functionality.
 """
 
-from .BaseGraph import BaseGraph
-import networkx as nx
 import copy
+
+import networkx as nx
+
+from .BaseGraph import BaseGraph
 
 
 class NetworkXGraph(BaseGraph):

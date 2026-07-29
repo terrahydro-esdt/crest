@@ -1,28 +1,25 @@
 from __future__ import annotations
-import zipfile
-import base64
-import tempfile
-import logging
-import numpy as np
-import warnings
-import itertools
-import os
-import json
 
+import base64
+import itertools
+import json
+import logging
+import tempfile
+import warnings
+import zipfile
 from contextlib import nullcontext
 from pathlib import Path
+
+import numpy as np
 from keras import Input
 from keras import Model as KerasModel
-from keras.models import load_model
+
+from crest.data import Batcher
+from crest.utils import Metrics
 
 from .BaseModel import BaseModel, ImproperModelError
-from .TensorGraph import TensorGraph
-from .TensorSpec import TensorSpec
 from .HierarchalTensorGraph import HierarchalTensorGraph
-from crest.utils import Metrics
-from crest.data.loading import Dataset, StructuredDataset
-from crest.data import Batcher
-
+from .TensorSpec import TensorSpec
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +105,7 @@ class Model(BaseModel):
             args passed as keras.Model.compile(kwargs)
 
         """
-        logger.debug(f"Compiling Keras Model")
+        logger.debug("Compiling Keras Model")
 
         self.model.compile(**kwargs)
 
@@ -133,7 +130,7 @@ class Model(BaseModel):
         accepted by keras.fit().
 
         """
-        logger.debug(f"Training Keras Model")
+        logger.debug("Training Keras Model")
 
         if isinstance(data, Batcher):
             with data as batcher, kwargs.get("validation_data", nullcontext()):
@@ -165,7 +162,7 @@ class Model(BaseModel):
         accepted by Keras.predict().
 
         """
-        logger.debug(f"Predicting with Keras Model")
+        logger.debug("Predicting with Keras Model")
 
         # Check if exhaust is possible
         steps = None
@@ -283,13 +280,13 @@ class Model(BaseModel):
     def save_weights(self, filepath, overwrite=True, max_shard_size=None):
         """Save the weights of the model"""
 
-        logger.debug(f"Saving weights")
+        logger.debug("Saving weights")
         self.model.save_weights(filepath, overwrite, max_shard_size)
 
     def load_weights(self, filepath, skip_mismatch=False, **kwargs):
         """Load the weights of the model"""
 
-        logger.debug(f"Load weights")
+        logger.debug("Load weights")
         self.model.load_weights(filepath, skip_mismatch, **kwargs)
 
     def save(self, filepath, overwrite=True):
@@ -313,7 +310,7 @@ class Model(BaseModel):
 
         """
 
-        logger.debug(f"Saving model")
+        logger.debug("Saving model")
 
         if isinstance(filepath, str):
             filepath = Path(filepath)
@@ -373,7 +370,7 @@ class Model(BaseModel):
 
         """
 
-        logger.debug(f"Saving model")
+        logger.debug("Saving model")
 
         if isinstance(filepath, str):
             filepath = Path(filepath)

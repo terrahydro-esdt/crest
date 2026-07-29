@@ -1,23 +1,22 @@
 """ This module implements the Hierarchal Graph structure for building coupling models """
 
 from __future__ import annotations
-from prettytable.colortable import ColorTable, Themes
-from collections.abc import Callable
-from functools import cached_property, cache, wraps
-from typing import Union
 
-import networkx as nx
-import numpy as np
-import warnings
 import inspect
 import logging
-import keras
-import dill
-import re
+import warnings
+from collections.abc import Callable
+from functools import cache, wraps
 
-from .TensorGraph import TensorGraph, ImproperTensorGraphError
+import dill
+import keras
+import networkx as nx
+import numpy as np
+from prettytable.colortable import ColorTable, Themes
+
 from .graphs.NetworkXGraph import NetworkXGraph
 from .Registry import Registry
+from .TensorGraph import ImproperTensorGraphError, TensorGraph
 
 logger = logging.getLogger(__name__)
 
@@ -202,18 +201,15 @@ class HierarchalTensorGraph(TensorGraph):
 
         self.logger.info(f'Checking if node {node} is equal to {self.node}')
 
-        if self.node and self.is_basenode:
-            if node and node.is_basenode:
+        if (
+            self.node 
+            and self.is_basenode
+            and node.is_basenode
+           ):
+            # compare names because it is impossible to compare callables
+            return self.node.name == node.name
 
-                # compare names because it is impossible to compared callables
-                return self.node.name == node.name
-            else:
-                return False
-
-        if self.node.graph.is_isomorphic(node.graph.graph):
-            return True
-
-        return False
+        return self.node.graph.is_isomorphic(node.graph.graph)
 
     def encode(self,type='dill',**kwargs):
         """ Serialization """
@@ -416,7 +412,7 @@ class HierarchalTensorGraph(TensorGraph):
         self.logger.info("Checking if HTG %s is a basenode",self.name)
         return False
 
-    def get_node(self, node: Union[str, TensorGraph]):
+    def get_node(self, node: str | TensorGraph):
         """ 
         Adds a node to the graph if it doesn't exist and
         does a variety of error checking before adding.
@@ -448,7 +444,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         self.logger.debug(f'Getting node {node} in HTG {self.name}')
 
-        if not (isinstance(node, str) or isinstance(node, HierarchalTensorGraph)):
+        if not isinstance(node, (str,HierarchalTensorGraph)):
             message = 'node must be either a string, or a HierarchalTensorGraph'
             raise ImproperTensorGraphError(message)
 
@@ -523,7 +519,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         self.get_node(node)
 
-    def add_io(self, node: Union[str, Callable]):
+    def add_io(self, node: str | Callable):
         """ Add input/output edges and (optionally) input/output specs to a node """
 
         self.logger.debug(f'Adding i/o to node {node} in HTG {self.name}')
@@ -548,8 +544,6 @@ class HierarchalTensorGraph(TensorGraph):
         if not (s,t) in self.edges:
             message = f'Edge={(t,s)} does not exist in the graph'
             raise ValueError(message)
-
-        edge = self.graph.edges[s,t] 
 
         # Remove features from input
         if s == 'input':
@@ -593,10 +587,12 @@ class HierarchalTensorGraph(TensorGraph):
             raise ImproperTensorGraphError(message)
 
         # Check it's the right node not some other with the same name
-        if isinstance(node, HierarchalTensorGraph):
-            if not self[node.name] is node:
-                message = f'Node with the name {node.name} exist but does match the one passed'
-                raise ImproperTensorGraphError(message)
+        if (
+            isinstance(node, HierarchalTensorGraph)
+            and not self[node.name] is node
+           ):
+            message = f'Node with the name {node.name} exist but does match the one passed'
+            raise ImproperTensorGraphError(message)
         
         # Get all edges and remove them first
         edges = [i for i in self.edges if name in i]
@@ -605,16 +601,15 @@ class HierarchalTensorGraph(TensorGraph):
 
         # Remove node 
         self.graph.remove_node(name)
-        return
 
 
     def add_edge(
-                 self, source: Union[str, Callable], 
-                 target: Union[str, Callable], 
-                 rollout_axis: Union[int, None] = None,
-                 rename: dict[str,str] = {},
-                 features: list[str] | str = [],
-                 labels: list[str] | str = [],
+                 self, source: str | Callable, 
+                 target: str | Callable, 
+                 rollout_axis: int | None = None,
+                 rename: dict[str,str] | None = None,
+                 features: list[str] | str | None = None,
+                 labels: list[str] | str | None = None,
                  **attr
                  ):
         """
@@ -628,11 +623,11 @@ class HierarchalTensorGraph(TensorGraph):
              The source from which to begin the edge
         target : str, Callable, HierarchalTensorGraph
              The sink from which to end the edge
-        rename : dict[str,str]
+        rename : dict[str,str] | None = None
             Dictionary to rename incoming keys with items = name : new_name
-        features : str | list[str]
+        features : list[str] | str | None = None
             A list of features to select
-        labels : str | list[str]
+        labels : list[str] | str |  None = None
             A list of labels to select
 
         Raises
@@ -647,16 +642,31 @@ class HierarchalTensorGraph(TensorGraph):
 
         self.logger.debug(
             f'Adding edge from {source} to {target} in HTG {self.name}')
+        
+        # Default args
+        if not rename:
+            rename = {}
 
-        if isinstance(source, str):
-            if source == "output":
-                message = 'Output cannot be used as a source'
-                raise ImproperTensorGraphError(message)
+        if not features:
+            features = []
 
-        if isinstance(target, str) & (self.node is self):
-            if target == "input":
-                message = 'Input cannot be used as a target'
-                raise ImproperTensorGraphError(message)
+        if not labels:
+            labels = []
+
+        if (
+            isinstance(source, str)
+            and source == "output"
+           ):
+            message = 'Output cannot be used as a source'
+            raise ImproperTensorGraphError(message)
+
+        if (
+            isinstance(target, str)
+            and self.node is self
+            and target == "input"
+            ):
+            message = 'Input cannot be used as a target'
+            raise ImproperTensorGraphError(message)
 
         if self.node is not self:
             message = 'It is not permitted to add edges to a basenode,'
@@ -682,8 +692,10 @@ class HierarchalTensorGraph(TensorGraph):
 
             # If target is a recurrent node and not set
             # add rollout_axis = 1
-            if self.graph.get_node_attributes('recurrent')[target.name]:
-                if default_attributes['rollout_axis'] is None:
+            if (
+                self.graph.get_node_attributes('recurrent')[target.name]
+                and default_attributes['rollout_axis'] is None
+               ):
                     default_attributes['rollout_axis'] = 1
 
             # Add edge
@@ -823,7 +835,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         return f'HierarchalTensorGraph("{self.name}", id={id(self)})'
 
-    def __getitem__(self, path: str | tuple | TensorGraph) -> 'HierarchalTensorGraph':
+    def __getitem__(self, path: str | tuple | TensorGraph) -> HierarchalTensorGraph:
         """ Retrieve the node which has the given name from our graph
 
         Parameters
@@ -871,13 +883,13 @@ class HierarchalTensorGraph(TensorGraph):
                 return HierarchalTensorGraph.output_node(path)
             try:
                 return self.graph.nodes[path]['htg']
-            except:
+            except ImproperTensorGraphError:
                 raise ImproperTensorGraphError(
                     f'node with path = {path} not in graph.')
 
         try:
             return self[path[0]][path[1:]]
-        except:
+        except ImproperTensorGraphError:
             raise ImproperTensorGraphError(
                 f'node with path = {path} not in graph.')
 
@@ -961,17 +973,17 @@ class HierarchalTensorGraph(TensorGraph):
                 continue
 
             # if the name to be replaced already exists you cannot make the replacement
-            if v in _X.keys():
+            if v in _X:
                 message = f'Cannot rename {k} as {v} because the name {v} already exists in {X}'
                 raise ImproperTensorGraphError(message)
 
             # exact match
-            if k in _X.keys():
+            if k in _X:
                 _X[v] = _X.pop(k)
                 continue
 
             # look for partial matches in long names
-            partials = [i for i in _X.keys() if k in (i[-1],)]
+            partials = [i for i in _X if k in (i[-1],)]
 
             if not partials:
                 message = f'Could not find key = {k} to rename'
@@ -1021,27 +1033,27 @@ class HierarchalTensorGraph(TensorGraph):
             x = {}
             for name in namelist:
                 # exact matches
-                if name in X.keys():
+                if name in X:
                     x[name] = X[name]
 
-                if isinstance(name, str) and (name,) in X.keys():
+                if isinstance(name, str) and (name,) in X:
                     x[name] = X[(name,)]
 
                 # if not exact, look for a match in the last name in tuple keys
                 nm = name
                 if isinstance(name, str): nm = (name,)
-                partials = [i for i in X.keys() if nm == i[-len(nm):]]
+                partials = [i for i in X if nm == i[-len(nm):]]
 
                 if not partials:
                     message = f'In HierarchalTensorGraph[{self.name}] could not find key = {name}. '
-                    message += f'You will have to rename an incoming key '
+                    message += 'You will have to rename an incoming key '
                     message += f'from the available keys = {X.keys()}'
                     raise ImproperTensorGraphError(message)
 
                 if len(partials) > 1:
                     message = f'In HierarchalTensorGraph[{self.name}] found '
                     message += f'multiple keys = {partials} for key = {name}. '
-                    message += f'You will have to rename an incoming key '
+                    message += 'You will have to rename an incoming key '
                     message += f'from the available keys = {X.keys()}.'
                     raise ImproperTensorGraphError(message)
 
@@ -1131,7 +1143,7 @@ class HierarchalTensorGraph(TensorGraph):
                         keep.append(k)
         
         if keep: 
-            for k in X.keys():
+            for k in X:
                 if k not in keep:
                     _X.pop(k)
 
@@ -1210,8 +1222,12 @@ class HierarchalTensorGraph(TensorGraph):
         if not self.is_basenode:
 
             # check that i/o exist
-            if not all([b in self.graph for b in ['input', 'output']]):
-                message = f'HierarchalTensorGraph {self.name} must contain i/o nodes'
+            if not 'input' in self.graph:
+                message = f'HierarchalTensorGraph {self.name} must have an input node'
+                raise ImproperTensorGraphError(message)
+            
+            if not 'output' in self.graph:
+                message = f'HierarchalTensorGraph {self.name} must have an output node'
                 raise ImproperTensorGraphError(message)
 
             # check that only i/o is a source/sink
@@ -1679,7 +1695,7 @@ class HierarchalTensorGraph(TensorGraph):
             if expand_nodes == 'all':
                 while is_not_all_empty(g):
                     nodes = g.get_node_attributes('htg')
-                    for k, node in nodes.items():
+                    for node in nodes.values():
                         if not node.is_basenode:
                             g = self.expand_graph_node(node.name, g)
 
@@ -1745,14 +1761,12 @@ class HierarchalTensorGraph(TensorGraph):
             if expand_nodes == 'all':
                 while is_not_all_empty(g):
                     nodes = g.get_node_attributes('htg')
-                    for k, node in nodes.items():
+                    for node in nodes.values():
                         if not node.is_basenode:
                             g = self.expand_graph_node(node.name, g)
 
         # Draw the final graph
-        if layout == 'kamada_kawai_layout':
-            pos = nx.kamada_kawai_layout(g.graph)
-        elif layout == 'spetral_layout':
+        if layout == 'kamada_kawai_layout' or layout == 'spetral_layout':
             pos = nx.kamada_kawai_layout(g.graph)
         else:
             pos = None
@@ -1870,7 +1884,6 @@ class Identity(HierarchalTensorGraph):
 
     def build(self):
         """ Build function """
-        pass
 
     @property
     def is_basenode(self):

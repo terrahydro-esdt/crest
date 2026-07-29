@@ -1,8 +1,9 @@
 """ A node version of the Keras LSTMCell """
 
-import dill
 import keras
+
 from ..model.Node import Node
+
 
 class InitialState(keras.Layer):
     """ Defines and returns the LSTMCell initial state set to all zeros. """

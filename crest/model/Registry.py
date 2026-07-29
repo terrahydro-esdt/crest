@@ -7,6 +7,7 @@ imports.
 
 import importlib
 
+
 class Registry:
     """ 
    
@@ -32,9 +33,8 @@ class Registry:
             'module' : cls.__module__
         }
 
-        if name in self.registry.keys():
-            if self.registry[name] != d:
-                raise Exception(f'HTG {name} already exist in the registry.')
+        if name in self.registry and self.registry[name] != d:
+            raise Exception(f'HTG {name} already exist in the registry.')
 
         self.registry[name] = d
 

@@ -1,27 +1,27 @@
 """ Implements a convenient general purpose Keras-based Node """
 
 from __future__ import annotations
-from collections.abc import Callable, Collection
-from sklearn.metrics import r2_score
-from scipy.stats import linregress
+
+from abc import abstractmethod
+from collections.abc import Callable
 from functools import cached_property, partial, reduce
 from operator import and_
-from abc import abstractmethod
-import dill
 
-import matplotlib.pyplot as plt 
-import tensorflow as tf 
-import seaborn as sns
-import numpy as np
-import tlz 
+import dill
 import jax
 import keras
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+import tensorflow as tf
+import tlz
+from scipy.stats import linregress
+from sklearn.metrics import r2_score
 
-from crest.utils import classproperty, plot_to_array
 from crest.base import BaseAbstract
 from crest.model import HierarchalTensorGraph as HTG
 from crest.model.IOSpec import IOSpec
-
+from crest.utils import plot_to_array
 
 # Handle all Keras backend types
 GenericSpec = keras.InputSpec | tf.TensorSpec
@@ -96,8 +96,8 @@ class Node(HTG,BaseAbstract):
         self.transform_loss = transform_loss
         self.plot_scatter   = plot_scatter
         self.use_raw_pred   = use_raw_pred
-        self._inputs_spec = getattr(self,'inputs_spec')
-        self._outputs_spec = getattr(self,'outputs_spec')
+        self._inputs_spec = self.inputs_spec
+        self._outputs_spec = self.outputs_spec
 
     @abstractmethod
     def call(self, X: dict[str, GenericTensor], training: bool) -> dict[str, GenericTensor]:      
@@ -107,7 +107,7 @@ class Node(HTG,BaseAbstract):
         raise NotImplementedError(f'{self}.call() must be implemented')
 
     @cached_property
-    def _node(self) -> 'Node':
+    def _node(self) -> Node:
         """ wraps the call function into a CREST node """
         from crest.model import Node
         return Node(**{
@@ -299,7 +299,7 @@ class Node(HTG,BaseAbstract):
                 error = f'{self} requested loss transformation, but '
                 error+= f'{getattr(lt, "__name__", lt)} cannot transform'
                 solve = f'Ensure {unable} are in the stats DataArray used to '
-                solve+= f'initialize Transformer; or, set transform_loss=False'
+                solve+= 'initialize Transformer; or, set transform_loss=False'
 
                 # If no outputs can be transformed, raise an exception
                 if len(unable) == len(self._outputs):
@@ -477,14 +477,13 @@ class _NodeWrap(keras.layers.Layer):
 
     def call(self, X, *args, **kwargs):
         """ Adds output histograms for tensorboard visualization """
-        with keras.name_scope(''):
-            with keras.name_scope(self.name):
-                self._add_histograms(X, 'input')
-                if 'args' in kwargs and 'kwargs' in kwargs:
-                    args, kwargs = kwargs['args'], kwargs['kwargs']
-                out = getattr(self.obj, '_call', self.obj)(X, *args, **kwargs)
-                getattr(self.obj, '__self__', self.obj)._raw_model_out = out
-                self._add_histograms(out, 'output', desc=self.obj_name)
+        with keras.name_scope(''), keras.name_scope(self.name):
+            self._add_histograms(X, 'input')
+            if 'args' in kwargs and 'kwargs' in kwargs:
+                args, kwargs = kwargs['args'], kwargs['kwargs']
+            out = getattr(self.obj, '_call', self.obj)(X, *args, **kwargs)
+            getattr(self.obj, '__self__', self.obj)._raw_model_out = out
+            self._add_histograms(out, 'output', desc=self.obj_name)
 
             ## Add histograms for all weights
             #for w in self.weights: 

@@ -4,12 +4,16 @@ All specialized Node classes should inherit from Node.
 """
 
 from __future__ import annotations
+
 from collections.abc import Callable
+
 import dill
+
 from .HierarchalTensorGraph import HierarchalTensorGraph as HTG
-from .TensorSpec import TensorSpec
-from .TensorGraph import ImproperTensorGraphError
 from .IOSpec import IOSpec
+from .TensorGraph import ImproperTensorGraphError
+from .TensorSpec import TensorSpec
+
 
 class Node(HTG):
     """
