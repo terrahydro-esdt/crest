@@ -594,6 +594,12 @@ class Datafile(BaseAbstract):
         return hashlib.sha256(config.encode('utf-8')).hexdigest()
 
 
+    @property
+    def data_features(self) -> list[str]:
+        """ Feature names contained in the xarray.Dataset object """
+        return sorted(set(self.data.features.values) - {'valid_mask'})
+
+        
     @cached_property
     def dims(self) -> list[str]:
         """ Ordered coordinate dimensions """
@@ -690,6 +696,12 @@ class Datafile(BaseAbstract):
         """ Invalid values, including any defined in the defaults """
         user_defined = np.atleast_1d(self._invalid_value).tolist()
         return user_defined + Datafile.DEFAULT_INVALID_VALUES
+
+
+    @property
+    def numblocks_dict(self) -> dict[str, Int]:
+        """ Dict of {dim: numblock} for all dimensions """
+        return dict(zip(self.dims, self.numblocks[:-1], strict=True))
 
     
     @property
@@ -1194,7 +1206,7 @@ class Datafile(BaseAbstract):
         assert(len(self.preprocessors) == 0), 'Need to cache dataset first'
 
         # Use data from original database to allow direct reading from files
-        # (xarray combines features in self.data so that they are inseperable)
+        # (xarray combines features in self.data so that they are inseparable)
         # Note that this ONLY works for cached data, where preprocessors have
         #  already been applied
         feat_names = list(self._typed_data.features.values)
