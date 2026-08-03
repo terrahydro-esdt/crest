@@ -92,13 +92,13 @@ class Dataset(BaseSet):
         return logger
 
 
-    def summaries(self, compute=True, keep='last', verbose=False) -> xr.DataArray:
+    def summaries(self, compute=True, keep='last', verbose=False, prefixed=False) -> xr.DataArray:
         """ Gather summary statistics of all component Datafiles """
         summary = self.summary.map_blocks(xr.DataArray.as_numpy)
+        if prefixed:
+            for s,label in zip(summary, self.key_label):
+                s['features'] = [f'{label}__{k}' for k in list(s.features.values)]
         summary = xr.concat(summary, dim='features', join='outer')
-        # for s,label in zip(summary,self.key_label):
-        #     s['features'] = [f'{label}>>{k}' for k in list(s.features.values)]
-        # summary = xr.concat(summary, dim='features')
         summary = summary.drop_duplicates('features', keep=keep)
         if compute:
             pbar = ProgressBar() if verbose else nullcontext(None) 
