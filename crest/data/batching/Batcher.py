@@ -313,6 +313,7 @@ class Batcher:
         valid_percents : list[dict[str, dict]] = [],
         drop_datafiles : list[list[str]] = [],
         match_strategy : str = 'multi',
+        sample_caching : bool = True, 
     ):
         # Block duplication by default should be the same as repeat
         if duplicate is None:
@@ -348,6 +349,7 @@ class Batcher:
         self.valid_percents = valid_percents
         self.drop_datafiles = drop_datafiles
         self.match_strategy = match_strategy
+        self.sample_caching = sample_caching
         self.random = random = np.random.default_rng(seed)
 
         # Verify block config lengths are all the same size (or 0)
@@ -359,13 +361,6 @@ class Batcher:
         # Only one synchronization method can be used
         assert(not (block_sync and epoch_sync)), 'Can only use one sync method'
 
-        # Set the numblocks if None was given
-        if numblocks is None:
-            if hasattr(dataset, 'numblock_dict'):
-                self.numblocks = merge(*dataset.numblocks_dict)
-            else: 
-                self.numblocks = 0
-                
         # Create a cache for samples from deterministic (sample-limited) blocks
         self._samples_cache = _samples_cache = {}
         
@@ -374,6 +369,13 @@ class Batcher:
         #   will not be saved, and will not be initialized on worker processes
         self._init_keys = locals().keys() - {'self', 'prefetcher'}
 
+        # Set the numblocks if None was given
+        if numblocks is None:
+            try:
+                self.numblocks = merge(*dataset.numblocks_dict)
+            except AttributeError: 
+                self.numblocks = 0
+                
         # If multiprocessing, fail quickly when dataset can't be pickled
         if self.workers: self._is_picklable()
 
@@ -1424,7 +1426,7 @@ class Batcher:
             raise Exception('Called _validate_cache before blocks created')
 
         # Skip if this config has already been checked
-        if self._config_block_count is None:
+        if self._config_block_count is None or not self.sample_caching:
             return
             
         self.debug(f'{list(self._config_block_count)=} {self._config_index(config)=} {config=}')
@@ -1500,13 +1502,14 @@ class Batcher:
         # entire computation and just use the cached samples
         key = self._samples_cache_key(config, block_idxs)
         if self._samples_cache.get(key, None) is not None:
-            self.debug(f'Using cached samples for {key=}: {config=} {block_idxs=}')
+            self.debug(f'Using sample cache | {key=}: {config=} {block_idxs=}')
             if len(self._samples_cache[key]) == 0:
-                self.debug(f'{config=} {block_idxs=} produces no samples (cache {key=})')
+                self.debug(f'{config=} {block_idxs=} has no samples ({key=})')
                 self._cleanup_blocks()
-            else:
+                return
+            elif self.sample_caching:
                 self._batch_tasks(key, config, block_idxs, continuous=self.continuous)
-            return
+                return
             
         self.debug(f'Starting _compute_block for {block_idxs=}')
         samples = self._compute_block(blocks, config, block_idxs)
@@ -1685,6 +1688,8 @@ class Batcher:
         # Use cached samples if a cache key was given
         if isinstance(samples, str):
             self.info(f'Using cache key {samples}: {config=} {block_idxs=}')
+            if not self.sample_caching:
+                raise Exception(f'Got cache key with {self.sample_caching=}')
             
             if samples not in self._samples_cache:
                 message = f'No samples given, but {samples=} not cached: '
@@ -1713,31 +1718,32 @@ class Batcher:
                 # from the block when using this configuration. Therefore, we
                 # can cache the small number of samples and avoid re-computing
                 # this block + config every time.
-                key = self._samples_cache_key(config, block_idxs)
-                if n_samples < 0.9 * (self.block_size or -1):
-                    if key in self._samples_cache:
-                        
-                        # Should be an error, but only a warning for now (until resolved)
-                        if self._samples_cache[key] is None:
-                            message = f'Previously found > {self.block_size*0.9}'
-                            message+= f' samples for {config=} {key=}'
-                            self.warning(message)
+                if self.sample_caching:
+                    key = self._samples_cache_key(config, block_idxs)
+                    if n_samples < 0.9 * (self.block_size or -1):
+                        if key in self._samples_cache:
                             
-                            message = f'Re-caching samples for {config=} {block_idxs=} '
+                            # Should be an error, but only a warning for now (until resolved)
+                            if self._samples_cache[key] is None:
+                                message = f'Previously found > {self.block_size*0.9}'
+                                message+= f' samples for {config=} {key=}'
+                                self.warning(message)
+                                
+                                message = f'Re-caching samples for {config=} {block_idxs=} '
+                                message+= f'via {key=} ({n_samples=} < {self.block_size=})'
+                                self.info(message)
+                                self._samples_cache[key] = samples
+                                self._validate_cache(config)
+                            else:
+                                assert(len(self._samples_cache[key]) == len(samples)),\
+                                    f'{len(self._samples_cache[key])} != {len(samples)}'
+                        else:
+                            message = f'Caching samples for {config=} {block_idxs=} '
                             message+= f'via {key=} ({n_samples=} < {self.block_size=})'
                             self.info(message)
                             self._samples_cache[key] = samples
                             self._validate_cache(config)
-                        else:
-                            assert(len(self._samples_cache[key]) == len(samples)),\
-                                f'{len(self._samples_cache[key])} != {len(samples)}'
-                    else:
-                        message = f'Caching samples for {config=} {block_idxs=} '
-                        message+= f'via {key=} ({n_samples=} < {self.block_size=})'
-                        self.info(message)
-                        self._samples_cache[key] = samples
-                        self._validate_cache(config)
-                else: self._samples_cache[key] = None
+                    else: self._samples_cache[key] = None
         
         if self._exit:
             self.debug(f'Exiting _batcher early due to exit flag')
