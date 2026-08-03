@@ -614,7 +614,8 @@ class Block(BaseAbstract):
             val,i = _get_feature(label)
             valid = (val >= lo) & (val < hi)
             self._valid_mask &= valid
-            self._data[i] = da.where(valid, self._data[i], np.nan)
+            # self._data[i] = da.where(valid, self._data[i], np.nan)
+        self.__dict__.pop('valid_mask', None)
 
         
     def reset_valid_percents(self):
