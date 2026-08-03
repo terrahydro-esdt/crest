@@ -212,7 +212,7 @@ class Block(BaseAbstract):
         if self.is_sparse and len(self.coord_vecs):
             index = np.isfinite(self.sparse_data).all(-1).coords
             # print(f'\t{self.data.shape=} {self.sparse_data.shape=} {self.sparse_data.coords.shape=} {[c.shape for c in self.coord_vecs]=} {index.shape=}')
-            if not index.size: self.interactive()
+            if not index.size: raise Exception(f'No index found: {self=}')#self.interactive()
             coord = [c[i].compute() for c, i in zip(self.coord_vecs, index)]
             return np.stack(coord, axis=-1)
         with self.benchmark(f'coords {self._coords.shape}'):
@@ -595,14 +595,26 @@ class Block(BaseAbstract):
     def set_feature_masks(self, feature_masks: dict):
         """ Mask the requested features so only values within a bin remain """
         assert(isinstance(self._data, list)) # Need to modify valid_mask to handle zarr features
-
+        def _get_feature(feature):
+            if feature in self.features:
+                index = self.features.index(feature)
+                return self._data[index], index
+            if feature in self.dims:
+                index = self.dims.index(feature)
+                coord = self.coords[..., index:index+1]
+                assert(coord.shape == self._data[0].shape), (
+                    f'Unexpected coord shape: {self.coords.shape=} vs '
+                    f'data.shape={self._data[0].shape}')
+                return coord, 0
+            raise Exception(f'Unknown {feature=}: {self.features=}')
+        
         for feature in self.feature_subset(list(feature_masks)):
+            label = feature.split('@')[0]
             lo,hi = feature_masks[feature]
-            index = self.features.index(feature)
-            value = self._data[index]
-            valid = (value >= lo) & (value < hi)
+            val,i = _get_feature(label)
+            valid = (val >= lo) & (val < hi)
             self._valid_mask &= valid
-            self._data[index] = da.where(valid, value, np.nan)
+            self._data[i] = da.where(valid, self._data[i], np.nan)
 
         
     def reset_valid_percents(self):

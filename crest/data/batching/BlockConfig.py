@@ -96,6 +96,7 @@ class BlockConfig(dict):
         config_index : int = -1, 
         sampling_edges = None, 
         random = None,
+        logger = None,
         **config,
     ):
         super().__init__(**config)
@@ -105,7 +106,8 @@ class BlockConfig(dict):
         self._hash = hash(str(config))
         self._cuid = _get_dict_hash(config)[:10]
         self.random = random or np.random.default_rng()
-
+        self.logger = logger
+        
         self.config_index = config_index
         self.total_blocks = 0
         self.max_nbatches = 1
@@ -288,6 +290,8 @@ class BlockConfig(dict):
         with self: 
             self.n_worker += 1
             if len(self.sampling_edges) > 1:
+                # print(f'Adding worker to {self.bin_index=} ({list(self.sampling_count)})')
+                self.logger.info(f'Adding worker to {self.bin_index=} ({list(self.sampling_count)})')
                 self.sampling_count[self.bin_index] += 1 #self.max_nbatches
         return self
 
@@ -319,8 +323,11 @@ class BlockConfig(dict):
             
             # Adjust the current bin's counter by the actual batches created
             if len(self.sampling_edges) > 1:
-                self.sampling_count[self.bin_index] -= 1 - n_batches
-                    
+                # assert(n_batches <= 1), [self, block_idxs, n_batches]
+                # print(f'Removing worker from {self.bin_index=} ({list(self.sampling_count)})')
+                self.logger.info(f'Removing worker from {self.bin_index=} ({list(self.sampling_count)})')
+                self.sampling_count[self.bin_index] -= 1 #- n_batches
+                assert(self.sampling_count[self.bin_index] >= 0), self.sampling_count[self.bin_index] 
             # Update tracking values
             self.avg_size = max(1, 
                 (self.avg_size * self.n_blocks + max(0, n_batches)) // 
@@ -342,6 +349,7 @@ class BlockConfig(dict):
 
     def compute_block_stats(self, blockset, index: int):
         """ Pre-compute bin availability in the blockset """
+        self.logger = blockset.logger
         if self.processed_blocks[index]:
             return
 
@@ -354,11 +362,14 @@ class BlockConfig(dict):
                     features[f].append(edge)
 
             removed = set()
+            drop_df = dict(self).get('drop_datafiles', []) or []
+            exclude = blockset._exclude(drop_df, None)
             for feature, edges in features.items():
+                name = feature.split('@')[0]
                 left = [e[0] for e in edges] + [edges[-1][-1]]
                 bins = sorted(list(set(left)))
-                data = blockset.get_feature(feature)
-                data = data.compute()[feature].data
+                data = exclude.get_feature(feature)
+                data = data.compute()[name].data
 
                 if hasattr(data, 'nnz'): data = data.data
                 else:                    data = np.array(data)

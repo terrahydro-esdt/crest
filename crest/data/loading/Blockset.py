@@ -152,7 +152,7 @@ class Blockset(BaseSet):
         
         for contains, block in zip(subsets, self):
             if contains:
-                return block.dataset[[feature]]
+                return block.dataset[[feature.split('@')[0]]]
                 
 
                 
