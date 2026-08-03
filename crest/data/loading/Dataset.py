@@ -10,7 +10,6 @@ from pathlib import Path
 from numbers import Number, Integral as Int 
 from logging import Logger 
 from typing import Union 
-import re
 from pprint import pprint
 
 import cloudpickle as pkl
@@ -20,6 +19,7 @@ import dask.array as da
 import dask
 import logging
 import io 
+import re
 
 from crest.utils import Stopwatch, optimize_blocks, S3Path
 from crest.base import BaseSet
@@ -109,14 +109,29 @@ class Dataset(BaseSet):
         return summary
 
 
-    def get_feature(self, feature: str) -> xr.DataArray:
+    def get_feature(self, feature: str, index: int|None = None) -> xr.DataArray:
         """ Return an xr.DataArray containing the requested feature's data """
+        index = slice(index, (index or (len(self)-1))+1)
+            
         available = []
-        for array in self.data:
+        for df in self[index]:
+            array = df.data
             if feature in array.features:
                 return array.sel(features=feature, drop=True)
+            if feature in array.coords:
+                index = df.dims.index(feature)
+                coord = df.dask_coords[..., index]
+                array = array.to_dataset('features')
+                array['tmp'] = (df.dims, coord)
+                return array['tmp']
             available.append(array.features)
-        else: raise ValueError(f'{feature=} not found: {available=}')
+        if '@' in feature:
+            try:
+                key, index, *_ = feature.split('@')
+                return self.get_feature(key, int(index))
+            except Exception as e:
+                raise ValueError(f'{feature=} not found: {available=}') from e
+        raise ValueError(f'{feature=} not found: {available=}')
             
 
     def align(self, a: str, *b, n=20):
@@ -126,7 +141,7 @@ class Dataset(BaseSet):
 
     def generate_samples(self, 
         block_bytes : Number = 1e9,
-        numblocks   : Union[int, Collection[int]] = 0,
+        numblocks   : Union[int, Collection[int], dict] = 0,
         compute     : bool = True,
         verbose     : bool = True,
         optimize    : bool = True,
@@ -353,7 +368,7 @@ class Dataset(BaseSet):
 
     def create_blocks(self, 
         block_bytes : Number = 1e8,
-        numblocks   : Union[int, Collection[int], None] = 0,
+        numblocks   : Union[int, Collection[int], dict, None] = 0,
         verbose     : bool = False,
         optimize    : bool = True,
         shuffle     : bool = False,
@@ -400,6 +415,12 @@ class Dataset(BaseSet):
             constrain = [n == 1 for n in numblocks]
         else: constrain = None 
 
+        if isinstance(numblocks, dict):
+            options = self.dims[0]
+            unknown = [d for d in numblocks if d not in options]
+            assert(len(unknown) == 0), f'Dims {unknown=}; {options=}'
+            numblocks = [numblocks.get(d, 1) for d in options]
+        
         # Attempt to automatically block the data based on total block count
         if isinstance(numblocks, int):
             self.autochunk(block_bytes, numblocks, constrain, verbose)
@@ -573,7 +594,7 @@ class Dataset(BaseSet):
         multiple remote chunks - the block data will always be fully contained
         within one or more chunks, thus minimizing the amount of data which
         needs duplicated or thrown away for each new block. 
-
+max_valid_blocks
         Parameters
         ----------
         block_bytes : Number
@@ -688,7 +709,7 @@ class Dataset(BaseSet):
 
 
     def cache(self, 
-        numblocks  : Collection[int], 
+        numblocks  : Collection[int] | dict, 
         cache_dir  : Union[Path, str, FSMap, S3Path] = 'Cache',
         overwrite  : bool = False, 
         verbose    : bool = False,

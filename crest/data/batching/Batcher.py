@@ -2,7 +2,7 @@ from __future__ import annotations
 from collections.abc import Collection
 from collections import defaultdict
 from fsspec.mapping import FSMap 
-from tlz.curried import valfilter
+from tlz.curried import valfilter, merge
 from contextlib import nullcontext, contextmanager
 from functools import partial, cached_property
 from itertools import chain, islice, zip_longest
@@ -145,11 +145,6 @@ class Batcher:
         for the amount memory that will be used when computing a block, as 
         the actual amount used is dependent upon the number of matches that
         are found in the block and thus can vary significantly. 
-    numblocks  : int 
-        Alternative to giving a block_bytes value. If numblocks > 0, the 
-        requested number of blocks is the target block total. While the 
-        exact number of blocks is not always possible to create, an attempt
-        is made to get as close as possible to the requested value.
     max_queue  : int
         Controls the maximum number of batch _groups_ that can be held by the
         queue which communicates with background processes. Note that workers
@@ -189,6 +184,16 @@ class Batcher:
         this to be set to False since it will force workers to wait for other 
         workers before moving on with their workload (thus slowing overall
         batch generation to be proportional to the slowest workload).
+    epoch_sync : bool
+        If True, workers will wait once they complete an epoch for all other
+        workers to complete it. Once all workers have finished the current
+        epoch, they continue on to the next epoch. 
+    numblocks  : int | None
+        Alternative to giving a block_bytes value. If numblocks > 0, the 
+        requested number of blocks is the target block total. While the 
+        exact number of blocks is not always possible to create, an attempt
+        is made to get as close as possible to the requested value. If None
+        is given, the block structure of the dataset is used.
     prefetch   : int | bool
         Controls prefetching batches in a separate queue that is managed by a
         background thread.  If False, prefetching is disabled and batches are 
@@ -290,7 +295,6 @@ class Batcher:
         duplicate   : bool | None = None,
         continuous  : bool   = False,
         block_bytes : Number = 1e9,
-        numblocks   : int    = 0,
         max_queue   : int    = 3,
         task_bytes  : float  = 1e8,
         log_file    : str    = 'Batcher.log',
@@ -299,6 +303,7 @@ class Batcher:
         fast_path   : bool   = False,
         block_sync  : bool   = False,
         epoch_sync  : bool   = False,
+        numblocks   : int | None = None,
         prefetch    : int | bool = 200,
         prefetcher  : ContextManager | Callable = identity,
         prequeuer   : ContextManager | Callable = identity,
@@ -353,6 +358,10 @@ class Batcher:
 
         # Only one synchronization method can be used
         assert(not (block_sync and epoch_sync)), 'Can only use one sync method'
+
+        # Set the numblocks if None was given
+        if numblocks is None:
+            self.numblocks = merge(*dataset.numblocks_dict)
         
         # Create a cache for samples from deterministic (sample-limited) blocks
         self._samples_cache = _samples_cache = {}
@@ -477,7 +486,7 @@ class Batcher:
                 if show_timing and (i == 0):
                     elapsed = time.time() - start
                     pbar.clear();   pbar2.clear()
-                    logger.info(f'Time to first batch: {elapsed:.1f} seconds')
+                    print(f'\nTime to first batch: {elapsed:.1f} seconds\n')
                     pbar.unpause(); pbar2.unpause()
                 pbar2.update(self.batch_size); pbar.update(1)   
                 yield tuple(batch) if isinstance(batch, list) else batch
@@ -840,10 +849,15 @@ class Batcher:
             #if (batch_count % 100) == 0:
             if (time.time() - timer.start['time']) > 60:
                 with Stopwatch('timer reset', self.info):
+                    indent = lambda s: s.replace('\n\t', '\n\t\t')
+                    status = list(map(indent, self._get_status()))
+                    nbatch = batch_count - start_count
+                    if nbatch == 0:
+                        status += [self._get_threads_traceback(return_log=True)]
                     timer.message += '\n\t'.join(['',
-                        f'Batches since last status: {batch_count-start_count}',
+                        f'Batches since last status: {nbatch}',
                         f'Total batches: {batch_count}',
-                    ] + [s.replace('\n\t', '\n\t\t') for s in self._get_status()])
+                    ] + status)
                     # print(timer.message)
                     timer.__exit__()
                     timer = start_timer()
@@ -934,7 +948,7 @@ class Batcher:
                                 time.sleep(WAIT_TIME)
         
                         # Notify when the queue has been full for a long time
-                        if (count % (seconds*10)) == 0:
+                        if (count % int(seconds*10)) == 0:
                             self.info(f'_safe_queue_batches: {queue=} full ' +
                                       f'for at least {seconds} seconds')
                     if self._exit: break
@@ -1513,6 +1527,7 @@ class Batcher:
             # Chunk to more reasonable sizes if current chunks are too small
             # if samples.blocks.size < 10:
             #     samples = samples.rechunk((self.batch_size,))
+            samples = samples.rechunk((-1,))
 
             # Note that all of the following logic which handles combining
             # tasks, is now superceded by the handling in Blockset that will 
@@ -1552,7 +1567,9 @@ class Batcher:
             # Extract batches from blocks in the sample array
             while not self._exit and (idx := list(islice(order, task_blocks))):
                 self._batch_tasks(samples.blocks[idx], config, block_idxs, continuous=self.continuous)
-                # config = None
+
+                # Change config to None so only the first task updates BlockConfig.sampling_count 
+                config = None
 
                 # Wait until the first batch is done, or signaled to exit
                 while not ((self._first or self._block_tasks.threads < 1) or self._exit):
@@ -2084,7 +2101,14 @@ class Batcher:
         self._queue = self.get_queue(mp_context)
         # self._queue, conn = mp_context.Pipe(False)
 
-        n_blocks = int(np.prod(np.atleast_1d(self.numblocks)))
+        numblocks = self.numblocks
+        if isinstance(numblocks, dict):
+            options = self.dataset.dims[0]
+            unknown = [d for d in numblocks if d not in options]
+            assert(len(unknown) == 0), f'Dims {unknown=}; {options=}'
+            numblocks = [numblocks.get(d, 1) for d in options]
+        
+        n_blocks = int(np.prod(np.atleast_1d(numblocks)))
         self._block_queue = self.get_queue(mp_context, n_blocks+1)
         self._block_queue_lock = mp.get_context('spawn').Lock()
         
@@ -2277,19 +2301,36 @@ class Batcher:
         return max(len(self.valid_percents), len(self.drop_datafiles), 1)
 
         
-    def _get_threads_traceback(self, limit=3, names=['MainThread', '_batcher', '_blocker']):
+    def _get_threads_traceback(self, limit=4, names=[], return_log=False):#'MainThread', '_batcher', '_blocker']):
         """ Prints the stack trace for active threads """
-        log = f'{self.process_name} Threads Status:\n' + ('_'*40) + '\n'
-        for thread_id, frame in sys._current_frames().items():
+        log = f'\n{self.process_name} Threads Status'
+        bar = '_' * len(log)
+        div = '-' * len(log)
+        log+= f'\n{bar}\n'
+        
+        for tid, frame in sys._current_frames().items():
             # Get the thread object corresponding to the frame
             for t in threading.enumerate():
-                if t.ident == thread_id:
-                    if not names or any(n in t.name for n in names):
-                        log += f'Thread: {t.name} (ID: {thread_id})\n'
-                        log += ''.join(traceback.format_stack(frame, limit=limit))
-                        log += '-'*20 + '\n'
-                        break
-        self.debug(log)
+                if t.ident == tid:
+
+                    # If names are given, only log those requested threads
+                    if names and not any(n in t.name for n in names):
+                        continue
+
+                    # Skip irrelevant tracebacks
+                    trace = ''.join(traceback.format_stack(frame, limit=limit))
+                    skips = [
+                        'work_item = work_queue.get(block=True)',
+                        'waiter.acquire()',
+                        'wacquire()',
+                        '.join(traceback.format_stack(frame, limit=limit))',
+                    ]
+                    if not any(map(trace.strip().endswith, skips)):
+                        log += f'Thread: {t.name} (ID: {tid})\n{trace}{div}\n'
+                    break
+        if return_log:
+            return log
+        self.info(log)
 
     
     @cached_property
@@ -2311,7 +2352,7 @@ class Batcher:
 
         # abseil hijacks the root logger
         logger.propagate = False
-
+        
         # If a log_file is requested, use a file handler
         if self.log_file is not None:
 
@@ -2338,7 +2379,9 @@ class Batcher:
             # If we're in the main process, delete the prior log_file
             if not mp.current_process().daemon:
                 filename = Path(self.log_file).absolute()
-
+                if not filename.parent.exists():
+                    filename.parent.mkdir(parents=True)
+            
                 # Backup previous log file if it exists
                 if filename.exists():
 

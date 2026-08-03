@@ -211,6 +211,10 @@ class MultiBatcher(Batcher):
         assert(not directed_sampling or self.shuffle), (
           'When using directed sampling, Batcher.shuffle must be set to True')
 
+        # Specifying sampling_edges requires directed sampling
+        assert(not sampling_edges or directed_sampling), (
+            'When using sampling_edges, directed_sampling must be set to True')
+        
         # Order of blocks is not guaranteed with multiple workers
         assert(self.shuffle or self.workers <= 1), (
           'When using multiple workers, Batcher.shuffle must be set to True')
@@ -264,8 +268,16 @@ class MultiBatcher(Batcher):
     @cached_property
     def _block_configs(self) -> list[BlockConfig]:
         """ Creates a list of BlockConfigs for the specified configurations """
-        kwargs = { 'numblocks' : self.numblocks,
-                   'random'    : self.random}
+        numblocks = self.numblocks
+        if isinstance(numblocks, dict):
+            options = self.dataset.dims[0]
+            unknown = [d for d in numblocks if d not in options]
+            assert(len(unknown) == 0), f'Dims {unknown=}; {options=}'
+            numblocks = [numblocks.get(d, 1) for d in options]
+            
+        kwargs = { 'numblocks' : numblocks,
+                   'random'    : self.random,
+                   'logger'    : self._logger}
         configs = { 'valid_percents' : self.valid_percents or [None],
                     'drop_datafiles' : self.drop_datafiles or [None], 
                     'sampling_edges' : self.sampling_edges or [None]}
@@ -418,7 +430,7 @@ class MultiBatcher(Batcher):
         
         # Update configuration attributes with newly created batches
         if config is not None and batches is not None:
-            # self.debug(f'Sending {len(batches)} batches for {config} ({hash(config)=})')
+            self.debug(f'Sending {len(batches)} batches for {config} ({hash(config)=})')
             config.add_batches([], n_batches=len(batches))
             hashval = hash(config)
             batches = [(hashval, batches)]
@@ -507,6 +519,8 @@ class MultiBatcher(Batcher):
                 keys,vals = map(list, zip(*keys_vals))
 
                 # Extract feature quantiles from dataset summary
+                if feature not in summary.features and '@' in feature:
+                    feature = feature.split('@')[0]
                 f_summary = summary.sel(features=feature, drop=True)
                 f_dataset = f_summary.to_dataset('statistics')
                 quantiles = f_dataset[['min']+keys+['max']].to_array().values
