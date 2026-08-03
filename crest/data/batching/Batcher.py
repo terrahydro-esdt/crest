@@ -361,8 +361,11 @@ class Batcher:
 
         # Set the numblocks if None was given
         if numblocks is None:
-            self.numblocks = merge(*dataset.numblocks_dict)
-        
+            if hasattr(dataset, 'numblock_dict'):
+                self.numblocks = merge(*dataset.numblocks_dict)
+            else: 
+                self.numblocks = 0
+                
         # Create a cache for samples from deterministic (sample-limited) blocks
         self._samples_cache = _samples_cache = {}
         
