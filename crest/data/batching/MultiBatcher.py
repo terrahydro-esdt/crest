@@ -492,7 +492,25 @@ class MultiBatcher(Batcher):
         safelen = lambda v: getattr(v, '__len__', lambda: None)()
         summary = None
         self.debug(f'Parsing schema {sampling_edges=}')
-        
+
+        # Warn the user if the given configuration might not be intentional
+        #  i.e. very few samples may be generated due to this configuration
+        for i, edges in enumerate(sampling_edges):
+            features = list(edges)
+            for df in self.dataset:
+                if (any(k in df.data_features for k in features)
+                    and (max(df.window_total.values()) > 1)
+                    and (min(df.valid_percent.values()) >= 1)
+                ):
+                    self.warning(f'sampling_edges[{i}] {features=} matches {df}, which'
+                        f' specifies a window ({df.window_total=}) that requires all'
+                        f' elements to be valid ({df._valid_percent=}). This means all'
+                        f' window values must be contained in a given sampling_edges'
+                        f' bin for a sample to be valid. If the intention is actually'
+                        f' to generate samples in which any of the sample values fall'
+                        f' within a given bin, use a valid_percent specification that'
+                        f' allows < 100% of a sample window to be valid.')
+            
         def parse_schema(feature, schema) -> list[tuple[float, float]]:
             """ Parse a binning schema into the (left, right) edge format """
             # Assume user is just passing in n_bins value
@@ -508,7 +526,7 @@ class MultiBatcher(Batcher):
                 nonlocal summary
                 if summary is None:
                     summary = self.dataset.summaries()
-
+                    
                 # Find all 'pN' summary percentile keys
                 pval = lambda k: re.findall(r'^p(\d{1,3})$', k)
                 keys = list(filter(pval, summary.statistics.values))
