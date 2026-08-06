@@ -14,11 +14,15 @@ dependencies:
   - cfgrib
   - cloudpickle
   - cmake
+#exists in conda but conflicts..
+#  - configobj
+  - configparser
   - crick
   - cython
   - dask=2025.5.0
   - datapi
   - dill
+  - donfig
   - earthaccess
   - ecmwf-api-client
   - fastapi
@@ -31,6 +35,8 @@ dependencies:
   - ipykernel
   - ipywidgets
   - libgdal-hdf4 
+  - jax==0.5.2
+  - jsonpath-ng
   - jsonpickle
   - make
   - matplotlib
@@ -43,12 +49,18 @@ dependencies:
   - opencv
   - osmnx
   - pandas
+  - paramiko
   - pip
   - polars
   - prettytable
   - pyarrow
+#exists in conda but conflicts..
+#  - pygeobase
+  - pygeogrids
+  - pykdtree
+  - pyresample
   - pytest
-  - python=3.12.11
+  - python=3.12.13
   - python-daemon
   - pyvis
   - rasterio
@@ -57,12 +69,13 @@ dependencies:
   - scikit-learn
   - seaborn
   - setuptools
+  - simple_slurm
   - sparse
+  - sysrsync
   - tensorflow=2.18.0=cpu_py312h69ecde4_52
-  - tiledb-py
   - tqdm
-  - uvicorn
   - xarray
+  - yapf
   - zarr=2.18.7
   
   # for docs
@@ -73,10 +86,19 @@ dependencies:
   - nbsphinx
   - nbsphinx-link
   - pandoc
+  - pydata-sphinx-theme
   - sphinx
   - sphinx-autodoc-typehints
   - sphinx_rtd_theme
-  - pydata-sphinx-theme
   - sphinxcontrib-mermaid
 
+  - pip:
+  #for ingest
+      - configobj
+      - ismn 
+      - more_itertools 
+      - pygeobase
+      - pynetcf 
+      - repurpose 
+      - tiledb
 

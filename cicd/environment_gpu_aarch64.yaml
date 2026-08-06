@@ -18,6 +18,7 @@ dependencies:
   - cdsapi
   - cfgrib
   - cmake
+  - configparser
   - cuda-compiler
   - cuda-cudart
   - cuda-cupti
@@ -30,6 +31,7 @@ dependencies:
   - dask
   - datapi
   - dill
+  - donfig
   - earthaccess
   - ecmwf-api-client
   - fastapi 
@@ -74,7 +76,10 @@ dependencies:
   - prettytable
   - protobuf
   - pyarrow
+  - pygeogrids
+  - pykdtree
   - pygments
+  - pyresample
   - pytest
   - python=3.12.11
   - python-daemon
@@ -95,6 +100,7 @@ dependencies:
   - werkzeug
   - wrapt
   - xarray
+  - yapf
   - zarr=2.18.7
 
   # for docs
@@ -108,7 +114,6 @@ dependencies:
   - sphinx
   - sphinx-autodoc-typehints
   - sphinx_rtd_theme
-  - pydata-sphinx-theme
   - sphinxcontrib-mermaid
 
   - pip:
@@ -117,4 +122,13 @@ dependencies:
     - libclang==18.1.1
     - parquet
     - thriftpy2
+#for ingest
+    - configobj
+    - ismn
+    - more_itertools
+    - pygeobase
+    - pynetcf
+    - repurpose
+    - tiledb
+
     - tiledb
