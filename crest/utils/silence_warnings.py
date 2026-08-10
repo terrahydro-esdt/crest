@@ -20,6 +20,7 @@ def silence_warnings(function: Callable) -> Callable:
     
     @functools.wraps(function)
     def wrapper(*args, **kwargs):
+        """ Wrapper for the decorated function """
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore') 
             return function(*args, **kwargs)

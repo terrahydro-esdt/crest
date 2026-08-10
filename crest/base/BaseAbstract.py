@@ -22,11 +22,21 @@ def type_repr(val=None, T=None, _maxdepth: int = 4):
     if hasattr(val, '__iter__') and not isinstance(val, str) and _maxdepth:
         recurse = partial(type_repr, T=T, _maxdepth=_maxdepth - 1)
         try:
-            item = next(iter(getattr(val, 'items', lambda: val)()))
-            if hasattr(val, 'items'):
-                ele_type = ', '.join(map(recurse, item))
-            else:
-                ele_type = recurse(item)
+            iterable = getattr(val, 'items', lambda: val)()
+            ele_type = []
+            for i, ele in enumerate(iterable):
+                if i > 1:
+                    break
+                
+                if hasattr(val, 'items'):
+                    ele_type.append(', '.join(map(recurse, ele)))
+                    break
+                else:
+                    ele_type.append(recurse(ele))
+
+            if len(iterable) > 2 and not hasattr(val, 'items'): 
+                ele_type.append('...')
+            ele_type = ', '.join(map(str, ele_type))
         except:
             ele_type = '?'
         return f'{container}[{ele_type}]'
@@ -35,6 +45,8 @@ def type_repr(val=None, T=None, _maxdepth: int = 4):
 
 def equal_tuples(val, T):
     """ Check that val and T are tuples of the same length """
+    if get_origin(T) is tuple:
+        T = get_args(T)
     is_tuple = isinstance(val, tuple) and isinstance(T, tuple)
     return is_tuple and (len(val) == len(T))
 
@@ -45,7 +57,7 @@ def handle_generic(val, T):
         raise NotImplementedError('TypeVar constraints not implemented')
     if isinstance(T, TypeVar):
         T = T.__bound__ or type(val)
-    elif equal_tuples(val, T):
+    elif equal_tuples(val, T) and get_origin(T) is not tuple:
         T = tuple(map(handle_generic, val, T))
     elif T is None:
         T = type(None)
@@ -73,6 +85,8 @@ def istype(val, T):
 
     # Handle a tuple of types
     if equal_tuples(val, T):
+        if get_origin(T) is tuple:
+            T = get_args(T)
         return all(map(istype, val, T))
     elif isinstance(T, tuple):
         return False
@@ -184,6 +198,7 @@ class EnsureTypes:
             req = type_repr(T=annotation)
             typ = type_repr(obj)
             msg = f'{label} must be of type {req}, but found type {typ}'
+            msg+= f' ({obj=} {annotation=})'
             raise TypeError(msg)
 
 

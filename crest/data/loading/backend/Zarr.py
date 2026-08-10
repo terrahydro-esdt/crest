@@ -9,8 +9,10 @@ import sys
 
 
 class Zarr(BaseBackend):
+    """ Backend class to handle reading and writing to Zarr storage """
     
     def open(self, path=None, **kwargs):
+        """ Open a Zarr location and return the associated xarray object """
         if path is None:
             path = self.path
         
@@ -20,5 +22,6 @@ class Zarr(BaseBackend):
 
 
     def cache(self, dest, data: xr.Dataset, stream=sys.stdout, **kwargs):
+        """ Write the given xarray Dataset to a Zarr database """
         with ProgressBar(out=stream): 
             data.to_zarr(dest, **kwargs)
