@@ -1,0 +1,12 @@
+[tool.interrogate]
+fail-under = 80
+exclude = [
+    "tests/*",
+    "docs/*",
+    "crest/archiver/*",
+]
+ignore-init-method = true
+ignore-init-module = true
+ignore-magic = true
+ignore-semiprivate = true
+verbose = 1
