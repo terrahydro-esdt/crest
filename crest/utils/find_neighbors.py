@@ -223,7 +223,7 @@ def implode(table):#: np.ndarray | pl.DataFrame):
     # Exclude one name from the full list
     # Groupby all names except one, then concat into a comma-delimited string
     excl = lambda remove: list( set(names) - {remove} )
-    join = lambda tbl, n: tbl.group_by(excl(n)).agg(pl.col(n).str.concat(','))
+    join = lambda tbl, n: tbl.group_by(excl(n)).agg(pl.col(n).str.join(','))
 
     if isinstance(table, (pl.DataFrame, pl.LazyFrame)):
         dtype = table.dtypes[0]
@@ -265,6 +265,7 @@ def multiset_single(
     logger      : logging.Logger | None = None, 
     seed        : int | None = None,
 ):
+    """ Python interface for numba backend """
     log = getattr(logger, 'debug', print)
     with Stopwatch('multiset preparation', log, silent=logger is None):
         # Temporarily hard-code reversing feature dimension in order to
@@ -342,6 +343,7 @@ def multiset_single(
 
 
 def format_resolutions(coordinates, resolutions, method, radius, eps):
+    """ Transform grid resolutions into the necessary format for matching """
     formatted = []
     
     # Format resolutions into (left side, right side) 2D resolution arrays
@@ -1044,6 +1046,7 @@ class StreamToLogger:
         self.linebuf = ''
 
     def write(self, buf):
+        """ Write the stream from the buffer to the logger """
         temp_linebuf = self.linebuf + buf
         self.linebuf = ''
         for line in temp_linebuf.splitlines(True):
@@ -1060,6 +1063,7 @@ class StreamToLogger:
                 self.linebuf += line
 
     def flush(self):
+        """ Flush remaining lines to the logger """
         if self.linebuf != '':
             line, self.linebuf = self.linebuf.strip(), ''
             if not (line.startswith('0%') or line.startswith('100%')):

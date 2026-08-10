@@ -247,11 +247,11 @@ class TestDataset:
         """ Test automatically chunking data with small blocksize """
         synthetic.autochunk(numblocks=560, verbose=True)
         assert((np.array(synthetic.numblocks) == np.array([
-            [14, 40, 30],
-            [14, 40,  5],
-            [ 1, 40,  5],
-            [ 1, 40,  3],
-            [14, 40,  1],
+            [6, 11, 30],
+            [6, 11,  5],
+            [1, 11,  5],
+            [1, 11,  3],
+            [6, 11,  1],
         ])).all()), synthetic.numblocks
 
 
@@ -259,11 +259,11 @@ class TestDataset:
         """ Test automatically chunking data with mid blocksize """
         synthetic.autochunk(numblocks=40, verbose=True)
         assert((np.array(synthetic.numblocks) == np.array([
-            [2, 20, 30],
-            [2, 20,  5],
-            [1, 20,  5],
-            [1, 20,  3],
-            [2, 20,  1],
+            [2, 11, 30],
+            [2, 11,  5],
+            [1, 11,  5],
+            [1, 11,  3],
+            [2, 11,  1],
         ])).all()), synthetic.numblocks
 
 

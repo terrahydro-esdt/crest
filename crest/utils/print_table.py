@@ -48,8 +48,10 @@ def print_table(
     7   14  21
 
     """
-    # Helper to print a list of items in the correct format
-    def print_helper(*items): print(sep.join(map(str, items)))
+
+    def print_helper(*items): 
+        """ Helper to print a list of items in the correct format """
+        print(sep.join(map(str, items)))
 
     # First collect printed text within a StringIO buffer
     try:

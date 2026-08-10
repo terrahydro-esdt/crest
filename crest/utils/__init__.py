@@ -1,5 +1,6 @@
 from .classproperty    import classproperty
 from .chunk_dict       import chunk_dict
+from .dask_overlap     import dask_overlap
 from .ensure_with      import ensure_with
 from .find_neighbors   import find_neighbors
 from .induce_bins      import induce_bins

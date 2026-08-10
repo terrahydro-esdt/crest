@@ -107,99 +107,118 @@ class Transform(BaseAbstract):
 
     # Log transform
     def forward_logexp(self, data, **kwargs):
+        """ log(data) """
         base = keras.ops if self._is_tensor_type(data) else np
         return base.log(data + self.eps)
 
     def inverse_logexp(self, data, **kwargs): 
+        """ exp(data) """
         base = keras.ops if self._is_tensor_type(data) else np
         return base.exp(data) - self.eps
 
     @property
     def logexp(self): 
+        """ Forward and inverse functions for log/exp transform """
         return ( self._map_transform(self.forward_logexp), 
                  self._map_transform(self.inverse_logexp) )
 
     
     # Log(data+1) transform
     def forward_logexpp1(self, data, **kwargs):
+        """ sign(data) * log(abs(data) + 1) """
         base = keras.ops if self._is_tensor_type(data) else np
         return base.sign(data) * base.log1p(base.abs(data)+self.eps)
 
     def inverse_logexpp1(self, data, **kwargs): 
+        """ sign(data) * exp(abs(data) - 1) """
         base = keras.ops if self._is_tensor_type(data) else np
         return base.sign(data) * (base.expm1(base.abs(data))-self.eps)
 
     @property
     def logexpp1(self): 
+        """ Forward and inverse functions for log+1/exp+1 transform """
         return ( self._map_transform(self.forward_logexpp1), 
                  self._map_transform(self.inverse_logexpp1) )
 
 
     # 0 mean, 1 standard deviation data standardization
     def forward_standardize(self, data, **kwargs): 
+        """ (data - mean(data)) / stdev(data) """
         return (data - self.mean) / (self.std + self.eps)
 
     def inverse_standardize(self, data, **kwargs): 
+        """ data * stdev(data) + mean(data) """
         return data * (self.std + self.eps) + self.mean
 
     @property
     def standardize(self): 
+        """ Forward and inverse functions for standard transform """
         return ( self._map_transform(self.forward_standardize), 
                  self._map_transform(self.inverse_standardize) )
 
 
     # Interquartile range scaling
     def forward_robust(self, data, **kwargs): 
+        """ (data - median(data)) / (p75(data) - p25(data)) """
         return (data - self.median) / ((self.p75 - self.p25) + self.eps)
 
     def inverse_robust(self, data, **kwargs): 
+        """ data * (p75(data) - p25(data)) + median(data) """
         return data * ((self.p75 - self.p25) + self.eps) + self.median
 
     @property
     def robust(self): 
+        """ Forward and inverse functions for robust transform """
         return ( self._map_transform(self.forward_robust), 
                  self._map_transform(self.inverse_robust) )
 
 
-    # Map data values to a given range; default [-1, 1]
     def forward_normalize(self, data, minim=-1, maxim=1, **kwargs):
+        """ Map data values to a given range; default [-1, 1] """
         scaled = (data - self.min) / ((self.max - self.min) + self.eps)
         return scaled * (maxim - minim) + minim
     
     def inverse_normalize(self, data, minim=-1, maxim=1, **kwargs):
+        """ Invert mapping data from a given range; default [-1, 1] """
         scaled = ((data - minim) / (maxim - minim))
         return scaled * ((self.max - self.min) + self.eps) + self.min
     
     @property
     def normalize(self): 
+        """ Forward and inverse functions for normalize transform """
         return ( self._map_transform(self.forward_normalize), 
                  self._map_transform(self.inverse_normalize) )
 
 
     # Map data quartiles to a given range; default [-1, 1]
     def forward_iqrnorm(self, data, minim=-1, maxim=1, **kwargs):
+        """ Map data values to a given range via IQR; default [-1, 1] """
         scaled = (data - self.p25) / ((self.p75 - self.p25) + self.eps)
         return scaled * (maxim - minim) + minim
     
     def inverse_iqrnorm(self, data, minim=-1, maxim=1, **kwargs):
+        """ Invert mapping data from a given range via IQR; default [-1, 1] """
         scaled = ((data - minim) / (maxim - minim))
         return scaled * ((self.p75 - self.p25) + self.eps) + self.p25
     
     @property
     def iqrnorm(self): 
+        """ Forward and inverse functions for IQR normalize transform """
         return ( self._map_transform(self.forward_iqrnorm), 
                  self._map_transform(self.inverse_iqrnorm) )
 
 
     # Adaptively map data values to a given range to mitigate outliers
-    def forward_adaptnorm(self, data, **kwargs): 
+    def forward_adaptnorm(self, data, **kwargs):
+        """ Map data values to a range that is based on min/max values """
         if (self.min < 0) and (self.max > 0):
             scale = min(abs(self.min), self.max)
             kwargs['minim'] = self.min / scale
             kwargs['maxim'] = self.max / scale
         return self.forward_normalize(data, **kwargs)
 
-    def inverse_adaptnorm(self, data, **kwargs): 
+    def inverse_adaptnorm(self, data, **kwargs):
+        """ Invert data from a range that is based on min/max values """
         if (self.min < 0) and (self.max > 0):
             scale = min(abs(self.min), self.max)
             kwargs['minim'] = self.min / scale
@@ -208,51 +227,60 @@ class Transform(BaseAbstract):
 
     @property
     def adaptnorm(self): 
+        """ Forward and inverse functions for adaptive normalize transform """
         return ( self._map_transform(self.forward_adaptnorm), 
                  self._map_transform(self.inverse_adaptnorm) )
 
 
-    # Transforms data into a gaussian (or uniform) distribution
     def forward_quantile(self, data, target='gaussian', **kwargs):
+        """ Transforms data into a gaussian (or uniform) distribution """
         targets = getattr(self, f'_{target}_targets')
         return self._quantile_transform(data, self._quantiles, targets)
 
     def inverse_quantile(self, data, target='gaussian', **kwargs):
+        """ Inverts data from a gaussian (or uniform) distribution """
         targets = getattr(self, f'_{target}_targets')
         return self._quantile_transform(data, targets, self._quantiles)
 
     @property
     def quantile(self):
+        """ Forward and inverse functions for quantile transform """
         return ( self._map_transform(self.forward_quantile), 
                  self._map_transform(self.inverse_quantile) )
 
 
     # asinh scaling
     def forward_asinh(self, data, **kwargs):
+        """ arcsinh(data / ((p75(data) - p25(data)) / 1.349)) """
         scale = (self.p75 - self.p25) / 1.349
         base = keras.ops if self._is_tensor_type(data) else np
         return base.arcsinh(data / (scale + self.eps))
 
     def inverse_asinh(self, data, **kwargs): 
+        """ ((p75(data) - p25(data)) / 1.349) * sinh(data) """
         scale = (self.p75 - self.p25) / 1.349
         base = keras.ops if self._is_tensor_type(data) else np
         return (scale + self.eps) * base.sinh(data)
         
     @property
     def asinh(self): 
+        """ Forward and inverse functions for asinh transform """
         return ( self._map_transform(self.forward_asinh), 
                  self._map_transform(self.inverse_asinh) )
 
 
     # Identity function
     def forward_identity(self, data, **kwargs): 
+        """ Returns data unmodified """
         return data   
         
-    def inverse_identity(self, data, **kwargs): 
+    def inverse_identity(self, data, **kwargs):
+        """ Returns data unmodified """
         return data
         
     @property
     def identity(self): 
+        """ Forward and inverse functions for identity transform """
         return ( self._map_transform(self.forward_identity), 
                  self._map_transform(self.inverse_identity) )
 

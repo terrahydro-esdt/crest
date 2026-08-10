@@ -1,0 +1,55 @@
+target-version = 'py310'
+line-length = 80
+indent-width = 4
+cache-dir = '.cache/ruff'
+exclude = [
+    '.cache',
+    '.git',
+    '.github',
+    '.ipynb_checkpoints',
+    'cicd',
+    'logs',
+]
+output-format = "grouped"
+output-prefer-rule-codes = true
+
+
+[lint]
+extend-select = ['W', 'E']
+ignore = [
+    'I001',   # import order
+    'N999',   # snake_case module names
+    'B006',   # mutable data structures for argument defaults
+    'B010',   # setattr on constant attribute value
+    'BLE001', # catch blind exceptions: 'Exception'
+    'E128',   # under-indented continuation line
+    'E201',   # whitespace after parentheses
+    'E202',   # whitespace before parentheses
+    'E203',   # whitespace before colons
+    'E221',   # multiple spaces before operator
+    'E225',   # whitespace around operator
+    'E226',   # whitespace around arithmetic operator
+    'E227',   # whitespace around bitwise or shift operator
+    'E231',   # whitespace after comma
+    'E241',   # multiple spaces after comma
+    'E261',   # two spaces before inline comment
+    'E272',   # multiple spaces before keyword
+    'E275',   # whitespace after keyword
+    'E303',   # too many blank lines
+    'E701',   # multiple statements on one line
+    'E731',   # lambda expression assignments
+    'PIE804', # dict kwargs 
+    'RUF100', # noqa directives
+]
+
+# Enable `from __future__ import annotations` imports
+future-annotations = true
+
+
+[lint.pydocstyle]
+convention = 'numpy'
+
+
+[format]
+indent-style = 'space'
+quote-style = 'single'

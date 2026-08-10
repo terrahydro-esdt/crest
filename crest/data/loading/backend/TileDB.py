@@ -163,12 +163,15 @@ def tiledb_to_xarray(path: Path | str, **kwargs) -> xr.Dataset:
     
 
 class TileDB(BaseBackend):
-    
+    """ Backend class to handle reading and writing to TileDB storage """
+
     def open(self, path: Path|str|None = None, **kwargs) -> xr.Dataset:
+        """ Open a TileDB location and return the associated xarray object """
         return tiledb_to_xarray(self.path if path is None else path, **kwargs)
 
 
     def cache(self, dest, data: xr.Dataset, stream=sys.stdout, **kwargs):
+        """ Write the given xarray Dataset to a TileDB database """
         assert('.tiledb' in str(dest)), f'Not a tiledb path: {dest=}'
 
         # Long path names can cause segfaults when writing arrays, which

@@ -309,11 +309,12 @@ class Batcher:
         prequeuer   : ContextManager | Callable = identity,
         seed        : int | None = None,
         cache_dir   : Union[Path, str, FSMap, S3Path, None] = None,
+        cache_kw    : dict = {},
         overwrite   : bool = False,
         valid_percents : list[dict[str, dict]] = [],
         drop_datafiles : list[list[str]] = [],
         match_strategy : str = 'multi',
-        sample_caching : bool = True, 
+        sample_caching : bool = False, 
     ):
         # Block duplication by default should be the same as repeat
         if duplicate is None:
@@ -345,6 +346,7 @@ class Batcher:
         self.prequeuer   = prequeuer
         self.seed        = seed
         self.cache_dir   = cache_dir
+        self.cache_kw    = cache_kw
         self.overwrite   = overwrite
         self.valid_percents = valid_percents
         self.drop_datafiles = drop_datafiles
@@ -406,7 +408,7 @@ class Batcher:
     
         # Cache the Dataset blocks if requested
         if cache_dir is not None:
-            self.cache(self.cache_dir, self.overwrite)
+            self.cache(self.cache_dir, self.overwrite, **self.cache_kw)
             
         
     def __repr__(self):
@@ -577,6 +579,8 @@ class Batcher:
                     try:        job.terminate()
                     except:     pass
                     self.warning(f'Process {pid} needed to be terminated')
+        with handler:
+            self.__dict__.pop('_reset_handlers', lambda: None)()
         with handler: self.debug(f'Finished closing Batcher via {origin}')
 
 
@@ -610,10 +614,12 @@ class Batcher:
 
 
     def cache(self, 
-        cache_dir  : Union[Path, str, FSMap, S3Path] = 'Cache',
-        overwrite  : bool = False, 
-        verbose    : bool = True,
-        fast_check : bool = False,
+        cache_dir   : Union[Path, str, FSMap, S3Path] = 'Cache',
+        overwrite   : bool = False, 
+        verbose     : bool = True,
+        fast_check  : bool = False,
+        task_blocks : int = 256,
+        trim_every  : int = 8, 
     ) -> 'Batcher':
         """Cache blocks in the exact format they will be iterated over.
 
@@ -671,7 +677,7 @@ class Batcher:
         exist = (p.exists() or '.tiledb' in n for p,n in zip(paths, names))
 
         if overwrite or not (fast_check and all(exist)):
-            with Stopwatch(f'Cached {len(self.dataset)} Datafiles at {cache_dir}\n'):
+            with Stopwatch(f'Cached {len(self.dataset)} Blocksets at {cache_dir}\n'):
                 self.dataset.generate_samples(**{
                     'cache_path'  : self.cache_dir.joinpath(str(self.log_file).replace('.log','').split('/')[-1]),
                     'block_bytes' : self.block_bytes,
@@ -682,6 +688,8 @@ class Batcher:
                     'optimize'    : True,
                     'compute'     : False, 
                     'overwrite'   : overwrite,
+                    'task_blocks' : task_blocks,
+                    'trim_every'  : trim_every, 
                 })
         return self
         
@@ -1533,7 +1541,7 @@ class Batcher:
             # Chunk to more reasonable sizes if current chunks are too small
             # if samples.blocks.size < 10:
             #     samples = samples.rechunk((self.batch_size,))
-            samples = samples.rechunk((-1,))
+            # samples = samples.rechunk((-1,))
 
             # Note that all of the following logic which handles combining
             # tasks, is now superceded by the handling in Blockset that will 
@@ -1574,8 +1582,8 @@ class Batcher:
             while not self._exit and (idx := list(islice(order, task_blocks))):
                 self._batch_tasks(samples.blocks[idx], config, block_idxs, continuous=self.continuous)
 
-                # Change config to None so only the first task updates BlockConfig.sampling_count 
-                config = None
+                # # Change config to None so only the first task updates BlockConfig.sampling_count 
+                # config = None
 
                 # Wait until the first batch is done, or signaled to exit
                 while not ((self._first or self._block_tasks.threads < 1) or self._exit):
@@ -2169,9 +2177,18 @@ class Batcher:
                     sys.exit(0)
             return handle
 
+        def reset_handlers(signals=[signal.SIGINT, signal.SIGTERM]):
+            handlers = list(map(signal.getsignal, signals))
+            def reset(signals=signals, handlers=handlers):
+                for sig, handler in zip(signals, handlers):
+                    signal.signal(sig, handler)
+            return reset
+
+        self._reset_handlers = reset_handlers()
         for sig in [signal.SIGINT, signal.SIGTERM]: #signal.valid_signals():
             signal.signal(sig, handle_signal(signal.getsignal(sig)))
-
+        
+        
         # Wait a second for them to start, then ensure that they are running
         time.sleep(1)
         if any(not job.is_alive() for job in jobs):

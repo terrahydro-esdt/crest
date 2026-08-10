@@ -217,12 +217,13 @@ class BlockConfig(dict):
             if empty.all():
                 raise Exception(f'All bins are empty for {config=}')
             
-            counts = np.array(config.sampling_count) / self.max_nbatches
-            target = sum(counts) / (len(counts) - sum(empty))
+            counts = np.array(config.sampling_count)
+            ratios = counts / self.max_nbatches
+            target = sum(ratios) / (len(ratios) - sum(empty))
             
             bin_freq = np.array([sum(e[:n_blks]) for e in config.empty_blocks])
             bin_prob = 1 - bin_freq / n_blks
-            deficits = target - counts
+            deficits = target - ratios
             deficits[empty] = 0
             
             # Because blocks may not produce samples for every bin, bins have
@@ -238,6 +239,8 @@ class BlockConfig(dict):
 
             # Normalize so probabilities sum to 1, then select a bin to use
             prob = prob / prob.sum()
+            self.logger.debug(f'Bin selection: {counts=} {prob=} {bin_freq=}')
+            
             if not np.isfinite(prob).all():
                 message = f'{counts=} {bin_freq=} {bin_prob=} {deficits=}'
                 print(f'\n\n{message} {empty=} {target=}\n\n')
@@ -323,11 +326,10 @@ class BlockConfig(dict):
             
             # Adjust the current bin's counter by the actual batches created
             if len(self.sampling_edges) > 1:
-                # assert(n_batches <= 1), [self, block_idxs, n_batches]
-                # print(f'Removing worker from {self.bin_index=} ({list(self.sampling_count)})')
                 self.logger.info(f'Removing worker from {self.bin_index=} ({list(self.sampling_count)})')
-                self.sampling_count[self.bin_index] -= 1 #- n_batches
-                assert(self.sampling_count[self.bin_index] >= 0), self.sampling_count[self.bin_index] 
+                self.sampling_count[self.bin_index] += n_batches-1
+                self.sampling_count[:] = self.sampling_count[:] - np.min(self.sampling_count)
+
             # Update tracking values
             self.avg_size = max(1, 
                 (self.avg_size * self.n_blocks + max(0, n_batches)) // 

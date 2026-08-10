@@ -121,7 +121,7 @@ def _alpha_edges(q: np.ndarray, p: np.ndarray, n_bins: int, alpha: float, space:
     i = np.clip(i, 0, len(pdf) - 1)
 
     sum_mass = cdf[i]
-    bin_mass = pdf[i]
+    bin_mass = np.maximum(pdf[i], 1e-6)
     q_l = q[i]
     q_r = q[i + 1]
 
@@ -139,7 +139,7 @@ def _alpha_pdf(q: np.ndarray, p: np.ndarray, alpha: float):
     dp = np.diff(p)
 
     def _pdf(alpha_n):
-        # m_i ~ dq[i]^(1-alpha_ * dp[i]^alpha
+        """ m_i ~ dq[i]^(1-alpha_ * dp[i]^alpha """
         pdf = dq**(1-alpha_n) * dp**alpha_n
         return pdf / pdf.sum()
 

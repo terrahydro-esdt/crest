@@ -11,7 +11,7 @@ import tlz
 from crest.data.loading import Dataset
 from crest.data.loading import Datafile
 from crest.data.batching import Batcher
-from crest.archiver import Archiver
+from crest.data.archiver import Archiver
 
 
 def create_dataset():
