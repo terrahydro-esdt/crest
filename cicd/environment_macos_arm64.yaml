@@ -1,4 +1,4 @@
-# Apple Silicon (M1/M2/M3, osx-arm64) development environment
+# Apple Silicon (M series, osx-arm64) development environment
 # For: local documentation generation and unit testing
 # WARNING: Keep this up-to-date with changes to environment_cpu_aarch64.yaml!
 name: OCETRA_cpu
@@ -29,6 +29,7 @@ dependencies:
   - ipykernel
   - ipywidgets
   - libgdal-hdf4
+  - jax=0.5.2
   - jsonpickle
   - make
   - matplotlib
