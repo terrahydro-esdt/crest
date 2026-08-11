@@ -95,7 +95,7 @@ class GriddedModel:
     def __init__(self, config: Config, database_path=None, alt_model_loader=None, process_model: dict = {}, process_output: dict = {}, benchmarking: dict = {}):
         logger.debug("GriddedModel: Starting __init__")
 
-        self.sm = SysMetrics(run_id="gridded-model", run_dir='/ASTG/sw/kraken')
+        self.sm = SysMetrics(run_id="gridded-model", run_dir=None)
         self.config = config
         self.extent = self.config.extent
         self.region = self.config.region
