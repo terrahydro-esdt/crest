@@ -1,7 +1,7 @@
-crest.model.RecurrentNode module
+crest.utils.dask\_overlap module
 ================================
 
-.. automodule:: crest.model.RecurrentNode
+.. automodule:: crest.utils.dask_overlap
    :members:
    :undoc-members:
    :show-inheritance:

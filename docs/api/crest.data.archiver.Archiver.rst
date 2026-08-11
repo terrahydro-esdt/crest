@@ -1,7 +1,7 @@
-crest.utils.find\_neighbors2 module
+crest.data.archiver.Archiver module
 ===================================
 
-.. automodule:: crest.utils.find_neighbors2
+.. automodule:: crest.data.archiver.Archiver
    :members:
    :undoc-members:
    :show-inheritance:

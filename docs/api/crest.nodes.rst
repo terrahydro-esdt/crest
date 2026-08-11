@@ -6,10 +6,13 @@ crest.nodes package
    :undoc-members:
    :show-inheritance:
 
-Subpackages
------------
+Submodules
+----------
 
 .. toctree::
    :maxdepth: 2
 
-   crest.nodes.tensorflow
+   crest.nodes.CrossStitchLSTM
+   crest.nodes.LSTM
+   crest.nodes.LSTMCell
+   crest.nodes.Node

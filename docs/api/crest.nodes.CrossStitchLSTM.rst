@@ -1,7 +1,7 @@
-crest.nodes.tensorflow.LSTM module
+crest.nodes.CrossStitchLSTM module
 ==================================
 
-.. automodule:: crest.nodes.tensorflow.LSTM
+.. automodule:: crest.nodes.CrossStitchLSTM
    :members:
    :undoc-members:
    :show-inheritance:

@@ -29,11 +29,12 @@ Submodules
    crest.utils.classproperty
    crest.utils.crest_logger
    crest.utils.cross_validation
+   crest.utils.dask_overlap
    crest.utils.ensure_with
    crest.utils.find_neighbors
-   crest.utils.find_neighbors2
    crest.utils.induce_bins
    crest.utils.interactive
+   crest.utils.json_safe
    crest.utils.lexsort
    crest.utils.limit_calls
    crest.utils.logging_service

@@ -1,6 +1,6 @@
 # CREST logging
 
-### LoggingService
+## LoggingService
 
 ```python
 from crest.utils.logging_service import LoggingService, get_logger
@@ -18,7 +18,7 @@ logger.warning("warning")
 logger.error("error occurred")
 ```
 
-### Backward compatibility
+## Backward compatibility
 
 ```python
 from crest.utils.crest_logger import logger_setup

@@ -1,7 +1,7 @@
-crest.nodes.tensorflow.Node module
+crest.data.archiver.Indexer module
 ==================================
 
-.. automodule:: crest.nodes.tensorflow.Node
+.. automodule:: crest.data.archiver.Indexer
    :members:
    :undoc-members:
    :show-inheritance:

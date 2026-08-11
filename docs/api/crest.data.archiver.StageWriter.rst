@@ -1,7 +1,7 @@
-crest.nodes.tensorflow.LSTMCell module
+crest.data.archiver.StageWriter module
 ======================================
 
-.. automodule:: crest.nodes.tensorflow.LSTMCell
+.. automodule:: crest.data.archiver.StageWriter
    :members:
    :undoc-members:
    :show-inheritance:

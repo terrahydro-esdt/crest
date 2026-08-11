@@ -27,7 +27,6 @@ Submodules
    crest.model.IOSpec
    crest.model.Model
    crest.model.Node
-   crest.model.RecurrentNode
    crest.model.Registry
    crest.model.TensorGraph
    crest.model.TensorSpec
