@@ -106,6 +106,8 @@ def limit_calls(
         raise ValueError(f'{timespan=} must be >= 0')
         
     def decorator(function: Callable) -> Callable:
+        """ Actual decorator function applied """
+        
         fline = ''
         fname = getattr(function, '__name__', str(function))
         calls = dd(list)
@@ -113,6 +115,8 @@ def limit_calls(
 
         @wraps(function)
         def wrapper(*args, **kwargs):
+            """ Returned wrapper for the decorated function """
+            
             nonlocal fline
             called_at = time()
             

@@ -50,7 +50,6 @@ except ImportError: pass
 try: import pandas
 except ImportError: pass
 
-# from ._dask_monkeypatch import *
 from .model import HierarchalTensorGraph, Model, NetworkXGraph, Node, TensorSpec,IOSpec
 from .data_server import DataServer
 try:

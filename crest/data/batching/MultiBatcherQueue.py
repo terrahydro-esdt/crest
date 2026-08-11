@@ -29,6 +29,7 @@ class MultiBatcherQueue:
 
     
     def get(self, timeout: float=0.):
+        """ Get item from queue """
         sizes = {c:len(b) for c,b in self.combiner.batches.items()}
         # hs, qs = zip(*sorted(self.queues.items(), key=lambda cq: self.combiner.configs[cq[0]]))# sizes[cq[0]]))
         hs, qs = zip(*sorted(self.queues.items(), key=lambda cq: sizes[cq[0]]))
@@ -41,33 +42,41 @@ class MultiBatcherQueue:
 
             
     def put(self, batch):
+        """ Put item in queue """
         return self.put_nowait(batch)
 
     
     def put_nowait(self, batch):
+        """ Put item in queue """
         if (len(batch) == 2) and isinstance(batch[1], int):
             self.queues[batch[1]].put_nowait(batch)
 
     
-    def full(self):
+    def full(self) -> bool:
+        """ Whether queue is full """
         time.sleep(0.01)
         return False
 
     
     def cancel_join_thread(self):
+        """ Stops queue threads """
         for q in self.queues.values():
             q.cancel_join_thread()
 
     
     def empty(self):
+        """ Whether all queues are empty """
         return all(q.empty() for q in self.queues.values())
 
     
     def get_nowait(self):
+        """ Get item from first non-empty queue """
         for q in self.queues.values():
             while not q.empty():
-                try:    q.get_nowait()
+                try:    return q.get_nowait()
                 except: break
 
+    
     def qsize(self):
+        """ Size of all queues """
         return [q.qsize() for q in self.queues.values()]
