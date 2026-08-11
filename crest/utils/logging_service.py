@@ -341,6 +341,7 @@ def log_context(**kwargs):
     old_factory = logging.getLogRecordFactory()
 
     def record_factory(*args, **kw):
+        """ Wraps the previous log record factory to inject the context kwargs onto every record """
         record = old_factory(*args, **kw)
         for key, value in kwargs.items():
             setattr(record, key, value)
@@ -386,6 +387,7 @@ def log_function_call(logger: Optional[logging.Logger] = None, level: str = "DEB
     """
 
     def decorator(func):
+        """ Wraps `func` so each call is logged with its arguments and return value """
         nonlocal logger
         if logger is None:
             logger = get_logger(func.__module__)
@@ -394,6 +396,7 @@ def log_function_call(logger: Optional[logging.Logger] = None, level: str = "DEB
 
         @wraps(func)
         def wrapper(*args, **kwargs):
+            """ Logs the call signature and return value (or exception) around a call to `func` """
             # Log function entry
             args_repr = [repr(a) for a in args]
             kwargs_repr = [f"{k}={v!r}" for k, v in kwargs.items()]
@@ -439,6 +442,7 @@ def log_execution_time(logger: Optional[logging.Logger] = None, level: str = "IN
     import time
 
     def decorator(func):
+        """ Wraps `func` so each call is timed and the elapsed duration is logged """
         nonlocal logger
         if logger is None:
             logger = get_logger(func.__module__)
@@ -447,6 +451,7 @@ def log_execution_time(logger: Optional[logging.Logger] = None, level: str = "IN
 
         @wraps(func)
         def wrapper(*args, **kwargs):
+            """ Times a call to `func` and logs the elapsed duration (or failure) """
             start_time = time.time()
             try:
                 result = func(*args, **kwargs)

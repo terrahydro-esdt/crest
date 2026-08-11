@@ -36,8 +36,32 @@ os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 logger = logging.getLogger(__name__)
 
 def process_batch(batch, model_inputs, worker_id):
-    def extract(v, dim): return v.ravel(
-    )[-1 if dim == 'datetime' else v.size//2]
+    """
+    Converts a batch of Samples into per-sample coordinates and model-ready tensors.
+
+    Parameters
+    ----------
+    batch : list[crest.data.loading.Sample]
+        Batch of Samples to convert, as produced by a crest.data.batching.Batcher.
+    model_inputs : list[str]
+        Names of the model input features to extract from each Sample.
+    worker_id : int
+        Index of the CPU logical device (see `process_batch_full`) that the
+        returned tensors should be pinned to.
+
+    Returns
+    -------
+    tuple[dict, dict]
+        `(coords, values)`. `coords` maps each of 'datetime', 'latitude', and
+        'longitude' to an array with one representative coordinate per sample
+        (see `extract`). `values` maps each of `model_inputs` to a batched
+        `tf.EagerTensor` of that feature's values.
+
+    """
+    def extract(v, dim):
+        """ Picks one representative coordinate per sample: the last step for
+        'datetime', the center pixel for spatial dims """
+        return v.ravel()[-1 if dim == 'datetime' else v.size//2]
     keys = [('datetime', 0), ('latitude', 0), ('longitude', 0)]
     coords = tlz.merge_with(np.array,
                             [{c: extract(s.coords[c][i], c) for c, i in keys} for s in batch])
@@ -51,6 +75,40 @@ def process_batch(batch, model_inputs, worker_id):
 
 @contextmanager
 def process_batch_full(batcher, model_inputs, loader, schema, model_name, staging_dir):
+    """
+    Per-worker setup for gridded prediction: yields a callable that predicts
+    and stages one batch at a time.
+
+    Pins TensorFlow to a single-threaded logical CPU device dedicated to this
+    Batcher worker (`batcher.pidx`), loads the model onto that device, and
+    opens a `StageWriter` for the given archive `schema`. Intended to be used
+    as a `Batcher(prequeuer=partial(process_batch_full, ...))` so each worker
+    process runs this setup once before producing batches; the staged writer
+    is flushed and closed when the context exits.
+
+    Parameters
+    ----------
+    batcher : crest.data.batching.Batcher
+        The Batcher this worker belongs to (used for `workers` and `pidx`).
+    model_inputs : list[str]
+        Names of the model input features to extract from each batch.
+    loader : Callable
+        Called as `loader(model_name)` to obtain a model-loader object whose
+        `.load()` returns the model to run predictions with.
+    schema : xr.DataArray | xr.Dataset
+        Coordinate/chunking schema for the staged output (see `Archiver`).
+    model_name : str
+        Path/identifier passed to `loader` to select which model to load.
+    staging_dir : str | Path
+        Directory that staged parquet fragments are written to.
+
+    Yields
+    ------
+    Callable[[list], None]
+        `process(batch)`, which runs the model on `batch` and stages its
+        predictions for later archiving.
+
+    """
     tf.config.threading.set_intra_op_parallelism_threads(1)
     tf.config.threading.set_inter_op_parallelism_threads(1)
 
@@ -76,6 +134,7 @@ def process_batch_full(batcher, model_inputs, loader, schema, model_name, stagin
     archiver = StageWriter(schema, staging_dir)
 
     def process(batch):
+        """ Runs the model on one batch and stages the predictions for archiving """
         with tf.device(f'/device:CPU:{worker_id}'):
             coords, values = process_batch(batch, model_inputs, worker_id)
             pred = model.predict_on_batch(values)
@@ -148,7 +207,7 @@ class GriddedModel:
     def init_dataset(self, process_dataset: dict = {}):
         """ 
 
-        Creates Datases and caches if not cached for performance. If cached,
+        Creates Datasets and caches if not cached for performance. If cached,
         it reads from the cache.
 
         """
