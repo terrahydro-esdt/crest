@@ -374,8 +374,7 @@ class Add2_Dual(Node):
 
 
 class DualRecurrent(HierarchalTensorGraph):
-
-    # hyper connected graph with two recurrent nodes
+    """ hyper connected graph with two recurrent nodes """
     def __init__(self):
         super().__init__(name='parent')
         add_1 = Add1_Dual('add_1')
@@ -386,6 +385,62 @@ class DualRecurrent(HierarchalTensorGraph):
         self.add_edge(add_1, add_2)
         self.add_edge(add_2, add_1)
         self.add_edge(add_1, add_1)
+        self.add_edge(add_2, add_2)
+        self.add_edge(add_1, 'output')
+        self.add_edge(add_2, 'output')
+
+
+class Add1_Asymmetric(Node):
+    """ Recurrent node with NO self-loop of its own """
+    def __init__(self, name):
+
+        def add(X):
+            v = X['s_1'] + X['x_1']
+            return {'s_1':  v}
+
+        super().__init__(node=add,
+                         name=name,
+                         inputs={'x_1': (1, 3), 's_1': (1,)},
+                         outputs={'s_1': (1,)},
+                         recurrent=True,
+                         return_seq=False
+                         )
+
+    def initial_state(self,X):
+        return {'s_1' : 0}
+
+
+class Add2_Asymmetric(Node):
+    def __init__(self, name):
+
+        def add(X):
+            v = X['s_1'] + X['s_2'] + X['x_2']
+            return {'s_2':  v}
+
+        super().__init__(node=add,
+                         name=name,
+                         inputs={'x_2': (1, 3), 's_2': (1,), 's_1': (1,)},
+                         outputs={'s_2': (1,)},
+                         recurrent=True,
+                         return_seq=False
+                         )
+
+    def initial_state(self,X):
+        return {'s_2': 0}
+
+
+class AsymmetricDualRecurrent(HierarchalTensorGraph):
+    """ Bidirectional recurrent coupling where only ONE side (add_2)
+        has a self-loop """
+    def __init__(self):
+        super().__init__(name='parent')
+        add_1 = Add1_Asymmetric('add_1')
+        add_2 = Add2_Asymmetric('add_2')
+
+        self.add_edge('input', add_1, features='x_1')
+        self.add_edge('input', add_2, features='x_2')
+        self.add_edge(add_1, add_2)
+        self.add_edge(add_2, add_1, features='s_2', rename={'s_2': 's_1'})
         self.add_edge(add_2, add_2)
         self.add_edge(add_1, 'output')
         self.add_edge(add_2, 'output')

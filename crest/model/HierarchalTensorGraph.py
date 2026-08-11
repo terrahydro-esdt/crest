@@ -1328,9 +1328,17 @@ class HierarchalTensorGraph(TensorGraph):
 
         # can loop through and define
         for node in self.nodes:
-            if not self[node].attributes['roll_out']:
-                for input_node in nodes(node):
-                    if self.graph.edges[input_node, node]['rollout_axis'] is not None:
+            for input_node in nodes(node):
+                if self.graph.edges[input_node, node]['rollout_axis'] is not None:
+                    # Guard on input_node (the node being assigned), not node
+                    # (the loop variable). Guarding on node would incorrectly
+                    # skip input_node's assignment whenever node's own roll_out
+                    # happened to already be set as a side effect of processing
+                    # some other node earlier in this loop (e.g. asymmetric
+                    # bidirectional recurrence, where only one side has a
+                    # self-loop) -- this previously caused nodes with no
+                    # self-loop of their own to keep roll_out == None forever.
+                    if not self[input_node].attributes['roll_out']:
                         rollout_axis = self.graph.edges[input_node,
                                                         node]['rollout_axis']
                         self[input_node].attributes['roll_out'] = Recurrence(

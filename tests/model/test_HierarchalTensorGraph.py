@@ -166,6 +166,33 @@ def test_no_key_found():
     with pytest.raises(ImproperTensorGraphError):
         m({'b': 1})
 
+def test_add_edge_between_nodes_with_none_shape():
+    """ Regression test: connecting two basenodes directly (not through
+    'input'/'output') must work when their I/O specs use shape=None, the
+    documented pattern for untyped nodes (see examples/HTG_overview.ipynb).
+    """
+    add = Node(
+        node=lambda X: {'sum': X['x_1'] + X['x_2']},
+        inputs={'x_1': None, 'x_2': None},
+        outputs={'sum': None},
+        name='add'
+    )
+
+    sq = Node(
+        node=lambda X: {'square': X['x'] * X['x']},
+        inputs={'x': None},
+        outputs={'square': None},
+        name='square'
+    )
+
+    m = HierarchalTensorGraph(name='add_square')
+    m.add_edge('input', add)
+    m.add_edge(sq, 'output')
+    m.add_edge(add, sq, rename={'sum': 'x'})
+
+    assert m({'x_1': 5, 'x_2': 3}) == {'square': 64}
+
+
 def test_multiple_keys_found():
 
     m1 = Node(
@@ -407,6 +434,15 @@ def test_recurrent_dual():
     htg = DualRecurrent()
     result = htg({'x_1': np.array([[1, 2, 3]]), 'x_2': np.array([[1, 2, 3]])})
     answer = {'s_1': np.array([6]), 's_2': np.array([10])}
+    for k in result: assert(answer[k] == result[k])
+
+def test_recurrent_asymmetric_dual():
+    """ Note: i.e. a bidirectional recurrent coupling where only one
+    side has a self-loop. See examples/HTG_recurrent.ipynb Case 2.
+    """
+    htg = AsymmetricDualRecurrent()
+    result = htg({'x_1': np.array([[1, 2, 3]]), 'x_2': np.array([[1, 2, 3]])})
+    answer = {'s_1': np.array([7]), 's_2': np.array([10])}
     for k in result: assert(answer[k] == result[k])
 
 def test_recurrent_triple():
