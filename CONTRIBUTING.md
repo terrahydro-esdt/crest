@@ -52,19 +52,15 @@ This project adheres to a code of conduct that all contributors are expected to 
    pip install -e ".[dev]"
    ```
 
+   This installs everything needed for development and style/type checks
+   (`pytest`, `pytest-cov`, `black`, `isort`, `ruff`, `mypy`, `interrogate`,
+   `build`, `twine`) — no separate install step needed.
+
 4. **Verify your installation**
 
    ```bash
    pytest tests/ -v
    ```
-
-### Development Dependencies
-
-Additional tools you'll need:
-
-```bash
-pip install black isort flake8 mypy interrogate
-```
 
 ## Development Workflow
 
@@ -98,7 +94,7 @@ pip install black isort flake8 mypy interrogate
    # Check code style
    black crest/ tests/
    isort crest/ tests/
-   flake8 crest/ tests/
+   ruff check crest/ tests/
 
    # Check type hints
    mypy crest/
@@ -163,10 +159,16 @@ All contributions must include appropriate documentation. See [DOC_GUIDE.md](DOC
 ### Building Documentation Locally
 
 ```bash
+pip install -e ".[docs]"
 cd docs/
 make html
 open _build/html/index.html
 ```
+
+**Note:** notebook rendering (`nbsphinx`) also requires the `pandoc` binary,
+which is *not* installable via pip. Install it separately (e.g.
+`conda install pandoc` or `brew install pandoc`) if it isn't already on your
+`PATH`.
 
 ## Testing Requirements
 
@@ -249,37 +251,9 @@ pytest tests/ --cov=crest --cov-report=html
 
 ### Pull Request Template
 
-```markdown
-## Description
-
-Brief description of what this PR does.
-
-## Type of Change
-
-- [ ] Bug fix (non-breaking change fixing an issue)
-- [ ] New feature (non-breaking change adding functionality)
-- [ ] Breaking change (fix or feature causing existing functionality to change)
-- [ ] Documentation update
-
-## Testing
-
-Describe the tests you ran and how to reproduce them.
-
-## Checklist
-
-- [ ] My code follows the style guidelines
-- [ ] I have performed a self-review
-- [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] I have updated the documentation
-- [ ] My changes generate no new warnings
-- [ ] I have added tests that prove my fix/feature works
-- [ ] New and existing unit tests pass locally
-- [ ] I have updated CHANGELOG.md
-
-## Related Issues
-
-Fixes #(issue number)
-```
+Opening a PR on GitHub automatically populates the description from
+[`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md) — fill
+that out rather than writing a description from scratch.
 
 ## Contribution Types
 

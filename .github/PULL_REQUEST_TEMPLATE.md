@@ -41,8 +41,8 @@ pytest tests/path/to/test.py -v
 
 **Test Configuration**:
 - OS: [e.g., Ubuntu 22.04, macOS 14]
-- Python version: [e.g., 3.9, 3.10]
-- TensorFlow version: [e.g., 2.13.0]
+- Python version: [e.g., 3.10, 3.11, 3.12]
+- Backend version: [e.g., TensorFlow 2.18+, PyTorch, or JAX]
 
 ## Screenshots (if applicable)
 
