@@ -53,11 +53,16 @@ dev = [
 docs = [
   "furo >=2023.9.10",
   "ipykernel",
+  "myst-nb",
+  "nbsphinx",
+  "nbsphinx-link",
+  "pydata-sphinx-theme",
   "sphinx >=7.0.0",
   "sphinx-autobuild >=2024.4.16",
   "sphinx-autodoc-typehints",
   "sphinx-design",
   "sphinx_rtd_theme",
+  "sphinxcontrib-mermaid",
 ]
 
 [tool.flit.sdist]
