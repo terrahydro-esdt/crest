@@ -23,7 +23,7 @@ keywords = [
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
-"Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -72,9 +72,14 @@ fail-under = 80
 exclude = [
     "tests/*",
     "docs/*",
+    "crest/archiver/*",
+    "**/.ipynb_checkpoints",
+    ".ipynb_checkpoints",
+    "**/__*__.py"
 ]
 ignore-init-method = true
 ignore-init-module = true
 ignore-magic = true
 ignore-semiprivate = true
+ignore-module = true
 verbose = 1
