@@ -74,7 +74,7 @@ def interactive_exceptions(function: Callable) -> Callable:
 
     """
     @wraps(function)
-    def wrapper(*args, **kwargs):
+    def _wrapper(*args, **kwargs):
         try: 
             return function(*args, **kwargs)
         
@@ -101,7 +101,7 @@ def interactive_exceptions(function: Callable) -> Callable:
 
             # re-raise the same error on console exit
             raise
-    return wrapper
+    return _wrapper
 
 
 
@@ -218,12 +218,12 @@ def get_highlighter(style_name: str = 'monokai') -> Callable:
         lexer = Python3Lexer()
         color = partial(highlight, lexer=lexer, formatter=t_fmt)
 
-        def highlighter(text: str) -> str:
+        def _highlighter(text: str) -> str:
             # Strip any whitespace, apply color, then re-add the whitespace
             prefix = ''.join( takewhile(str.isspace, text) )
             suffix = ''.join( takewhile(str.isspace, reversed(text)) )
             return f'{prefix}{color(text.strip()).strip()}{suffix}'
-        return highlighter
+        return _highlighter
     except ImportError: pass
     except:             print(f'{traceback.format_exc()}')
     return lambda x: x 

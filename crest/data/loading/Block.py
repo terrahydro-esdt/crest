@@ -125,6 +125,7 @@ class Block(BaseAbstract):
 
 
     def copy(self):
+        """ Make a shallow copy of this block object """
         blk = Block(
             data = self._data,
             coords = self._coords,
@@ -196,6 +197,7 @@ class Block(BaseAbstract):
 
     @cached_property
     def sparse_data(self):
+        """ Returns data, but as a cached_property due to multiple calls """
         return self.data
 
 
@@ -535,7 +537,7 @@ class Block(BaseAbstract):
 
             # Slightly different handling required for sparse data
             if self.is_sparse:
-                def calc(values):
+                def _calc(values):
                     # Explicitly apply functions per-block to avoid densifying
                     blocks = values.data.to_delayed().ravel()
 
@@ -556,7 +558,7 @@ class Block(BaseAbstract):
                     stats = xr.concat(map(toset, stat_keys), coord).to_dataset('statistics')
                     stats[perc_keys] = da.percentile(arrays, quantiles, internal_method='tdigest')
                     return stats.to_array('statistics')
-                stats = data.apply(calc)
+                stats = data.apply(_calc)
 
             # Dense summary computation relies mostly on xarray operations
             else:
@@ -583,24 +585,7 @@ class Block(BaseAbstract):
             stats['features'] = stats['features'].astype(str)
             return stats.chunk(-1)
 
-
-    def set_valid_percents(self, valid_percent: dict):
-        """ Set a new valid_percent after formatting correctly """
-        assert(getattr(self, '_original_valid_percent', None) is None)
-        self._original_valid_percent = self.valid_percent
-        formatted = {}
-        keys = tuple()
-        for k, v in valid_percent.items():
-            if not isinstance(k, tuple):
-                k = (k,)
-            keys += k
-            formatted[k] = v
-        for d in self.dims:
-            if d not in keys:
-                formatted[(d,)] = 1
-        self.valid_percent = formatted
-
-
+    
     def set_feature_masks(self, feature_masks: dict):
         """ Mask the requested features so only values within a bin remain """
         # Need to modify valid_mask to handle zarr features
@@ -633,8 +618,26 @@ class Block(BaseAbstract):
             self.__dict__.pop('_feature_mask')
         self.__dict__.pop('valid_mask', None)
 
+        
+    def set_valid_percents(self, valid_percent: dict):
+        """ Set a new valid_percent after formatting correctly """
+        assert(getattr(self, '_original_valid_percent', None) is None)
+        self._original_valid_percent = self.valid_percent
+        formatted = {}
+        keys = tuple()
+        for k, v in valid_percent.items():
+            if not isinstance(k, tuple):
+                k = (k,)
+            keys += k
+            formatted[k] = v
+        for d in self.dims:
+            if d not in keys:
+                formatted[(d,)] = 1
+        self.valid_percent = formatted
+
 
     def reset_valid_percents(self):
+        """ Undo any set_valid_percents call """
         if getattr(self, '_original_valid_percent', None) is not None:
             self.valid_percent = self._original_valid_percent
             self._original_valid_percent = None

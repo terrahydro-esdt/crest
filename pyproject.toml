@@ -70,12 +70,13 @@ include = [
 [tool.interrogate]
 fail-under = 80
 exclude = [
-    "tests/*",
-    "docs/*",
-    "crest/archiver/*",
+    "tests",
+    "docs",
+    "crest/archiver",
     "**/.ipynb_checkpoints",
     ".ipynb_checkpoints",
-    "**/__*__.py"
+    "**/__*__.py",
+    "crest/utils/matchup",
 ]
 ignore-init-method = true
 ignore-init-module = true

@@ -82,6 +82,7 @@ class StructuredDataset:
         return state
     
     def to_json(self) -> str:
+        """ Return state as a json representation """
         state = dict(self.__dict__)
         state.pop('features')
         state.pop('samples')
@@ -89,7 +90,8 @@ class StructuredDataset:
         return json.dumps(state)
     
     @staticmethod
-    def from_json(json_string : str) -> "StructuredDataset":
+    def from_json(json_string : str) -> StructuredDataset:
+        """ Load state from a json representation """
         state = json.loads(json_string)
         state['data'] = [np.array(i) for i in state['data']]
         return StructuredDataset(

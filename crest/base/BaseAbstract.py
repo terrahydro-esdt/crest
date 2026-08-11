@@ -178,11 +178,11 @@ class EnsureTypes:
 
             # Create wrapper to ensure signature/help/docstring is transferred
             @wraps(function)
-            def wrapper(obj, *args, **kwargs):
+            def _wrapper(obj, *args, **kwargs):
                 return type_obj(*args, **kwargs)
-            wrapper.__type_checker__ = type_obj
-            wrapper.__signature__ = inspect.signature(obj_attr)
-            return MethodType(wrapper, obj)
+            _wrapper.__type_checker__ = type_obj
+            _wrapper.__signature__ = inspect.signature(obj_attr)
+            return MethodType(_wrapper, obj)
         return obj_attr
 
 

@@ -19,8 +19,10 @@ import json
 import time
 import sys
 
- 
+
+# Thread locks to prevent simultaneous block access (which segfaults tiledb)
 _TILEDB_LOCKS = defaultdict(threading.Lock)
+
 
 def _load_sparse_block(uri: str, data: tdb.Array, block_info: dict) -> sparse.COO:
     """Retrieve a block of sparse data from the TileDB dataset. 
@@ -258,7 +260,8 @@ class TileDB(BaseBackend):
                 if feature == 'summary': 
                     continue
 
-                def write_block(A, blk_idx, block, chunks):
+                @dask.delayed
+                def _write_block(A, blk_idx, block, chunks):
                     if block.nnz:
                         if np.issubdtype(block.data.dtype, np.number):
                             valids = np.isfinite(block.data)
@@ -273,13 +276,14 @@ class TileDB(BaseBackend):
                 handle = tdb.open(path, mode='w', config=cfg)
                 handles.append(handle)
                 for blk_idx in product(*map(range, blocks.shape)):
-                    jobs.append(dask.delayed(write_block)(handle, blk_idx, blocks[blk_idx], chunks))
+                    jobs.append(_write_block(handle, blk_idx, blocks[blk_idx], chunks))
 
         # Caching separately enables using the newly cached data for summary
         # generation (which would be faster). Not yet implemented since times
         # using the raw data itself seem reasonable enough for now.
         if 'summary' in data:
-            def write_summary(A, data):
+            @dask.delayed
+            def _write_summary(A, data):
                 size = tuple([d.size for d in A.domain])
                 rows = np.repeat(np.arange(size[0]), size[1])
                 cols = np.tile(np.arange(size[1]), size[0])
@@ -288,7 +292,7 @@ class TileDB(BaseBackend):
             path = dest.joinpath('summary').as_posix()
             handle = tdb.open(path, mode='w')
             handles.append(handle)
-            jobs.append(dask.delayed(write_summary)(handle, data['summary'].data))
+            jobs.append(_write_summary(handle, data['summary'].data))
             
         with ProgressBar(out=stream):
             dask.compute(*jobs)

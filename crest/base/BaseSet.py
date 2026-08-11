@@ -285,6 +285,7 @@ class BaseSet(BaseAbstract):
     def ix(self):
         """ Convenience function to slice container's objects """
         def getitem(_, i):
+            """ Get item at index `i` """
             multi = lambda x: isinstance(x, Collection)
             if not multi(i): i = [i] * len(self)
             assert(len(i) == len(self))

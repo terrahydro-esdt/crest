@@ -48,7 +48,11 @@ Number = numbers.Real | int | float
 #   a large number of GIL releases which can cause additional slowdown
 WAIT_TIME = 0.01
 
-def identity(batcher, x):
+def _identity(batcher, x):
+    """ 
+    Top-level function used as the default no-op 
+    for prefetching and prequeuing batches.
+    """
     return x
 
     
@@ -305,8 +309,8 @@ class Batcher:
         epoch_sync  : bool   = False,
         numblocks   : int | None = None,
         prefetch    : int | bool = 200,
-        prefetcher  : ContextManager | Callable = identity,
-        prequeuer   : ContextManager | Callable = identity,
+        prefetcher  : ContextManager | Callable = _identity,
+        prequeuer   : ContextManager | Callable = _identity,
         seed        : int | None = None,
         cache_dir   : Union[Path, str, FSMap, S3Path, None] = None,
         cache_kw    : dict = {},
@@ -440,12 +444,21 @@ class Batcher:
         """ Release resources upon exit of the context manager """
         self.close(0, origin='__exit__')
 
-    # Logging helper fun
+    
+    # Logging helper functions
     # @limit_calls(timespan=1)
-    def   debug(self, *args, **kwargs): self._log('debug',   *args, **kwargs)
-    def    info(self, *args, **kwargs): self._log('info',    *args, **kwargs)
-    def warning(self, *args, **kwargs): self._log('warning', *args, **kwargs)
-    def   error(self, *args, **kwargs): self._log('error',   *args, **kwargs)
+    def debug(self, *args, **kwargs):
+        """ Logger.debug """
+        self._log('debug', *args, **kwargs)
+    def info(self, *args, **kwargs):
+        """ Logger.info """
+        self._log('info', *args, **kwargs)
+    def warning(self, *args, **kwargs): 
+        """ Logger.warning """
+        self._log('warning', *args, **kwargs)
+    def error(self, *args, **kwargs): 
+        """ Logger.error """
+        self._log('error', *args, **kwargs)
 
 
     @cached_property
@@ -754,6 +767,7 @@ class Batcher:
         # to be dropped in where a Batcher object is normally created and used
         @contextmanager
         def SavedBatches(batches):
+            """ Context manager class to encapsulate batch yielding """
             yield batches
 
         with save_path.open('rb') as f:

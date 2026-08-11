@@ -145,6 +145,7 @@ class ThreadedFunction(set):
 
     @property
     def name(self) -> str:
+        """ Name of the function being threaded """
         return self.function.__name__
 
 
@@ -156,15 +157,15 @@ class ThreadedFunction(set):
     def close(self):
         """ Attempt to gracefully clean up the background threads """
         # Need to wrap _everything_ in try/except since we may be in __del__
-        def exit():
+        def _exit():
             try:    self.exitset()
             except Exception as e: self.logger.debug(f'Exception in exitset: {e}')
             try:    self._pool.shutdown(wait=False, cancel_futures=True)
             except Exception as e: self.logger.debug(f'Exception in pool.shutdown: {e}')
         try:
             with Stopwatch(f'Closed {self.name} pool', self.logger.debug):
-                exit()
-        except: exit()
+                _exit()
+        except: _exit()
 
 
     def _execute(self, *args, **kwargs):

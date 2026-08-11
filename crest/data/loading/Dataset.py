@@ -339,7 +339,7 @@ class Dataset(BaseSet):
         """
 
         def get_extents(data):
-            # Handles datetime: https://github.com/pydata/xarray/issues/3256
+            """ Fixes https://github.com/pydata/xarray/issues/3256 """
             return {dim: (
                 data[dim].min().to_numpy().min(),
                 data[dim].max().to_numpy().max(),
@@ -1237,6 +1237,7 @@ max_valid_blocks
 
         """
         def get_chunks(dim, size, virtual, blocks):
+            """ Chunksize the array would divide into """
             if size is None or (size == 1 and virtual):
                 return 1
             if 0 < blocks <= max_blocks.get(dim, np.inf):

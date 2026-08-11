@@ -467,7 +467,7 @@ class Blockset(BaseSet):
         by_sparsity = sorted(self, key=lambda b:b.sparsity, reverse=True)
 
         # Include coordinate bounds
-        def bound(f, coords, labels):
+        def _bound(f, coords, labels):
             values = f([f(c, axis=tuple(range(c.ndim-1))) for c in coords], axis=0)
             bounds = dict(zip(labels, values))
             for k,v in bounds.items():
@@ -478,8 +478,8 @@ class Blockset(BaseSet):
             return ' | '.join(f'{k}={v}' for k,v in bounds.items())
         
         coord = self.coords
-        minim = bound(np.nanmin, coord, self.dims[0])
-        maxim = bound(np.nanmax, coord, self.dims[0])
+        minim = _bound(np.nanmin, coord, self.dims[0])
+        maxim = _bound(np.nanmax, coord, self.dims[0])
         message = f'\tMin Coord: {minim}\n\t\tMax Coord: {maxim}\n\t\t'
         
         for block in by_sparsity:
@@ -527,6 +527,7 @@ class Blockset(BaseSet):
                     f, axes = plt.subplots(1, 3, figsize=(15, 5))
 
                     def p(a, ax):
+                        """ Plot the data in a scatterplot """
                         a = a.mean('datetime')
                         import sparse
                         if isinstance(a.data, sparse.COO):

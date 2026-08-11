@@ -436,7 +436,7 @@ class Datafile(BaseAbstract):
 
             # Slightly different handling required for sparse data
             if hasattr(type(self.data.data._meta), 'todense'):
-                def calc(values):
+                def _calc(values):
                     d_append = dask.delayed(np.append)
                     d_series = dask.delayed(pd.Series)
 
@@ -473,7 +473,7 @@ class Datafile(BaseAbstract):
                     stats[key_names] = da.percentile(arrays, quantiles,
                                                      internal_method='tdigest')
                     return stats.to_array('statistics')
-                stats = data.apply(calc)
+                stats = data.apply(_calc)
 
             # Dense summary computation relies mostly on xarray operations
             else:
@@ -968,7 +968,7 @@ class Datafile(BaseAbstract):
             aren't all the same length.
 
         """
-        def calculate(dim, res, max_res, skip, blocks, max_chunksize):
+        def _calculate(dim, res, max_res, skip, blocks, max_chunksize):
             if not self.is_uniform:
                 # Using mean/median here would be better for performance,
                 # but could miss some matches due to too little overlap
@@ -992,7 +992,7 @@ class Datafile(BaseAbstract):
 
         if len(set(map(len, args))) > 1:
             raise ValueError(f'Args not all the same length: {args}')
-        return dict(map(calculate, *args))
+        return dict(map(_calculate, *args))
 
 
     def update_blocks(self, numblocks: Collection, verify:bool = True) -> list:
@@ -1247,7 +1247,7 @@ class Datafile(BaseAbstract):
             'trim_every'       : trim_every,
         })
 
-        def rechunk(v):
+        def _rechunk(v):
             if v.chunks != chunks:
                 v = v.rechunk(chunks)
             return v[..., None]
@@ -1259,7 +1259,7 @@ class Datafile(BaseAbstract):
                         if k in raw and k not in self._virtual_dims})
 
         if 'valid_mask' in raw:
-            valid_mask = rechunk(raw['valid_mask'].data)
+            valid_mask = _rechunk(raw['valid_mask'].data)
         else: valid_mask = da.isfinite(self.dask).all(axis=-1, keepdims=True)
 
         # TODO: Gracefully switch to fallback method if this is not cached
@@ -1270,7 +1270,7 @@ class Datafile(BaseAbstract):
         # Note that this ONLY works for cached data, where preprocessors have
         #  already been applied
         feat_names = list(self._typed_data.features.values)
-        feat_array = [rechunk(raw[k].data) for k in feat_names]
+        feat_array = [_rechunk(raw[k].data) for k in feat_names]
 
         # Separate data/coords/masks into independent blocks
         block_grids = list(map(blocker, list(map(overlap, feat_array)) + [

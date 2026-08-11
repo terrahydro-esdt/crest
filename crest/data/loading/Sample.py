@@ -60,6 +60,7 @@ class Sample:#(BaseAbstract):
 
 
     def astype(self, T):
+        """ No-op for numpy array compatibility """
         return self 
 
 
@@ -162,6 +163,7 @@ class Sample:#(BaseAbstract):
         vals = []
 
         def get_index(i):
+            """ Get the actual index value for the given arg """
             i = str(i).replace('$', '/')
             if i in self.key_label:
                 return self.key_label.index(i)

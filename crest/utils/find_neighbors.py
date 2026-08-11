@@ -143,6 +143,7 @@ def get_indices(
         return tuple(map(rm_axes, map(make_2d, coordinates)))
 
     def query_tree(build, query):
+        """ Query the built tree """
         if use_faiss:
             import faiss 
             faiss.omp_set_num_threads(1) # Minimize dask thread contention
