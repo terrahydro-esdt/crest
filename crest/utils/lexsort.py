@@ -99,7 +99,7 @@ def lexsort_nb(vals, inds, c=0):
     
     Unfortunately, with cache=True, the first function needs to be compiled every time crest is 
     run - which can add 10-20 seconds to the time to first batch. See here for more details:
-        https://github.com/numba/numba/issues/6061#issuecomment-1216381263
+    https://github.com/numba/numba/issues/6061#issuecomment-1216381263
     
     """
     if (len(vals) > 1) and not is_unique_sorted(vals[:, c]):
@@ -131,7 +131,7 @@ def lexsort_nb(vals, inds, c=0):
     
     Unfortunately, with cache=True, the first function needs to be compiled every time crest is 
     run - which can add 10-20 seconds to the time to first batch. See here for more details:
-        https://github.com/numba/numba/issues/6061#issuecomment-1216381263
+    https://github.com/numba/numba/issues/6061#issuecomment-1216381263
     
     """
     if (len(vals) > 1) and not is_unique_sorted(vals[:, c]):

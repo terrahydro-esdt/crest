@@ -11,6 +11,7 @@ class Indexer:
       - 'nearest' (default): nearest neighbor index (optionally with absolute tolerance)
       - 'left'/'right': bin edges behavior
       - 'strict': exact match required
+
     Coordinates may be ascending or descending; must be monotonic.
     """
     coords: np.ndarray

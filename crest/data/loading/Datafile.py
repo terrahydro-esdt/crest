@@ -32,7 +32,11 @@ from .Block import Block
 
 
 # Bool type which allows numpy bools as well
-Bool = bool | np.bool_
+try:
+    Bool = bool | np.bool_
+except TypeError:
+    # This fallback only affects doc builds, not real type checking.
+    Bool = bool
 
 
 class Datafile(BaseAbstract):

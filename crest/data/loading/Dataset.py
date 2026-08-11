@@ -660,7 +660,7 @@ class Dataset(BaseSet):
         multiple remote chunks - the block data will always be fully contained
         within one or more chunks, thus minimizing the amount of data which
         needs duplicated or thrown away for each new block.
-max_valid_blocks
+
         Parameters
         ----------
         block_bytes : Number

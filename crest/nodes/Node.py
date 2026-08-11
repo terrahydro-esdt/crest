@@ -24,8 +24,13 @@ from crest.model.IOSpec import IOSpec
 from crest.utils import plot_to_array
 
 # Handle all Keras backend types
-GenericSpec = keras.InputSpec | tf.TensorSpec
-GenericTensor = keras.KerasTensor | tf.Tensor | jax.Array | np.ndarray
+try:
+    GenericSpec = keras.InputSpec | tf.TensorSpec
+    GenericTensor = keras.KerasTensor | tf.Tensor | jax.Array | np.ndarray
+except TypeError:
+    # This fallback only affects doc builds, not real type checking.
+    GenericSpec = object
+    GenericTensor = object
 class Node(HTG,BaseAbstract):
     """ Node provides a template for machine learning models to inherit from. 
 
@@ -62,15 +67,15 @@ class Node(HTG,BaseAbstract):
         of the model (prior to post-processing), rather than the inverse 
         transformed version. This can help avoid needing to weight model losses
         differently, when multiple sub-model losses are being used to train a
-        larger hierarchal model. Note this has no effect if no *normalize
-        functions are given. 
+        larger hierarchal model. Note this has no effect if no ``*normalize``
+        functions are given.
         Alternatively, a tuple of callables (in the same format as normalize)
         can be given to use as a different normalization procedure than the 
         feature normalization.
     debug          : bool
         Determines whether y_true/y_pred statistics should be printed on each
         batch inside the loss wrapper (default: False). Note this has no effect
-        if no *normalize functions are given, or transform_loss=False. 
+        if no ``*normalize`` functions are given, or transform_loss=False. 
     plot_scatter   : bool
         Determines whether scatter plots should be created in the loss function
         to add to TensorBoard. Setting to True will add target vs predicted 

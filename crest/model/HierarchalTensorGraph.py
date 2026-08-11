@@ -502,7 +502,7 @@ class HierarchalTensorGraph(TensorGraph):
 
         Parameters
         ----------
-        node :  HierarchalTensorGraph or Node(HTG)
+        node :  HierarchalTensorGraph or :class:`~crest.model.Node.Node` (HTG)
 
         Raises
         -------

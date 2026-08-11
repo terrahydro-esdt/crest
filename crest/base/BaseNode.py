@@ -40,8 +40,13 @@ COORD_TYPE = dict[str, Collection[int] | int | None]
 IO_TYPE = dict[str, dict[str, COORD_TYPE]]
 
 # Handle all Keras backend types
-GenericSpec = keras.InputSpec | tf.TensorSpec
-GenericTensor = keras.KerasTensor | tf.Tensor | jax.Array | np.ndarray
+try:
+    GenericSpec = keras.InputSpec | tf.TensorSpec
+    GenericTensor = keras.KerasTensor | tf.Tensor | jax.Array | np.ndarray
+except TypeError:
+    # This fallback only affects doc builds, not real type checking.
+    GenericSpec = object
+    GenericTensor = object
 
 class BaseNode(BaseAbstract):
     """BaseNode provides a template for machine learning models to inherit from. 
@@ -79,15 +84,15 @@ class BaseNode(BaseAbstract):
         of the model (prior to post-processing), rather than the inverse 
         transformed version. This can help avoid needing to weight model losses
         differently, when multiple sub-model losses are being used to train a
-        larger hierarchal model. Note this has no effect if no *normalize
-        functions are given. 
+        larger hierarchal model. Note this has no effect if no ``*normalize``
+        functions are given.
         Alternatively, a tuple of callables (in the same format as normalize)
         can be given to use as a different normalization procedure than the 
         feature normalization.
     debug          : bool
         Determines whether y_true and y_pred statistics should be printed on each
         batch inside the loss wrapper (default: False). Note this has no effect
-        if no *normalize functions are given, or transform_loss=False. 
+        if no ``*normalize`` functions are given, or transform_loss=False.
     plot_scatter   : bool
         Determines whether scatter plots should be created in the loss function
         to add to TensorBoard. Setting to True will add target vs predicted 
@@ -137,7 +142,7 @@ class BaseNode(BaseAbstract):
 
         
     @cached_property
-    def node(self) -> 'Node':
+    def node(self) -> 'crest.model.Node.Node':
         from crest.model import Node
         return Node(**{
             'node': _NodeWrap(self, f'{self}-call', self.plot_histogram),
