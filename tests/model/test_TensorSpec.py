@@ -83,6 +83,23 @@ def test_TupleSpecWithName():
     assert keras_spec.dtype == 'int32'
     assert keras_spec.name == 'test'
 
+def test_NoneSpec():
+    """ Note: TensorSpec(None) is the documented way to create an
+    'untyped' node input/output (see examples/HTG_overview.ipynb). 
+    """
+    spec = TensorSpec(None)
+
+    assert spec.shape == (None,)
+    assert spec.dtype == 'float32'
+    assert spec.name == None
+
+def test_ScalarSpec():
+    spec = TensorSpec(5)
+
+    assert spec.shape == (5,)
+    assert spec.dtype == 'float32'
+    assert spec.name == None
+
 #def test_save_load():
 #    spec = TensorSpec({'shape': (1, 2, 3), 'dtype': 'float32', 'name': 'test'})
 #    spec.save('test-tensorspec.json')

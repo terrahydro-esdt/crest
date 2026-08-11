@@ -7,7 +7,7 @@ from tensorflow import keras
 
 
 class TensorSpec:
-    """ Specifies the shape of tensors withing crest """
+    """ Specifies the shape of tensors within crest """
 
     def __init__(self, *specs):
 
@@ -91,12 +91,12 @@ class TensorSpec:
 
     @property
     def shape(self):
-        """ shpae of tensor"""
+        """ shape of tensor"""
         shape = self.spec_dict['shape']
         if hasattr(shape, '__iter__'):
             return shape
         else:
-            return tuple(shape)
+            return tuple([shape])
 
     @property
     def dtype(self):
