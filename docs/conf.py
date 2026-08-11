@@ -88,8 +88,10 @@ autodoc_mock_imports = [
     "shapely",
     "dill",
     "prettytable",
+    "jax",
     "_bruteforce",  # compiled Cython extension (bare name)
     "crest.utils._bruteforce",  # compiled Cython extension (qualified name)
+    "crest.utils.matchup._bruteforce",  # compiled Cython extension (qualified name)
 ]
 
 # -- Options for HTML output -------------------------------------------------
