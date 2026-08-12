@@ -49,7 +49,7 @@ source_suffix = [".rst", ".md", ".nblink"]
 # The master toctree document.
 master_doc = "index"
 
-suppress_warnings = ["autosectionlabel.*", "app.add_directive"]
+suppress_warnings = ["autosectionlabel.*", "app.add_directive", "ref.python", "ref.ref"]
 
 # Allows to build the docs with a minimal environment without warnings about missing packages
 autodoc_mock_imports = [
