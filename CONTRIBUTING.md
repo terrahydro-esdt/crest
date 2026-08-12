@@ -282,8 +282,8 @@ that out rather than writing a description from scratch.
 
 <!-- TODO: Update these URLs when the repository is made public on GitHub (planned August 2026) -->
 - **Documentation**: https://astg.pages.smce.nasa.gov/terrahydro/development/crest/
-- **Issues**: https://github.com/terrahydro/crest/issues
-- **Discussions**: https://github.com/terrahydro/crest/discussions
+- **Issues**: https://github.com/terrahydro-esdt/crest/issues
+- **Discussions**: https://github.com/terrahydro-esdt/crest/discussions
 - **Email**: crest-dev@example.com
 
 ## Recognition

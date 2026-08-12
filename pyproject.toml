@@ -35,8 +35,8 @@ classifiers = [
 [project.urls]
 Homepage = "https://astg.pages.smce.nasa.gov/terrahydro/development/crest/"
 Documentation = "https://astg.pages.smce.nasa.gov/terrahydro/development/crest/"
-Repository = "https://github.com/terrahydro/crest"
-"Bug Tracker" = "https://github.com/terrahydro/crest/issues"
+Repository = "https://github.com/terrahydro-esdt/crest"
+"Bug Tracker" = "https://github.com/terrahydro-esdt/crest/issues"
 
 [project.optional-dependencies]
 dev = [

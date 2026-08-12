@@ -125,8 +125,8 @@ Community and Support
 ---------------------
 
 .. TODO: Confirm all community channels before public release
-- **Issues**: `GitHub Issues <https://github.com/terrahydro/crest/issues>`_
-- **Discussions**: `GitHub Discussions <https://github.com/terrahydro/crest/discussions>`_
+- **Issues**: `GitHub Issues <https://github.com/terrahydro-esdt/crest/issues>`_
+- **Discussions**: `GitHub Discussions <https://github.com/terrahydro-esdt/crest/discussions>`_
 - **Email**: crest-dev@example.com
 
 Citation
@@ -140,7 +140,7 @@ If you use CREST in your research, please cite:
      title   = {CREST: Coupled Reusable Earth System Tensor Framework},
      author  = {Pelissier, Craig and {CREST Development Team}},
      year    = {2024},
-     url     = {https://github.com/terrahydro/crest},
+     url     = {https://github.com/terrahydro-esdt/crest},
      version = {0.1.0}
    }
 
