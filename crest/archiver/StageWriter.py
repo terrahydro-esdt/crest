@@ -4,10 +4,10 @@
 import warnings
 
 warnings.warn(
-    '"crest.archiver.StageWriter" has moved to "crest.data.archiver.StageWriter". '
+    '"crest.archiver.StageWriter" has moved to "crest.data.archiving.StageWriter". '
     'Please update your imports.',
     DeprecationWarning,
     stacklevel=2,
 )
 
-from crest.data.archiver.StageWriter import *
+from crest.data.archiving.StageWriter import *

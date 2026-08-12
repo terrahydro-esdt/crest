@@ -18,9 +18,9 @@ class NonzeroSampler:
         Random generator used as the source of randomness when sampling blocks.
     exit_flag : multiprocessing.synchronize.Event
         Event object that signals the current workflow should exit immediately.
-        
+
     """
-    
+
     def __init__(self, blocks: list, configs: list, random, exit_flag):
         self.random = random
         self.blocks = blocks

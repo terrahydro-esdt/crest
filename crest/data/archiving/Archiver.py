@@ -18,11 +18,11 @@ class Archiver(Writer):
     -----
     This class efficiently handles writing random batches of data by splitting
     the work into two steps: batches are first staged into buckets of parquet
-    files, and then are written to zarr once a sufficient number of batches 
-    have been staged. 
+    files, and then are written to zarr once a sufficient number of batches
+    have been staged.
 
     The staging process is process safe, and so multiple StageWriters can stage
-    (i.e. StageWriter.stage_many_coords and .flush) simultaneously if desired. 
+    (i.e. StageWriter.stage_many_coords and .flush) simultaneously if desired.
     Writing to zarr is not thread or process safe, however, and so the writing
     function (i.e. ZarrWriter.flush) can be called by only one thread/process.
 
@@ -34,8 +34,8 @@ class Archiver(Writer):
     output_path : str | Path | S3Path
         Path that the output zarr should be written to.
     stage_path  : str | Path | None
-        Path that staging files and folders should be written to. If None 
-        (default), a temporary directory is used, which is automatically 
+        Path that staging files and folders should be written to. If None
+        (default), a temporary directory is used, which is automatically
         cleaned up once finished.
     chunksizes  : dict[str, int]
         Chunksizes can be given as a dictionary of coordinate dimensions. If
@@ -52,9 +52,9 @@ class Archiver(Writer):
     **kwargs
         Additional keyword arguments are used during writer initialization. See
         StageWriter and ZarrWriter class docstrings for available options.
-        
+
     """
-    
+
     def __init__(self,
         data_schema : xr.Dataset | xr.DataArray,
         output_path : str | Path | S3Path,
@@ -76,29 +76,31 @@ class Archiver(Writer):
             f'{output_path=} exists and {overwrite=}'
 
         # Get a Dataset object if a DataArray with a features dim was given
-        if isinstance(data_schema, xr.DataArray):
-            if 'features' in data_schema.dims:
-                data_schema = data_schema.to_dataset('features')
-                
+        if (
+            isinstance(data_schema, xr.DataArray)
+            and 'features' in data_schema.dims
+        ):
+            data_schema = data_schema.to_dataset('features')
+
         # Get a DataArray object if a Dataset was given
         if isinstance(data_schema, xr.Dataset):
             # Create a dummy variable if none currently exist
             if len(data_schema):
-                data_schema = data_schema[list(data_schema)[0]]
+                data_schema = data_schema[next(iter(data_schema))]
             else:
                 data_schema = xr.DataArray(0., data_schema.coords)
-        
+
         # Determine chunksizes to use for the output zarr
         if chunksizes or (not data_schema.chunksizes):
             data_schema = data_schema.chunk(chunksizes or 'auto')
-            
+
         self.stage_writer = StageWriter(**({
-            'data_schema' : data_schema, 
+            'data_schema' : data_schema,
             'stage_path'  : stage_path
         } | kwargs))
         self.zarr_writer = ZarrWriter(**({
-            'data_schema' : data_schema, 
-            'output_path' : output_path, 
+            'data_schema' : data_schema,
+            'output_path' : output_path,
             'stage_writer': self.stage_writer,
         } | kwargs))
         self.schema = data_schema
@@ -107,31 +109,31 @@ class Archiver(Writer):
         self.output_path = output_path
         self.stage_path = stage_path
 
-        
+
     def open(self):
         """ Opens the StageWriter and ZarrWriter """
         self.stage_writer.open()
         self.zarr_writer.open()
         self.batch_count = 0
-        
-    
+
+
     def close(self):
         """ First flush any remaining batches for staging, then close """
         self.stage_writer.flush()
         rows = self.zarr_writer.close()
         self.stage_writer.close()
-        
+
         # A sample can be written multiple times (equaling the average over all
         # its writes), so the total may be > actual number of items in the zarr
-        if self.verbose: 
-            log.debug(f'{self.output_path}: Wrote {self.batch_count:,} batches ' +
-                  f'and {rows:,} total samples')
+        if self.verbose:
+            log.debug(f'{self.output_path}: Wrote {self.batch_count:,} ' +
+                      f'batches and {rows:,} total samples')
         self.batch_count = 0
 
-    
-    def archive(self, 
-        coords  : dict[str, np.ndarray], 
-        values  : dict[str, np.ndarray], 
+
+    def archive(self,
+        coords  : dict[str, np.ndarray],
+        values  : dict[str, np.ndarray],
         max_pq  : int = 400,
     ) -> int:
         """ Top-level function for archiving data.
@@ -140,13 +142,13 @@ class Archiver(Writer):
         ----------
         coords : dict[str, np.ndarray]
             Dictionary containing coordinate names as the keys, and coordinate
-            vectors as the values. Note that if multi-dimensional arrays are 
-            given instead of vectors, they will be flattened and treated as 
+            vectors as the values. Note that if multi-dimensional arrays are
+            given instead of vectors, they will be flattened and treated as
             individual samples. All arrays must be the same size.
         values : dict[str, np.ndarray]
-            Dictionary containing feature names as the keys, and feature 
+            Dictionary containing feature names as the keys, and feature
             vectors as the values. Note that if multi-dimensional arrays are
-            given instead of vectors, they will be flattened and treated as 
+            given instead of vectors, they will be flattened and treated as
             individual samples. All arrays must be the same size.
         max_pq : int
             Maximum number of parquet files to pull from each bucket when
@@ -156,7 +158,7 @@ class Archiver(Writer):
         -------
         int
             Total number of items that have been written to the output zarr.
-            
+
         """
         self.stage_writer.stage_many_coords(coords, values)
         self.batch_count += 1
@@ -164,5 +166,5 @@ class Archiver(Writer):
             rows = self.zarr_writer.flush(max_pq)
             if self.verbose:
                 log.info(f'\nWrote {rows:,} samples to {self.output_path} ' +
-                      f'| Total: {self.zarr_writer.total_rows:,}')
+                         f'| Total: {self.zarr_writer.total_rows:,}')
         return self.zarr_writer.total_rows

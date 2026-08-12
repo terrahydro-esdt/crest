@@ -7,28 +7,30 @@ import hashlib
 import copy
 
 
-def _get_dict_hash(d, hash_name='sha256'):
-    """ Get a pseudo-unique identifier for a set of key:values contained in a dict """
-    assert(hasattr(hashlib, hash_name)), f'Unrecognized hashing function: "{hash_name}"'
+def _get_dict_hash(d: dict, hash_name: str = 'sha256') -> str:
+    """ Get a pseudo-unique identifier for a set of key:values in a dict """
+    assert(hasattr(hashlib, hash_name)),\
+        f'Unrecognized hashing function: "{hash_name}"'
     keyval_string = ','.join([f'{k}:{d[k]}' for k in sorted(d.keys())])
-    return getattr(hashlib, hash_name)(keyval_string.encode('utf-8')).hexdigest()
+    hashlib_func = getattr(hashlib, hash_name)
+    return hashlib_func(keyval_string.encode('utf-8')).hexdigest()
 
 
 class _SharedValue:
     """ Makes a value shared between processes behave like a normal scalar """
     context = mp.get_context('spawn')
-    
+
     def __init__(self, ctype):
         self.ctype = ctype
-        
+
     def __set_name__(self, owner, name):
         self._name = f'_{name}'
 
     def __set__(self, instance, value):
         self.safe_get(instance).value = value
-    
+
     def __get__(self, instance, owner):
-        if instance is None: 
+        if instance is None:
             return self
         return self.safe_get(instance).value
 
@@ -37,49 +39,49 @@ class _SharedValue:
             setattr(instance, self._name, self.context.Value(self.ctype))
         return getattr(instance, self._name)
 
-        
+
 class BlockConfig(dict):
     """Defines configuration parameters for computing samples from a Block.
 
     Notes
     -----
     This class contains numeric attributes shared by all worker processes. When
-    a worker is ready to compute a new block, it looks at the list of 
+    a worker is ready to compute a new block, it looks at the list of
     BlockConfig objects to determine which configuration to use when computing
-    that block; i.e. it checks which configuration is most needed to create 
+    that block; i.e. it checks which configuration is most needed to create
     batches (due to a lack of samples currently available from that config).
-    
+
     To determine that, we can check three values that track the current status
     with respect to each configuration:
 
     1. how many samples are queued and waiting to be used (n_queued)
     2. how many workers are computing a block (n_worker)
     3. how many samples can be expected from a block (avg_size)
-    
+
     From these, we can calculate the currently expected number of samples for
-    each configuration (n_queued + n_worker * avg_size) and pick the 
-    BlockConfig that has the smallest value. In this way, a worker will use the 
-    configuration that is most likely to generate samples that will allow more 
+    each configuration (n_queued + n_worker * avg_size) and pick the
+    BlockConfig that has the smallest value. In this way, a worker will use the
+    configuration that is most likely to generate samples that will allow more
     batches to be created (via generation of the most needed samples).
 
     Parameters
     ----------
     **config
         Dictionary containing the configuration to use when computing samples
-        from a block. Possible keys are {valid_pct, dropped}; see 
-        crest.data.loading.Block.find_matches for further details. 
+        from a block. Possible keys are {valid_pct, dropped}; see
+        crest.data.loading.Block.find_matches for further details.
 
     """
 
     # Total number of blocks overall
     total_blocks = _SharedValue(c_int)
-    
+
     # Maximum number of batches produced from a single block
-    max_nbatches = _SharedValue(c_int) 
-    
+    max_nbatches = _SharedValue(c_int)
+
     # Number of blocks this config has been used to compute
     n_blocks = _SharedValue(c_int)
-    
+
     # Number of workers currently computing blocks with this config
     n_worker = _SharedValue(c_int)
 
@@ -90,11 +92,11 @@ class BlockConfig(dict):
     avg_size = _SharedValue(c_int)
 
 
-    
-    def __init__(self, 
-        numblocks, 
-        config_index : int = -1, 
-        sampling_edges = None, 
+
+    def __init__(self,
+        numblocks,
+        config_index : int = -1,
+        sampling_edges = None,
         random = None,
         logger = None,
         **config,
@@ -107,7 +109,7 @@ class BlockConfig(dict):
         self._cuid = _get_dict_hash(config)[:10]
         self.random = random or np.random.default_rng()
         self.logger = logger
-        
+
         self.config_index = config_index
         self.total_blocks = 0
         self.max_nbatches = 1
@@ -119,7 +121,7 @@ class BlockConfig(dict):
         # Data bins to uniformly sample; also track count of times used per bin
         self.sampling_edges = edges = sampling_edges or [None]
         self.sampling_count = ctx.Array(c_int, len(edges))
-        
+
         # Keep track of blocks that produced 0 batches for this config, per bin
         n_blk = self.n_init_blocks = int(np.prod(np.atleast_1d(numblocks)))
         n_bin = self.n_sample_bins = len(edges)
@@ -129,13 +131,13 @@ class BlockConfig(dict):
         # Track whether block stats have been pre-computed yet
         self.processed_blocks = ctx.Array(c_bool, n_blk)
         self.repeated_empty = dd(int)
-        
+
 
     def __enter__(self):
         """ Allow atomic get/set operations via BlockConfig context manager """
         self._lock.__enter__()
 
-    
+
     def __exit__(self, *args, **kwargs):
         """ Release resources upon exit of the context manager """
         self._lock.__exit__(*args, **kwargs)
@@ -157,9 +159,9 @@ class BlockConfig(dict):
     def __hash__(self) -> int:
         """ Allow BlockConfig to be used as a dictionary key """
         # Note that bin_index does not contribute to the hash, as BatchCombiner
-        # determines what unique configurations need to be included in each 
+        # determines what unique configurations need to be included in each
         # batch via this hash. If bin_index were included, every bin would need
-        # to be included in every batch. 
+        # to be included in every batch.
         return self._hash
 
 
@@ -167,14 +169,14 @@ class BlockConfig(dict):
         """ Number of batches currently queued for this configuration """
         return self.n_queued
 
-    
-    def __lt__(self, other_config: 'BlockConfig') -> bool:
+
+    def __lt__(self, other_config: BlockConfig) -> bool:
         """ Allow min and sorted to be used on a list of BlockConfigs """
-        # `w` controls the tradeoff between valuing the estimated number of 
-        # future batches against the actual number of current batches in the 
+        # `w` controls the tradeoff between valuing the estimated number of
+        # future batches against the actual number of current batches in the
         # queue. As the estimate of future batches improves, the optimal value
         # of `w` approaches 0
-        value = lambda c, w=1: c.n_expected + w*c.n_queued 
+        value = lambda c, w=1: c.n_expected + w*c.n_queued
         return value(self) < value(other_config)
 
 
@@ -183,49 +185,49 @@ class BlockConfig(dict):
         mask = {'mask_features': self.sampling_edges[self.bin_index]}
         return dict(self) | mask | other
 
-        
+
     def __ror__(self, other) -> dict:
         """ Add sampling bins via `dict | BlockConfig` """
         mask = {'mask_features': self.sampling_edges[self.bin_index]}
         return other | dict(self) | mask
 
-               
+
     def set_n_blocks(self, total_blocks: int) -> None:
         """ Validate and set the actual number of blocks generated """
         if total_blocks > self.n_init_blocks:
-            raise Exception( 'Generated more blocks than expected: '+
+            raise ValueError( 'Generated more blocks than expected: '+
                             f'{total_blocks=} vs {self.n_init_blocks=}' )
         with self:
             if self.total_blocks not in [0, total_blocks]:
-                raise Exception( 'Processes have differing block counts: '+
+                raise ValueError( 'Processes have differing block counts: '+
                                 f'{total_blocks=} vs {self.total_blocks=}' )
             if self.total_blocks == 0:
                 self.total_blocks = total_blocks
 
 
-    def select_bin(self, beta=1, gamma=1, eps=1e-6) -> 'BlockConfig':
+    def select_bin(self, beta=1, gamma=1, eps=1e-6) -> BlockConfig:
         """ Create a shallow copy of current config with its own chosen bin """
         config = copy.copy(self)
         option = np.arange(config.n_sample_bins)
         if len(option) == 1:
             config._bin_index = 0
             return config
-        
+
         with config:
             n_blks = config.total_blocks
             empty  = np.array(config.bin_is_empty)
             if empty.all():
-                raise Exception(f'All bins are empty for {config=}')
-            
+                raise ValueError(f'All bins are empty for {config=}')
+
             counts = np.array(config.sampling_count)
             ratios = counts / self.max_nbatches
             target = sum(ratios) / (len(ratios) - sum(empty))
-            
+
             bin_freq = np.array([sum(e[:n_blks]) for e in config.empty_blocks])
             bin_prob = 1 - bin_freq / n_blks
             deficits = target - ratios
             deficits[empty] = 0
-            
+
             # Because blocks may not produce samples for every bin, bins have
             # unequal likelihood of being used under a true uniform sampling
             # over blocks and bins. To correct this bias, the likelihood of
@@ -240,11 +242,11 @@ class BlockConfig(dict):
             # Normalize so probabilities sum to 1, then select a bin to use
             prob = prob / prob.sum()
             self.logger.debug(f'Bin selection: {counts=} {prob=} {bin_freq=}')
-            
+
             if not np.isfinite(prob).all():
                 message = f'{counts=} {bin_freq=} {bin_prob=} {deficits=}'
                 print(f'\n\n{message} {empty=} {target=}\n\n')
-                raise Exception(f'{self=}: {prob=}; Non-finite probabilities')
+                raise ValueError(f'{self=}: {prob=}; Non-finite probabilities')
             config._bin_index = config.random.choice(option, p=prob)
         return config
 
@@ -256,9 +258,9 @@ class BlockConfig(dict):
             return self._bin_index
         if len(self.sampling_edges) <= 1:
             return -1
-        raise Exception(f'Must call BlockConfig.select_bin first: {self=}')
-        
-        
+        raise ValueError(f'Must call BlockConfig.select_bin first: {self=}')
+
+
     @property
     def valid_blocks(self) -> np.ndarray:
         """ Return read-only array containing only the indices being used """
@@ -272,12 +274,12 @@ class BlockConfig(dict):
         indices = np.where(self.valid_blocks)[0]
         if len(indices) > 0:
             return indices
-        # raise Exception(f'{self} cannot generate batches from any blocks')
+        # raise ValueError(f'{self} cannot generate batches from any blocks')
         self.repeated_empty[self.bin_index] += 1
         if self.repeated_empty[self.bin_index] > 5:
-            raise Exception(f'{self} cannot generate batches from any blocks')
+            raise ValueError(f'{self} cannot generate batches from any blocks')
         return [-1]
-        
+
 
     @property
     def n_expected(self) -> int:
@@ -288,18 +290,18 @@ class BlockConfig(dict):
         return self.n_queued + self.n_worker * self.avg_size
 
 
-    def add_worker(self) -> 'BlockConfig':
+    def add_worker(self) -> BlockConfig:
         """ Increment number of workers currently working on this config """
-        with self: 
+        with self:
             self.n_worker += 1
             if len(self.sampling_edges) > 1:
-                # print(f'Adding worker to {self.bin_index=} ({list(self.sampling_count)})')
-                self.logger.info(f'Adding worker to {self.bin_index=} ({list(self.sampling_count)})')
+                self.logger.info(f'Adding worker to {self.bin_index=}' +
+                                 f' ({list(self.sampling_count)})')
                 self.sampling_count[self.bin_index] += 1 #self.max_nbatches
         return self
 
 
-    def add_batches(self, block_idxs, n_batches: int) -> 'BlockConfig':
+    def add_batches(self, block_idxs, n_batches: int) -> BlockConfig:
         """ Update counters when new batches are created from a block """
         with self:
             # Block(s) generated no batches with current config
@@ -309,30 +311,32 @@ class BlockConfig(dict):
 
                 # Use a special indicator to specify no *samples* created
                 if n_batches == -1:
-                    
+
                     # Mark block(s) as empty
                     for i in block_idxs:
                         self.empty_blocks[self.bin_index][i] = True
-    
+
                     # Mark if all blocks are empty for this config
                     if sum(self.valid_blocks) == 0:
                         self.bin_is_empty[self.bin_index] = True
-                                        
+
                 n_batches = 0
 
             # Update maximum number of batches from a block (for bin sampling)
             elif self.max_nbatches < n_batches:
                 self.max_nbatches = n_batches
-            
+
             # Adjust the current bin's counter by the actual batches created
             if len(self.sampling_edges) > 1:
-                self.logger.info(f'Removing worker from {self.bin_index=} ({list(self.sampling_count)})')
+                self.logger.info(f'Removing worker from {self.bin_index=} ' +
+                                 f'({list(self.sampling_count)})')
                 self.sampling_count[self.bin_index] += n_batches-1
-                self.sampling_count[:] = self.sampling_count[:] - np.min(self.sampling_count)
+                self.sampling_count[:] = (
+                    self.sampling_count[:] - np.min(self.sampling_count))
 
             # Update tracking values
-            self.avg_size = max(1, 
-                (self.avg_size * self.n_blocks + max(0, n_batches)) // 
+            self.avg_size = max(1,
+                (self.avg_size * self.n_blocks + max(0, n_batches)) //
                 (self.n_blocks + 1)
             )
             self.n_queued += max(0, n_batches)
@@ -357,7 +361,7 @@ class BlockConfig(dict):
 
         if len(self.sampling_edges) > 1:
             blockset = blockset.compute()
-            blockset = getattr(blockset, '__self__', blockset)      
+            blockset = getattr(blockset, '__self__', blockset)
             features = dd(list)
             for feature_edges in self.sampling_edges:
                 for f, edge in feature_edges.items():
@@ -369,7 +373,7 @@ class BlockConfig(dict):
             for feature, edges in features.items():
                 name = feature.split('@')[0]
                 left = [e[0] for e in edges] + [edges[-1][-1]]
-                bins = sorted(list(set(left)))
+                bins = sorted(set(left))
                 data = exclude.get_feature(feature)
                 data = data.compute()[name].data
 
@@ -377,12 +381,13 @@ class BlockConfig(dict):
                 else:                    data = np.array(data)
                 data = data.ravel()
                 data = data[np.isfinite(data)]
-                
-                # count = data.groupby_bins(feature, bins, include_lowest=True).count()
+
+                # count = data.groupby_bins(feature, bins,
+                #                           include_lowest=True).count()
                 # valid = (count[feature].fillna(0) > 0).to_numpy()
                 count,_ = np.histogram(data, bins)
                 valid = count > 0
-                
+
                 # Insert flag for each bin into its respective tracker location
                 for v, edge in zip(valid, bins):
                     if not v:
@@ -393,16 +398,20 @@ class BlockConfig(dict):
                                 self.empty_blocks[i][index] = True
                                 removed.add(i)
             if removed:
-                blockset.logger.debug(f'{self.config_index=} block={index} empty bins: {sorted(list(removed))}')
-                        
+                blockset.logger.debug(f'{self.config_index=} block={index} '+
+                                      f'empty bins: {sorted(removed)}')
+
             # Update overall empty state
             removed = []
             for i, empty in enumerate(self.empty_blocks):
-                if not self.bin_is_empty[i]:
-                    if np.logical_not(empty[:self.total_blocks]).sum() == 0:
-                        self.bin_is_empty[i] = True
-                        removed.append(i)
+                if (
+                    not self.bin_is_empty[i] and
+                    np.logical_not(empty[:self.total_blocks]).sum() == 0
+                ):
+                    self.bin_is_empty[i] = True
+                    removed.append(i)
             if removed:
-                blockset.logger.info(f'{self.config_index=} bins empty for all blocks: {removed}')
-                    
+                blockset.logger.info(f'{self.config_index=} bins empty for ' +
+                                     f'all blocks: {removed}')
+
         self.processed_blocks[index] = True

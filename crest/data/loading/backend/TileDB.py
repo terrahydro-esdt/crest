@@ -24,9 +24,13 @@ import sys
 _TILEDB_LOCKS = defaultdict(threading.Lock)
 
 
-def _load_sparse_block(uri: str, data: tdb.Array, block_info: dict) -> sparse.COO:
-    """Retrieve a block of sparse data from the TileDB dataset. 
-    
+def _load_sparse_block(
+    uri        : str,
+    data       : tdb.Array,
+    block_info : dict,
+) -> sparse.COO:
+    """Retrieve a block of sparse data from the TileDB dataset.
+
     Parameters
     ----------
     uri : str
@@ -39,10 +43,10 @@ def _load_sparse_block(uri: str, data: tdb.Array, block_info: dict) -> sparse.CO
     Returns
     -------
     sparse.COO
-        COO array object containing data for the requested block.    
-    
+        COO array object containing data for the requested block.
+
     """
-    
+
     assert(None in block_info), block_info
     index = block_info[None]['array-location']
     shape = block_info[None]['chunk-shape']
@@ -66,10 +70,10 @@ def _load_sparse_block(uri: str, data: tdb.Array, block_info: dict) -> sparse.CO
                 raise
             time.sleep(0.1)
 
-    # Sparse arrays require coordinates to be zero-based 
+    # Sparse arrays require coordinates to be zero-based
     coord = [array[dim]-idx[0] for dim,idx in zip(names, index)]
     dtype = array['data'].dtype
-    fillv = np.asarray(np.nan if np.issubdtype(dtype, np.floating) 
+    fillv = np.asarray(np.nan if np.issubdtype(dtype, np.floating)
                        else (-1 if np.issubdtype(dtype, np.number)
                        else ''))
     return sparse.COO(coord, array['data'], shape, fill_value=fillv)
@@ -77,37 +81,37 @@ def _load_sparse_block(uri: str, data: tdb.Array, block_info: dict) -> sparse.CO
 
 def tiledb_to_xarray(path: Path | str, **kwargs) -> xr.Dataset:
     """Load a TileDB dataset and convert into an xarray Dataset.
-    
+
     Parameters
     ----------
     path : Path | str
-        Path to the TileDB location (i.e. the group URI). 
+        Path to the TileDB location (i.e. the group URI).
     **kwargs
-        Any configuration parameters that are used by `tiledb.Config` 
-        (e.g. sm.io_concurrency_level). Used when opening the Array objects 
+        Any configuration parameters that are used by `tiledb.Config`
+        (e.g. sm.io_concurrency_level). Used when opening the Array objects
         contained within the TileDB group.
 
     Returns
     -------
     xr.Dataset
         A lazy xarray Dataset containing the data in the TileDB dataset.
-    
+
     """
-    
+
     # Calculate the chunk size for every block across all dimensions
     _sizes = lambda d: (d.tile,)*int(d.size//d.tile)+(int(d.size%d.tile),)
     chunks = lambda d: tuple( filter(lambda size: size > 0, _sizes(d)) )
 
     # Allow tiledb only one thread to prevent interference with dask threading
     config = tdb.Config({
-        'sm.compute_concurrency_level' : 1, 
+        'sm.compute_concurrency_level' : 1,
         'sm.io_concurrency_level'      : 1,
         # 'py.init_buffer_bytes'         : 25 * 1024**3,
         # 'sm.memory_budget'             : 25 * 1024**3,
         # 'filestore.buffer_size'        : 25 * 1024**3,
         # # 'sm.partial_tile_offsets_loading' : True,
         # # 'sm.skip_checksum_validation'  : True,
-        # # 'py.use_arrow'                 : False, 
+        # # 'py.use_arrow'                 : False,
         # # 'py.deduplicate'               : 'false',
         # 'sm.enumerations_max_size'     : 25 * 1024**3,
         # 'sm.enumerations_max_total_size' : 30 * 1024**3,
@@ -121,15 +125,15 @@ def tiledb_to_xarray(path: Path | str, **kwargs) -> xr.Dataset:
     coords = {}
     arrays = {}
     xattrs = {}
-    
+
     # Iterate over all Array objects within the TileDB group at the given path
     with tdb.Group(str(path)) as items:
         for item in items:
-            data = tdb.open(item.uri, config=config) 
+            data = tdb.open(item.uri, config=config)
             dims = [d.name for d in data.domain]
             name = item.name
             xattrs[name] = data.meta.get('xarray.attrs', {})
-            
+
             # Coordinates have a single dimension with the same name
             if (len(dims) == 1) and (dims[0] == name):
                 coords[name] = data[:]['data']
@@ -137,7 +141,7 @@ def tiledb_to_xarray(path: Path | str, **kwargs) -> xr.Dataset:
                 # Datetimes stored as int64 due to a tiledb conversion bug
                 if name == 'datetime':
                     coords[name] = coords[name].astype('datetime64[ns]')
-            
+
             # All other group items are feature arrays
             else:
                 # Get exact chunks if they are stored in the metadata
@@ -146,23 +150,23 @@ def tiledb_to_xarray(path: Path | str, **kwargs) -> xr.Dataset:
                 fillv = np.asarray(np.nan if np.issubdtype(dtype, np.floating)
                                    else (-1 if np.issubdtype(dtype, np.number)
                                    else ''))
-                
+
                 arrays[name] = (dims, da.map_blocks(**{
                     'chunks' : tuple(chunk),#map(chunks, data.domain)),
                     'func'   : partial(_load_sparse_block, item.uri, data),
                     'meta'   : sparse.COO(
-                        [np.empty((0,), dtype=int)] * len(dims), 
-                         np.empty((0,), dtype=dtype), 
+                        [np.empty((0,), dtype=int)] * len(dims),
+                         np.empty((0,), dtype=dtype),
                         shape=(0,) * len(dims), fill_value=fillv),
                 }))
-        
+
         dataset = xr.Dataset(arrays, coords=coords)
         dataset.attrs = json.loads(items.meta.get('xarray.attrs', '{}'))
         for key, attrs in xattrs.items():
             if attrs:
                 dataset[key].attrs = json.loads(attrs)
     return dataset
-    
+
 
 class TileDB(BaseBackend):
     """ Backend class to handle reading and writing to TileDB storage """
@@ -184,24 +188,24 @@ class TileDB(BaseBackend):
         #     # shutil.rmtree(temp.as_posix())
 
         cfg = tdb.Config({
-            # 'sm.check_global_order': 'false', 
-            #'sm.check_coord_dups': 'false', 
-            #'sm.dedup_coords': 'false', 
-            #'sm.check_coord_oob': 'false', 
-            
+            # 'sm.check_global_order': 'false',
+            #'sm.check_coord_dups': 'false',
+            #'sm.dedup_coords': 'false',
+            #'sm.check_coord_oob': 'false',
+
             # 20GB / 2GB
-            'sm.memory_budget': 2*10737418240,  
+            'sm.memory_budget': 2*10737418240,
             "sm.memory_budget_var": 2*10737418240,
-            "filestore.buffer_size": str(20*104857600), 
+            "filestore.buffer_size": str(20*104857600),
         })
 
         # Note: if tiledb is segfaulting when trying to create or write
-        #  arrays, it may be due to an import (e.g. tensorflow). Make 
+        #  arrays, it may be due to an import (e.g. tensorflow). Make
         #  sure tiledb is imported first, before other libraries.
         tdb.group_create(dest.as_posix())
         with tdb.Group(dest.as_posix(), mode='w') as group:
             group.meta['xarray.attrs'] = json_safe(data.attrs, True)
-            
+
             # Add coordinates
             dims = {}
             for dim in data.dims:
@@ -211,15 +215,15 @@ class TileDB(BaseBackend):
 
                 chunksize = max(data.chunks[dim])
                 dimension = dims[dim] = tdb.Dim(**{
-                    'name'   : dim, 
-                    'domain' : (0, val.size-1), 
-                    'tile'   : chunksize, 
+                    'name'   : dim,
+                    'domain' : (0, val.size-1),
+                    'tile'   : chunksize,
                     'dtype'  : np.int64,
                 })
-                
+
                 domain = tdb.Domain(dimension)
                 schema = tdb.ArraySchema(**{
-                    'domain' : domain, 
+                    'domain' : domain,
                     'attrs'  : [tdb.Attr(name='data', dtype=val.dtype)],
                     'sparse' : False,
                 })
@@ -237,13 +241,13 @@ class TileDB(BaseBackend):
             handles = []
             from tqdm import tqdm
             for feature in tqdm(data, file=stream):
-                if feature == 'valid_mask': 
+                if feature == 'valid_mask':
                     continue
 
                 values = data[feature]
                 domain = tdb.Domain(*[dims[d] for d in values.dims])
                 schema = tdb.ArraySchema(**{
-                    'domain' : domain, 
+                    'domain' : domain,
                     'attrs'  : [tdb.Attr(name='data', dtype=values.dtype)],
                     'sparse' : True,
                 })
@@ -257,7 +261,7 @@ class TileDB(BaseBackend):
                 group.add(str(feature), str(feature), relative=True)
 
                 # Summary shouldn't be cached per block (i.e. per stat)
-                if feature == 'summary': 
+                if feature == 'summary':
                     continue
 
                 @dask.delayed
@@ -276,7 +280,9 @@ class TileDB(BaseBackend):
                 handle = tdb.open(path, mode='w', config=cfg)
                 handles.append(handle)
                 for blk_idx in product(*map(range, blocks.shape)):
-                    jobs.append(_write_block(handle, blk_idx, blocks[blk_idx], chunks))
+                    jobs.append(
+                        _write_block(handle, blk_idx, blocks[blk_idx], chunks)
+                    )
 
         # Caching separately enables using the newly cached data for summary
         # generation (which would be faster). Not yet implemented since times
@@ -293,15 +299,15 @@ class TileDB(BaseBackend):
             handle = tdb.open(path, mode='w')
             handles.append(handle)
             jobs.append(_write_summary(handle, data['summary'].data))
-            
+
         with ProgressBar(out=stream):
             dask.compute(*jobs)
         dask.compute(*[h.close() for h in map(dask.delayed, handles)])
-            
+
         # Run a metadata consolidation now that all data has been cached
         for mode in ['array_meta', 'fragment_meta']:
             config = tdb.Config({"sm.consolidation.mode": mode})
-            
+
             for feature in data:
                 path = dest.joinpath(feature)
                 if path.exists():

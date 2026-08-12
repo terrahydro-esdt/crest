@@ -1,9 +1,9 @@
+from __future__ import annotations
+
 from collections.abc import Collection, Sequence
 from functools import cached_property
-from typing import Union
 
-import xarray as xr
-import numpy as np 
+import numpy as np
 
 from crest.base import BaseSet
 from crest.utils import partial_product
@@ -20,46 +20,46 @@ class SampleSet(BaseSet):
     This is done in order to allow creating the product of data windows at
     the last minute - as the memory footprint of several lists is much smaller
     than the cartesian product of those lists.
-    
+
     The raw data windows used to initialize this object can be understood as::
 
-        [ 
+        [
           [Datafile_1 window_1, Datafile_1 window_2, ...], # Datafile_1 windows
           [Datafile_2 window_1, Datafile_2 window_2, ...], # Datafile_2 windows
           ...
         ]
 
     where a Datafile window is the window of data extracted from a given
-    Datafile, using the given window_depth definitions (e.g. 3 x 3 x 2 
+    Datafile, using the given window_depth definitions (e.g. 3 x 3 x 2
     window [latitude x longitude x time]).
 
-    In other words, the passed in `windows` parameter is a collection of 
-    Datafile window collections, where there is exactly one collection of 
-    windows per Datafile (i.e. len(windows) == len(Dataset)). The number 
-    of windows inside each Datafile window collection depends on the number 
+    In other words, the passed in `windows` parameter is a collection of
+    Datafile window collections, where there is exactly one collection of
+    windows per Datafile (i.e. len(windows) == len(Dataset)). The number
+    of windows inside each Datafile window collection depends on the number
     of valid windows found during the search procedure.
 
     This class shouldn't be used externally, and only exists to interface
-    properly with dask and allow a lazy cartesian product of data windows. 
+    properly with dask and allow a lazy cartesian product of data windows.
 
     Parameters
     ----------
     windows   : Sequence[Collection[xr.Dataset]]
-        The collection of data window collections, where 
+        The collection of data window collections, where
         len(windows) == len(Dataset).
-    singleton : bool 
-        Determines whether SampleSet.values will return the expanded list 
+    singleton : bool
+        Determines whether SampleSet.values will return the expanded list
         of Samples, or itself. Dask does not expand values if there is only
         a single partition, and so when that is the case we need to force the
-        expansion of Samples during the .values call. This ensures that when 
+        expansion of Samples during the .values call. This ensures that when
         compute is called on the final array, it will result in an array of
         Samples rather than a single SampleSet object.
 
     """
-    
-    def __init__(self, 
+
+    def __init__(self,
         windows   : Sequence[Collection],
-        n_samples : int, 
+        n_samples : int,
         make_objs : bool = True,
         singleton : bool = False,
         ele_dtype = object,
@@ -84,7 +84,7 @@ class SampleSet(BaseSet):
     def shape(self):
         """ Required to trigger dask appropriately """
         return (len(self),)
-    
+
 
     @cached_property
     def sizes(self):
@@ -92,7 +92,7 @@ class SampleSet(BaseSet):
         return [np.prod(list(map(len, w))) for w in self.container]
 
 
-    def __array__(self, *args, **kwargs): 
+    def __array__(self, *args, **kwargs):
         """ Dask attempts to pass the SampleSet into a numpy array """
         return self[:]
 
@@ -101,28 +101,28 @@ class SampleSet(BaseSet):
         """ Length of the cartesian product """
         return self.n_samples
 
-    
-    def __getitem__(self, idx) -> Union[Sample, np.ndarray]:#[Sample]:
+
+    def __getitem__(self, idx) -> Sample | np.ndarray:
         """Performs the lazy cartesian product over data windows.
-        
+
         Notes
         -----
         Any slicing convention can be used to retrieve Samples from this class;
         e.g. SampleSet[:3], SampleSet[1:5:2], SampleSet[slice(4, -2)], etc.
 
         The core of this method performs a partial cartesian product over the
-        container windows, where only the requested data windows are actually 
+        container windows, where only the requested data windows are actually
         generated. This allows constant-time lookups on the full Sample array,
-        regardless of the location to be retrieved. 
+        regardless of the location to be retrieved.
 
         """
         # We only retrieve on the first dimension, which is the list of Samples
         index = idx[0] if hasattr(idx, '__getitem__') else idx
         multi = hasattr(index, 'start')
-        
+
         # If we're not retrieving multiple samples, wrap the index in a slice
         if not multi: index = slice(index, index+1)
-        
+
         # Calculate the partial cartesian product and wrap each set with Sample
         samples = [Sample(m, self.ele_dtype) for m in self._matches(index)]
 
@@ -138,7 +138,7 @@ class SampleSet(BaseSet):
 
     def _matches(self, idx):
         """ Extract matches from the nested container """
-        start, stop, step = idx.start, idx.stop, idx.step 
+        start, stop, step = idx.start, idx.stop, idx.step
         start = start or 0
         stop  = stop  or len(self)
 

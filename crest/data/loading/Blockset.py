@@ -1,17 +1,16 @@
 from __future__ import annotations
-from collections.abc import Collection, Sequence
+
+from collections.abc import Collection, Sequence, Callable
 from numpy.random import Generator
 from functools import cached_property, partial
-from typing import Union
-from typing import Callable
 
-import dask.array as da 
+import dask.array as da
 import xarray as xr
-import numpy as np 
+import numpy as np
 import logging
 import numbers
-import time 
-import dask 
+import time
+import dask
 
 from crest.base import BaseSet
 from crest.utils import find_neighbors, Stopwatch
@@ -29,9 +28,9 @@ class Blockset(BaseSet):
     Parameters
     ----------
     blocks : Collection[Block]
-        The set of Blocks which form this Blockset. Because this inherits from 
-        BaseSet, functions existing in the Block class can be called by this 
-        Blockset object in order to apply the function across all Blocks in 
+        The set of Blocks which form this Blockset. Because this inherits from
+        BaseSet, functions existing in the Block class can be called by this
+        Blockset object in order to apply the function across all Blocks in
         this set. See crest.base.BaseSet for more details.
     logger : logging.Logger | None
         Logger object to use when logging.
@@ -42,26 +41,29 @@ class Blockset(BaseSet):
 
     """
     def __init__(self,
-        blocks  : Union[Collection[Block] | Collection[Callable]],
-        logger  : Union[logging.Logger, None] = None,
+        blocks  : Collection[Block] | Collection[Callable],
+        logger  : logging.Logger | None = None,
         timing  : bool = True,
         shuffle : bool = False,
         copied  : bool = False,
     ):
-        self.container = [getattr(b, '__call__', lambda: b)() for b in blocks]
+        _call = lambda v: v() if callable(v) else v
+        self.container = list(map(_call, blocks))
         self.logger  = logger or logging.getLogger('Blockset')
         self.timing  = timing and (logger is not None)
         self.shuffle = shuffle
-        self.dropped = [] 
+        self.dropped = []
         self.dropped_features = []
-        self.dtype = np.dtype([(f'Data_{i}', b.dtype) for i,b in enumerate(self)])
+        self.dtype = np.dtype(
+            [(f'Data_{i}', b.dtype) for i,b in enumerate(self)]
+        )
 
         # Set block count for all blocks
         if not copied:
             for i, block in enumerate(self.container):
                 setattr(block, 'block_count', len(self.container))
                 setattr(block, 'block_index', i)
-                if self.timing: 
+                if self.timing:
                     setattr(block, 'logger', self.logger)
 
 
@@ -75,11 +77,11 @@ class Blockset(BaseSet):
         return lambda label, logger=self.logger.debug, **kwargs: Stopwatch(**({
             'message' : f'\t\t{self}.{label}',
             'logger'  : logger, # Don't log when time < 0.05 seconds
-            # 'silent'  : {'time': 0.05} if self.timing else True, 
+            # 'silent'  : {'time': 0.05} if self.timing else True,
         } | kwargs))
 
-    
-    def summaries(self, 
+
+    def summaries(self,
         features       : list | None = None,
         valid_percents : dict | None = None,
         drop_datafiles : list | None = None,
@@ -100,17 +102,17 @@ class Blockset(BaseSet):
             One item of the Batcher.valid_percents list, representing a mapping
             of {Block name: {coordinate: valid percent}}. See the docstring of
             Batcher for further discussion.
-        drop_datafiles : list[str] | None 
+        drop_datafiles : list[str] | None
             One item of the Batcher.drop_datafiles list, representing a list
-            of the names or indices of Blocks which should be excluded when 
-            calculating the summaries for this Blockset. See the docstring 
-            of Batcher for further discussion.        
+            of the names or indices of Blocks which should be excluded when
+            calculating the summaries for this Blockset. See the docstring
+            of Batcher for further discussion.
         check_valid : bool
             If True (default), the set of blocks remaining (after applying any
             given valid_percents and drop_datafiles) are checked to ensure they
             all contain some non-missing data. If any blocks are invalid (i.e.
-            entirely missing) then no samples can be constructed from the 
-            blockset and so this function will return None. If summaries are 
+            entirely missing) then no samples can be constructed from the
+            blockset and so this function will return None. If summaries are
             desired regardless, pass `check_valid=False` to skip this check.
 
         Returns
@@ -121,43 +123,46 @@ class Blockset(BaseSet):
             with the coordinates ['features', 'statistics'] is returned;
             otherwise, no valid samples can be constructed from this blockset
             and so None is returned.
-            
+
         """
+        if features is None:
+            features = []
+
         # Create a new Blockset object which excludes the specified Blocks
         drop = drop_datafiles or []
-        drop+= [i for i,b in enumerate(self) if not b.feature_subset(features or [])]
-        self = self._exclude(drop or [], features)
-        
+        drop+= [i for i,b in enumerate(self) if not b.feature_subset(features)]
+        excl = self._exclude(drop or [], features)
+
         # Set new valid percent configurations
         for key, vp in (valid_percents or {}).items():
-            for block in self._partition([key])[0]:
+            for block in excl._partition([key])[0]:
                 block.set_valid_percents(vp)
 
         # If checking validity, return None if any blocks are entirely missing
-        if not check_valid or self.is_valid(fast=True):
-            summary = self.summary(features).map_blocks(xr.DataArray.as_numpy)
+        if not check_valid or excl.is_valid(fast=True):
+            summary = excl.summary(features).map_blocks(xr.DataArray.as_numpy)
             summary = xr.concat(summary, dim='features', join='outer')
             return summary.drop_duplicates('features', keep='last')
-        
-            # indices = xr.Variable('block_index', range(len(self.container)))
-            # summary = xr.concat(self.summary(features), indices)
+
+            # indices = xr.Variable('block_index', range(len(excl.container)))
+            # summary = xr.concat(excl.summary(features), indices)
             # return summary.drop_duplicates('features', keep='last')
 
-    
+
     def get_feature(self, feature: str) -> xr.Dataset:
         """ Get an xarray dataset containing the requested feature """
-        subsets = self.feature_subset(feature)                           
+        subsets = self.feature_subset(feature)
         assert(sum(map(bool, subsets)) == 1), \
             f'Exactly one block should contain {feature=}: {subsets}'
-        
+
         for contains, block in zip(subsets, self):
             if contains:
                 return block.dataset[[feature.split('@')[0]]]
-                
 
-                
-    def find_matches(self, 
-        task_bytes     : Number = 1e9, 
+
+
+    def find_matches(self,
+        task_bytes     : Number = 1e9,
         task_samples   : int  | None = None,
         features       : list | None = None,
         valid_percents : dict | None = None,
@@ -169,53 +174,53 @@ class Blockset(BaseSet):
         method         : str  = 'multi',
     ) -> da.Array:
         """Find all valid samples when matching up Blocks in this Blockset.
-        
+
         Parameters
         ----------
         task_bytes : Number
-            Note this parameter is superceded by the task_samples parameter, 
+            Note this parameter is superceded by the task_samples parameter,
             and so task_bytes will be ignored if task_samples is set. Controls
-            the size, in bytes, of each task (block) contained in the returned 
+            the size, in bytes, of each task (block) contained in the returned
             dask array. In other words, the returned array will have a number
             of lazily computed pieces, each generating a portion of the full
             amount of valid samples; task_bytes controls the number of samples
-            contained in each of these pieces, based on the number of bytes 
-            needed to represent those samples. 
+            contained in each of these pieces, based on the number of bytes
+            needed to represent those samples.
         task_samples : int | None
             The number of samples that should be contained in each task (block)
             of the returned dask array. In other words, the returned array will
-            have a number of lazily computed pieces, each generating a portion 
-            of the full amount of valid samples; task_samples controls the 
+            have a number of lazily computed pieces, each generating a portion
+            of the full amount of valid samples; task_samples controls the
             number of samples contained in each of these pieces.
         features : list[str] | None
             A list of the features that should be used when creating samples.
             If features are known ahead of time and are given, then the output
-            representation is rigid and therefore the process can be much 
+            representation is rigid and therefore the process can be much
             faster. Otherwise, Sample objects are created for each element,
             containing all information and providing a flexible representation.
         valid_percents : dict[str, dict[str, float]] | None
             One item of the Batcher.valid_percents list, representing a mapping
             of {Block name: {coordinate: valid percent}}. See the docstring of
             Batcher for further discussion.
-        drop_datafiles : list[str] | None 
+        drop_datafiles : list[str] | None
             One item of the Batcher.drop_datafiles list, representing a list of
-            the names or indices of Blocks which should be excluded when 
-            calculating the valid samples of this Blockset. See the docstring 
-            of Batcher for further discussion.  
+            the names or indices of Blocks which should be excluded when
+            calculating the valid samples of this Blockset. See the docstring
+            of Batcher for further discussion.
         mask_features : dict[str, (float, float)] | None
-            If given, the features contained in the dict are masked based on 
+            If given, the features contained in the dict are masked based on
             their respective (low, high) values such that only values inside
             the given bucket bounds remain (low <= value < high). Through this,
             a Blockset can be made to generate samples that contain features
-            only in a certain range - thus providing a mechanism to uniformly 
+            only in a certain range - thus providing a mechanism to uniformly
             sample selected partitions of the feature space over multiple calls
             of this function.
-        seed    : int | None 
-            Random seed.     
+        seed    : int | None
+            Random seed.
         rng : Generator | None
             Numpy random generator to use.
         verbose : bool
-            Adjust the logger verbosity level to DEBUG, and log all timing 
+            Adjust the logger verbosity level to DEBUG, and log all timing
             benchmarks (even if Blockset was initialized with timing=False).
         match_method : str
             Method to use when finding matching coordinates between data grids.
@@ -224,7 +229,7 @@ class Blockset(BaseSet):
         Returns
         -------
         dask.Array
-            Returns a lazy dask array containing the valid sample matchups (the 
+            Returns a lazy dask array containing the valid sample matchups (the
             combination of samples from each Block which are near enough to be
             considered neighbors).
 
@@ -234,43 +239,43 @@ class Blockset(BaseSet):
             self.timing = True
 
         # Create a new Blockset object which excludes the specified Blocks
-        self = self._exclude(drop_datafiles or [], features)
-        
+        excl = self._exclude(drop_datafiles or [], features)
+
         # Set new valid percent configurations
         for key, vp in (valid_percents or {}).items():
-            for block in self._partition([key])[0]:
+            for block in excl._partition([key])[0]:
                 block.set_valid_percents(vp)
 
         # Set feature masks
         if len(mask_features or {}):
-            self.logger.info(f'Using {mask_features=}')
-            self.set_feature_masks(mask_features)
-            
+            excl.logger.info(f'Using {mask_features=}')
+            excl.set_feature_masks(mask_features)
+
         # Create meta/dtype information for dask
-        meta = np.empty(0, dtype=self.dtype)
+        meta = np.empty(0, dtype=excl.dtype)
 
         # Benchmark timing for data loading / neighbor finding
-        with self.benchmark('find_matches') as timer:
+        with excl.benchmark('find_matches') as timer:
             timer.message += ' | 100% of time spent loading data'
 
             # Perform a fast check of whether samples could possibly be created
-            if not self.is_valid():
+            if not excl.is_valid():
                 return da.from_array(meta)
             loading_time = time.time() - timer.start['time']
 
-            # Find neighboring points between coordinate grids for the valid window
-            # locations, within the resolution tolerances provided
-            with self.benchmark('find_neighbors'):
+            # Find neighboring points between coordinate grids for the valid
+            # window locations, within the resolution tolerances provided
+            with excl.benchmark('find_neighbors'):
                 matches, counts = find_neighbors(
-                    self.valid_coords, 
-                    self.valid_resolution,
-                    self.is_required,
-                    grid_labels = [str(b) for b in self],
-                    axis_labels = [b.dims for b in self],
+                    excl.valid_coords,
+                    excl.valid_resolution,
+                    excl.is_required,
+                    grid_labels = [str(b) for b in excl],
+                    axis_labels = [b.dims for b in excl],
                     num_samples = task_samples or 0,
                     method  = method,
-                    logger  = self.logger if self.timing else None,
-                    shuffle = self.shuffle,
+                    logger  = excl.logger if excl.timing else None,
+                    shuffle = excl.shuffle,
                     debug   = False,
                     seed    = seed,
                     rng     = rng,
@@ -282,82 +287,83 @@ class Blockset(BaseSet):
 
         # Undo the valid_percents modification(s)
         # if valid_percents is not None:
-        #     self.reset_valid_percents()
+        #     excl.reset_valid_percents()
 
-        # for block in self:
+        # for block in excl:
         #     block.__dict__.pop('valid', None)
 
         # Return if there aren't any matches
         if matches.size < 1: return da.from_array(meta)
 
         task_mb = f'Task={task_bytes/1e6:.0f} MB'
-        with self.benchmark(f'_grouped (shape={matches.shape} | {task_mb})'):
-            matches, divs, lengths = self._grouped(matches, counts, task_bytes, task_samples)
-    
+        with excl.benchmark(f'_grouped (shape={matches.shape} | {task_mb})'):
+            matches, divs, lengths = excl._grouped(  # noqa: RUF059
+                matches, counts, task_bytes, task_samples)
+
         # Create a dask dataframe first, then transform into a dask
         # array (in order to satisfy dask's built in assumptions)
         kwargs = {
-            # 'meta'             : (0, int), 
+            # 'meta'             : (0, int),
             #'token'            : f'product{id(matches)}',
-            # 'divisions'        : [0] + divs.tolist(), 
+            # 'divisions'        : [0] + divs.tolist(),
             # 'enforce_metadata' : False,
-            'features'         : self.feature_subset(features),
+            'features'         : excl.feature_subset(features),
             'make_objs'        : features is None,
             'singleton'        : len(lengths) == 1,
         }
 
         # try:
         #     import dask.dataframe as dd
-        #     return dd.from_map(self._parse, matches, lengths, **kwargs
+        #     return dd.from_map(excl._parse, matches, lengths, **kwargs
         #         ).to_dask_array(lengths=list(lengths), meta=meta)
         # # Newer dask version does not have token keyword
         # except:
         #     kwargs.pop('token')
-        #     return dd.from_map(self._parse, matches, lengths, **kwargs
+        #     return dd.from_map(excl._parse, matches, lengths, **kwargs
         #         ).to_dask_array(lengths=list(lengths), meta=meta)
 
         # After dask==2023.3.0, there is a change to dataframe which causes
-        # the prior approach (building an array from a dataframe) to run >2x 
-        # slower: https://github.com/dask/dask/commit/89db50e5d874cf999987344c44168d7b725810c5#diff-7f08628a92dd3add9053c4e6ede5459803a8e3e1f78464f356c65a75a6872a99L374
-        # 
+        # the prior approach (building an array from a dataframe) to run >2x
+        # slower: https://github.com/dask/dask/commit/89db50e5d874cf999987344c44168d7b725810c5#diff-7f08628a92dd3add9053c4e6ede5459803a8e3e1f78464f356c65a75a6872a99L374  # noqa: E501
+        #
         # To avoid this issue, we can instead build the array by concatenating
         # a list of delayed objects together. This approach is as fast as the
         # dataframe method, and is not impacted by the change in v2023.3.1
-        delay = dask.delayed(partial(self._parse, **kwargs))
+        delay = dask.delayed(partial(excl._parse, **kwargs))
         tasks = [task.values for task in map(delay, matches, lengths)]
         array = partial(da.from_delayed, meta=meta)
         return da.concatenate(map(array, tasks, lengths[:, None]))
 
 
-    def _parse(self, 
-        matches   : Union[Sequence, np.ndarray],
+    def _parse(self,
+        matches   : Sequence | np.ndarray,
         n_samples,# : int,
         features,#  : list[list[str]],
         make_objs : bool,
         singleton : bool,
     ) -> SampleSet:
         """ Parse a match into the relevant SampleSet of data.
-        
+
         Notes
         -----
         If features are known ahead of time and are given, then the output
-        representation is rigid and therefore the process can be much 
+        representation is rigid and therefore the process can be much
         faster. Otherwise, Sample objects are created for each element,
-        containing all information and providing a flexible representation.           
+        containing all information and providing a flexible representation.
 
         """
         with self.benchmark(f'_parse.extract (shape={matches[0].shape})'):
-            windows = self.extract(_map=[matches, features]) # Extract data windows
-            # ordered = self.sort(container=windows) # Return to original ordering
+            windows = self.extract(_map=[matches, features])
+            # ordered = self.sort(container=windows)  # original ordering
 
         # Re-add dropped Block features as NaN
         for block, block_features in zip(self.dropped, self.dropped_features):
-            block_window = block.extract(np.zeros(1), block_features, empty=True)
+            block_window = block.extract(np.zeros(1),block_features,empty=True)
             sample_count = len(matches[0])
 
-            if make_objs: 
+            if make_objs:
                 block_window = [block_window] * sample_count
-            else:         
+            else:
                 block_window, dtype = block_window
                 block_window = (np.array([block_window] * sample_count), dtype)
             windows.container.insert(block.block_index, block_window)
@@ -366,25 +372,25 @@ class Blockset(BaseSet):
         if make_objs: windows, dtypes = list(zip(*windows)), self.dtype
         else:         windows, dtypes = list(zip(*windows))
         return SampleSet(windows, int(n_samples), make_objs, singleton, dtypes)
-        
 
-    def _grouped(self, 
-        matches      : np.ndarray, 
-        counts       : Union[np.ndarray, None], 
+
+    def _grouped(self,
+        matches      : np.ndarray,
+        counts       : np.ndarray | None,
         task_bytes   : Number,
-        task_samples : Union[int, None],
+        task_samples : int | None,
     ):
         """ Combine matches into larger groups for higher throughput """
         # Number of samples in the cartesian product for dataframe divisions
         if counts is None:
-            int_dtype = np.int32 
+            int_dtype = np.int32
             cartesian = np.ones(matches.shape[1], int_dtype)
         else:
             int_dtype = counts.dtype
             cartesian = np.prod(counts, axis=0).astype(int_dtype)
         divisions = np.cumsum(cartesian, dtype=int_dtype)
 
-        # Combine multiple match sets together into a single SampleSet for 
+        # Combine multiple match sets together into a single SampleSet for
         #   faster processing, with up to `task_bytes` of data per SampleSet
         # This also drastically reduces memory and time used by dd.from_map
         maxim = task_samples or (task_bytes / self.dtype.itemsize)
@@ -395,7 +401,7 @@ class Blockset(BaseSet):
         # Check that groups actually need combining to reach size threshold
         if n_ele > cartesian.min():
 
-            # Determine unique indices of the boundaries where matches should split
+            # Determine unique indices of boundaries where matches should split
             boundaries = np.arange(max(first+1, n_ele), total, n_ele)
             partitions = np.searchsorted(divisions, boundaries)
             unique_idx = np.flatnonzero(np.diff(partitions, prepend=-1))
@@ -403,8 +409,8 @@ class Blockset(BaseSet):
             # Create combined match sets and recompute dataframe divisions
             matches   = np.split(matches, partitions[unique_idx], axis=1)
             hist_bins = np.r_[0, boundaries[unique_idx], total]
-            cartesian = np.histogram(divisions, hist_bins, weights=cartesian)[0]
-            cartesian = cartesian.astype(int_dtype)
+            cartesian = np.histogram(divisions, hist_bins, weights=cartesian)
+            cartesian = cartesian[0].astype(int_dtype)
             divisions = np.cumsum(cartesian.copy(), dtype=int_dtype)
 
         # Otherwise just reshape to mimic having 1 set of matches per SampleSet
@@ -415,20 +421,21 @@ class Blockset(BaseSet):
     def _partition(self, names: list[str | int]) -> tuple[list, list]:
         """ Split blocks into [(in names), (not in names)] """
         select = lambda i, b, n: (n==i) if isinstance(n,int) else (n in b.label)
-        within = lambda i,block: any(map(lambda n: select(i, block, n), names))
+        within = lambda i,block: any(select(i, block, n) for n in names)
         inside = [block for i,block in enumerate(self) if     within(i, block)]
         not_in = [block for i,block in enumerate(self) if not within(i, block)]
         return inside, not_in
-        
-        
-    def _exclude(self, names: list[str | int], features) -> 'Blockset':
+
+
+    def _exclude(self, names: list[str | int], features) -> Blockset:
         """ Create a new Blockset object that excludes the specified Blocks """
         # Remember both the kept and dropped blocks, plus any dropped features
         drop, keep = self._partition(names)
         drop_block = [b.copy() for b in drop]
         keep_block = [b.copy() for b in keep]
-        
-        blockset = Blockset(keep_block, self.logger, self.timing, self.shuffle, True)
+
+        blockset = Blockset(
+            keep_block, self.logger, self.timing, self.shuffle, True)
         blockset.dropped = drop_block
         blockset.dropped_features = [b.feature_subset(features) for b in drop]
         blockset.dtype = self.dtype
@@ -447,10 +454,10 @@ class Blockset(BaseSet):
                 if block.fast_invalid_check:
                     self.logger.debug(f'\t{block} failed fast_invalid_check')
                     return False
-                
+
         # Skip the full check for any actual valid windows
         if fast: return True
-        
+
         with self.benchmark('valid_windows.size'):
             for block in by_sparsity:
                 if block.is_required and not block.valid_windows.size:
@@ -459,16 +466,20 @@ class Blockset(BaseSet):
         return True
 
 
-    def diagnose_empty(self, drop_datafiles : list | None = None, label='Block') -> str:
+    def diagnose_empty(self,
+        drop_datafiles : list | None = None,
+        label : str = 'Block',
+    ) -> str:
         """ Diagnostic function to determine why no samples are produced """
-        self = self._exclude(drop_datafiles or [], None)
-        
+        excl = self._exclude(drop_datafiles or [], None)
+
         # Sort by sparsity, assuming higher values are more likely to fail
-        by_sparsity = sorted(self, key=lambda b:b.sparsity, reverse=True)
+        by_sparsity = sorted(excl, key=lambda b:b.sparsity, reverse=True)
 
         # Include coordinate bounds
-        def _bound(f, coords, labels):
-            values = f([f(c, axis=tuple(range(c.ndim-1))) for c in coords], axis=0)
+        def _bound(func, coords, labels):
+            values = [func(c, axis=tuple(range(c.ndim-1))) for c in coords]
+            values = func(values, axis=0)
             bounds = dict(zip(labels, values))
             for k,v in bounds.items():
                 if k == 'datetime':
@@ -476,12 +487,12 @@ class Blockset(BaseSet):
                 else:
                     bounds[k] = f'{v:.3f}'
             return ' | '.join(f'{k}={v}' for k,v in bounds.items())
-        
-        coord = self.coords
-        minim = _bound(np.nanmin, coord, self.dims[0])
-        maxim = _bound(np.nanmax, coord, self.dims[0])
+
+        coord = excl.coords
+        minim = _bound(np.nanmin, coord, excl.dims[0])
+        maxim = _bound(np.nanmax, coord, excl.dims[0])
         message = f'\tMin Coord: {minim}\n\t\tMax Coord: {maxim}\n\t\t'
-        
+
         for block in by_sparsity:
             if block.fast_invalid_check:
                 return f'{message}No data available in {block=}'
@@ -492,16 +503,16 @@ class Blockset(BaseSet):
                     message = f'{message}No windows available in {block=}\n'
                     message+= f'\t{block.dataset.notnull().sum().compute()}'
                 return message
-                    
-        # There must exist at least one Block that independently fails to match
-        for i in range(len(self)):
-            b1 = self[i]
-            
-            for j in range(i+1, len(self)):
-                b2 = self[j]
 
-                matches, counts = find_neighbors(
-                    [b.valid_coords.copy() for b in [b1, b2]], 
+        # There must exist at least one Block that independently fails to match
+        for i in range(len(excl)):
+            b1 = excl[i]
+
+            for j in range(i+1, len(excl)):
+                b2 = excl[j]
+
+                matches, _ = find_neighbors(
+                    [b.valid_coords.copy() for b in [b1, b2]],
                     [b.valid_resolution.copy() for b in [b1, b2]],
                     [b.is_required for b in [b1, b2]],
                     grid_labels = [str(b) for b in [b1, b2]],
@@ -509,57 +520,68 @@ class Blockset(BaseSet):
                     num_samples = 10,
                     method  = 'multi',
                     logger  = None,
-                    shuffle = self.shuffle,
+                    shuffle = excl.shuffle,
                     debug   = False,
                     seed    = 0,
                 )
 
                 if matches.size == 0:
-                    # d1 = b1.dataset.to_array('features').notnull().mean('features').compute()
-                    d1 = b1.dataset.to_array('features').notnull().any('features').compute()
-                    d2 = b2.dataset.to_array('features').notnull().any('features').compute()
+                    finite = lambda blk: (blk.dataset.to_array('features')
+                                             .notnull().any('features'))
+                    d1 = finite(b1).compute()
+                    d2 = finite(b2).compute()
 
                     # Discard NaN coordinate values
                     d1 = d1.isel(**{k: d1[k].notnull() for k in d1.coords})
                     d2 = d2.isel(**{k: d2[k].notnull() for k in d2.coords})
-                    
+
                     import matplotlib.pyplot as plt
                     f, axes = plt.subplots(1, 3, figsize=(15, 5))
 
                     def p(a, ax):
                         """ Plot the data in a scatterplot """
                         a = a.mean('datetime')
+                        get_coord = lambda c: a.data.coords[a.dims.index(c)]
                         import sparse
                         if isinstance(a.data, sparse.COO):
-                            x = a['longitude'].values[a.data.coords[a.dims.index('longitude')]]
-                            y = a['latitude'].values[a.data.coords[a.dims.index('latitude')]]
+                            x = a['longitude'].values[get_coord('longitude')]
+                            y = a['latitude'].values[get_coord('latitude')]
                             ax.scatter(x, y, c=a.data.data)
                         else:
-                            y, x = np.meshgrid(a['latitude'].values, a['longitude'].values, indexing='ij')
-                            ax.scatter(x.ravel(), y.ravel(), c=a.values.ravel(), zorder=1)
+                            y, x = np.meshgrid(a['latitude'].values,
+                                               a['longitude'].values,
+                                               indexing='ij')
+                            ax.scatter(x.ravel(), y.ravel(),
+                                       c=a.values.ravel(), zorder=1)
 
                     d1.mean('datetime').plot(zorder=0, alpha=0.4, ax=axes[0])
                     p(d2, axes[0])
                     # d2.sum('datetime').plot.scatter(zorder=1, ax=axes[0])
                     axes[0].set_title(f'{b2.label} points')
-                    
+
                     d2.mean('datetime').plot(zorder=0, alpha=0.4, ax=axes[1])
                     p(d1, axes[1])
                     # d2.sum('datetime').plot.scatter(zorder=1, ax=axes[0])
                     axes[1].set_title(f'{b1.label} points')
-                                        
-                    
+
+
                     # d1.sum('datetime').plot(zorder=0, alpha=0.4, ax=axes[0])
                     # d2.sum('datetime').plot.scatter(zorder=1, ax=axes[0])
                     # axes[0].set_title(f'{b2.label} points')
-                    
+
                     # d2.sum('datetime').plot(zorder=0, alpha=0.4, ax=axes[1])
                     # d1.sum('datetime').plot.scatter(zorder=1, ax=axes[1])
                     # axes[1].set_title(f'{b1.label} points')
 
                     import seaborn as sns
-                    sns.barplot(d1.mean(['latitude', 'longitude']).to_dataset(name='Fraction'), x='datetime', label=b1.label, ax=axes[2])
-                    sns.barplot(d2.mean(['latitude', 'longitude']).to_dataset(name='Fraction'), x='datetime', label=b2.label, ax=axes[2])
+                    kws = {'x': 'datetime', 'ax': axes[2]}
+                    avg = lambda d: (
+                        d.mean(['latitude', 'longitude'])
+                         .to_dataset(name='Fraction')
+                    )
+
+                    sns.barplot(avg(d1), label=b1.label, **kws)
+                    sns.barplot(avg(d2), label=b2.label, **kws)
 
                     filename = f'{label}.png'
                     plt.tight_layout()
@@ -567,5 +589,5 @@ class Blockset(BaseSet):
                     plt.clf()
                     plt.close(f)
                     return message + filename
-                    
+
         return f'{message}ERROR: all block pairs generate samples'

@@ -26,7 +26,7 @@ class FutureSampler(NonzeroSampler):
         See NonzeroSampler for the standard Sampler arguments.
 
     """
-    
+
     def __init__(self, *args, batch_size: int=32, max_queue: int=100, **kwargs):
         super().__init__(*args, **kwargs)
         self.batch_size = batch_size

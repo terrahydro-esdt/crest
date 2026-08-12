@@ -1,8 +1,9 @@
-from collections.abc import Callable
-from functools import partial, update_wrapper, wraps
+from __future__ import annotations
+from collections.abc import Callable, Iterator
+from functools import partial, wraps
 from pathlib import Path
 from typing import get_args, get_origin, get_type_hints, _type_repr
-from typing import Union, Iterator, TypeVar, ForwardRef
+from typing import Union, TypeVar, ForwardRef
 from types import UnionType, MethodType
 from abc import ABC
 
@@ -27,14 +28,14 @@ def type_repr(val=None, T=None, _maxdepth: int = 4):
             for i, ele in enumerate(iterable):
                 if i > 1:
                     break
-                
+
                 if hasattr(val, 'items'):
                     ele_type.append(', '.join(map(recurse, ele)))
                     break
                 else:
                     ele_type.append(recurse(ele))
 
-            if len(iterable) > 2 and not hasattr(val, 'items'): 
+            if len(iterable) > 2 and not hasattr(val, 'items'):
                 ele_type.append('...')
             ele_type = ', '.join(map(str, ele_type))
         except:
@@ -97,7 +98,7 @@ def istype(val, T):
     except TypeError:
         pass
 
-    # Get origin type and parameterized types 
+    # Get origin type and parameterized types
     origin = get_origin(T)
     types = get_args(T)
 
@@ -128,18 +129,19 @@ def istype(val, T):
 class EnsureTypes:
     """Ensure type annotations are followed, raising TypeError if not.
 
-    Wrapping with a class rather than a function allows access to the 
+    Wrapping with a class rather than a function allows access to the
     underlying object attributes when a callable object is wrapped.
 
     """
 
-    def __init__(self, cls_obj: 'BaseAbstract', callable_obj: Callable):
+    def __init__(self, cls_obj: BaseAbstract, callable_obj: Callable):
         self._cls_repr = repr(cls_obj)
         self._callable = callable_obj
-        
+
 
     def __repr__(self):
-        return f'EnsureTypes({self._cls_repr}.{self._callable.__code__.co_name})'
+        name = self._callable.__code__.co_name
+        return f'EnsureTypes({self._cls_repr}.{name})'
 
 
     def __call__(self, *args, **kwargs):
@@ -162,7 +164,9 @@ class EnsureTypes:
 
     def __getattr__(self, attr):
         """ Pass through attribute lookups to the underlying callable """
-        return self if attr == '__call__' else getattr(object.__getattribute__(self, '_callable'), attr)
+        if attr == '__call__':
+            return self
+        return getattr(object.__getattribute__(self, '_callable'), attr)
 
 
     @classmethod
@@ -205,7 +209,7 @@ class EnsureTypes:
     @property
     def object(self):
         """ Try to return the underlying object this function is bound to """
-        return getattr(self._callable, '__self__')
+        return getattr(self._callable, '__self__')  # noqa: B009
 
 
 
@@ -232,7 +236,7 @@ class BaseAbstract(ABC):
 
     def __init_subclass__(cls, *args, **kwargs):
         """ Called when an inheriting class is defined.
-            Wraps __init__ with type checking, and allows 
+            Wraps __init__ with type checking, and allows
             __post_init__ functions in inheriting classes.
         """
 
@@ -253,7 +257,7 @@ class BaseAbstract(ABC):
         """ Allows inheriting classes to define a function that runs after
             the __init__ method; mainly useful for Base classes to force
             children to perform some operations after initialization """
-        pass
+        pass  # noqa: PIE790
 
 
     @classmethod

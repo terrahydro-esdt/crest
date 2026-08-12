@@ -602,7 +602,7 @@ class Dataset(BaseSet):
             'dimension_blks' : blocks,      # Same block shape for all Datafile
             '_kwmap' : {
                 'skip_dimension': skipdim,  # skipdim to respective Datafiles
-            },        
+            },
         })
 
         if verbose:

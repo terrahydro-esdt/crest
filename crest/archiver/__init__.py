@@ -7,10 +7,10 @@ will be removed in a future release. Please update your imports to use
 import warnings
 
 warnings.warn(
-    '"crest.archiver" has moved to "crest.data.archiver". '
+    '"crest.archiver" has moved to "crest.data.archiving". '
     'Please update your imports.',
     DeprecationWarning,
     stacklevel=2,
 )
 
-from crest.data.archiver import *
+from crest.data.archiving import *

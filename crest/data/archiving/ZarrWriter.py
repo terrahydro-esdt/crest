@@ -4,15 +4,16 @@ from .Writer import Writer
 from .StageWriter import StageWriter
 
 from zarr.convenience import consolidate_metadata
-from typing import Tuple
 from pathlib import Path
-from shutil import rmtree 
+from shutil import rmtree
 
 import pyarrow.dataset as pads
 import xarray as xr
 import numpy as np
+import logging
 import zarr
 
+log = logging.getLogger(__name__)
 
 class ZarrWriter(Writer):
     """ Class that reads staged data and writes to zarr.
@@ -20,7 +21,7 @@ class ZarrWriter(Writer):
     Notes
     -----
     Writing (i.e. calling ZarrWriter.flush) is not thread or process safe.
-    
+
     Parameters
     ----------
     data_schema  : xr.DataArray
@@ -35,7 +36,7 @@ class ZarrWriter(Writer):
     delete_extra : bool
         To allow iteratively updating the output zarr during archiving, two
         additional variables are created per feature: f'{feature_name}__sum'
-        and f'{feature_name}__count'. If `delete_extra=True`, rather than 
+        and f'{feature_name}__count'. If `delete_extra=True`, rather than
         retaining them in the final zarr (thus using 3x larger space on disk),
         all of these extra variables will be deleted once the writer is closed.
     finalize_avg : bool
@@ -44,16 +45,16 @@ class ZarrWriter(Writer):
         and written to the zarr on every flush.
     **kwargs
         Additional keyword arguments are discarded.
-        
+
     """
-    
+
     def __init__(self,
         data_schema  : xr.DataArray,
         output_path  : Path | S3Path,
         stage_writer : StageWriter,
         delete_extra : bool = True,
         finalize_avg : bool = False,
-        **kwargs        
+        **kwargs
     ):
         self.schema = data_schema
         self.output_path = output_path
@@ -65,24 +66,24 @@ class ZarrWriter(Writer):
     def is_open(self) -> bool:
         """ Whether the writer is currently open """
         return hasattr(self, '_zarr_f')
-        
-    
+
+
     def open(self):
         """ Open the writer and initialize all buffers """
         assert(not self.is_open), f'{self} is already open'
-        
+
         # Delete the output if it already exists
         if self.output_path.exists():
             if hasattr(self.output_path, 'delete'):
                 self.output_path.delete()
             else: rmtree(self.output_path.as_posix())
-        
+
         # Open the zarr and create state variables
         self._zarr_f = zarr.open(self.output_path, mode='a')
         self._arrays = {}
         self.total_rows = 0
-        
-    
+
+
     def close(self) -> int:
         """ Close the writer, returning the number of rows written """
         if self.is_open:
@@ -105,15 +106,15 @@ class ZarrWriter(Writer):
             # One final consolidation if anything was modified
             if self.finalize_avg or self.delete_extra:
                 consolidate_metadata(self.output_path)
-                
+
             # Reset object attributes
             self.__dict__.pop('_zarr_f')
             self.__dict__.pop('_arrays')
             total, self.total_rows = self.total_rows, 0
             return total
         return 0
-        
-    
+
+
     def flush(self, max_bucket_files: int=400, delete_after: bool=True) -> int:
         """ Scan staged parquet fragments, aggregate, and write to zarr.
 
@@ -128,18 +129,18 @@ class ZarrWriter(Writer):
         Zarr has to decompress, modify, and recompress an entire chunk whenever
         any part of that chunk is modified. The steps above minimize the IO and
         decompress/recompress cycles so that they need to only be performed one
-        time for any chunk during a batch update. 
-        
+        time for any chunk during a batch update.
+
         """
         files = self._list_bucket_files(max_bucket_files)
         if not files:
             return 0
-            
+
         # Build a Dataset over the selected files
         dataset = pads.dataset([str(f) for f in files], format='parquet')
         if hasattr(dataset, 'scanner'):
             dataset = dataset.scanner()
-        
+
         total_rows = 0
         for batch in dataset.to_batches():
             if batch.num_rows == 0: continue
@@ -150,7 +151,7 @@ class ZarrWriter(Writer):
             indices = np.stack([columns.pop(d) for d in self.dims], axis=1)
             blk_idx = indices // np.array(self.chunksize)
             blk_ids = np.ravel_multi_index(blk_idx.T, self.numblocks)
-            
+
             # Order rows by block id to maximize write locality
             ordered = np.argsort(blk_ids)
             indices = indices[ordered]
@@ -161,22 +162,20 @@ class ZarrWriter(Writer):
             # Find boundaries where chunk ids change
             starts = np.where(np.diff(blk_ids, prepend=-1) != 0)[0]
             finish = np.concatenate([starts[1:], np.array([len(blk_ids)])])
-            
-            # Helpers to pull a block region out of the full zarr array
+
+            # Helper to pull a block region out of the full zarr array
             region = lambda c, shp, chk: slice(c*chk, min(shp, (c+1)*chk))
-            slices = lambda i: (*map(region, i, self.shape, self.chunksize),)
-            astype = lambda v: v.astype(self.dtype)
 
             # 1. Iterate over each block we need to update
             for s, e in zip(starts, finish):
 
                 # Get the local indices for the block, its shape, and size
-                block = slices(blk_idx[s])
+                block = (*map(region, blk_idx[s], self.shape, self.chunksize),)
                 local = indices[s:e] - np.array([s.start for s in block])
                 shape = tuple(s.stop - s.start for s in block)
-                n_ele = int(np.prod(shape))
+                # n_ele = int(np.prod(shape))
 
-                # Sort the flattened local indices 
+                # Sort the flattened local indices
                 locations = np.ravel_multi_index(local.T, shape)
                 idx_order = np.argsort(locations)
                 locations = locations[idx_order]
@@ -203,45 +202,46 @@ class ZarrWriter(Writer):
                     arrays, totals, counts = self._get_feature(name)
                     blk_total = totals[block].reshape(-1)
                     blk_count = counts[block].reshape(-1)
-                
+
                     # 3. Apply updates to the block in memory
-                    blk_total[touch] += astype(total[valid])
-                    blk_count[touch] += astype(count[valid])
-                
+                    blk_total[touch] += total[valid].astype(self.dtype)
+                    blk_count[touch] += count[valid].astype(self.dtype)
+
                     # 4. Write the updated block back into its region
                     totals[block] = blk_total.reshape(shape)
                     counts[block] = blk_count.reshape(shape)
-                    
+
                     if not self.finalize_avg:
-                        blk_array = arrays[block].reshape(-1)       
-                        blk_array[touch] = astype(
+                        blk_array = arrays[block].reshape(-1)
+                        blk_array[touch] = (
                             blk_total[touch] / blk_count[touch]
-                        )
+                        ).astype(self.dtype)
                         arrays[block] = blk_array.reshape(shape)
 
                 """ Slightly slower, somewhat simpler implementation """
-                # # Calculate the flattened index and number of updates for each
+                # #Calculate the flattened index and number of updates for each
                 # locations = np.ravel_multi_index(local.T, shape)
                 # all_count = np.bincount(locations, minlength=n_ele)
                 # all_touch = np.flatnonzero(all_count)
 
                 # # Update global average variables for each feature
                 # for name, value in feature.items():
-                    
+
                 #     # Calculate the sum total of the update for each index
                 #     valid = np.isfinite(value[s:e])
 
                 #     if valid.all():
                 #         count = all_count
                 #         touch = all_touch
-                #         total = np.bincount(locations, value[s:e], minlength=n_ele)
+                #         total = np.bincount(locations, value[s:e],
+                #                             minlength=n_ele)
                 #     else:
                 #         value = np.where(valid, value[s:e], 0)
-                #         total = np.bincount(locations, value, minlength=n_ele)
-                #         n_nan = np.bincount(locations[~valid], minlength=n_ele)
+                #         total =np.bincount(locations, value, minlength=n_ele)
+                #         n_nan =np.bincount(locations[~valid],minlength=n_ele)
                 #         count = all_count - n_nan
                 #         touch = np.flatnonzero(count)
-    
+
                 #         if touch.size == 0:
                 #             continue
 
@@ -249,38 +249,38 @@ class ZarrWriter(Writer):
                 #     arrays, totals, counts = self._get_feature(name)
                 #     blk_total = totals[block].reshape(-1)
                 #     blk_count = counts[block].reshape(-1)
-                
+
                 #     # 3. Apply updates to the block in memory
-                #     blk_total[touch] += astype(total[touch])
-                #     blk_count[touch] += astype(count[touch])
-                
+                #     blk_total[touch] += total[touch].astype(self.dtype)
+                #     blk_count[touch] += count[touch].astype(self.dtype)
+
                 #     # 4. Write the updated block back into its region
                 #     totals[block] = blk_total.reshape(shape)
                 #     counts[block] = blk_count.reshape(shape)
 
                 #     if not self.finalize_avg:
-                #         blk_array = arrays[block].reshape(-1)       
-                #         blk_array[touch] = astype(
+                #         blk_array = arrays[block].reshape(-1)
+                #         blk_array[touch] = (
                 #             blk_total[touch] / blk_count[touch]
-                #         )
+                #         ).astype(self.dtype)
                 #         arrays[block] = blk_array.reshape(shape)
 
         # Cleanup consumed files
         if delete_after:
             for f in files:
                 try:    f.unlink()
-                except: pass
+                except: log.debug(f'Unable to delete file {f}')
         consolidate_metadata(self.output_path)
         self.total_rows += total_rows
         return total_rows
-        
-                    
+
+
     def _get_feature(self, name: str) -> list:
         """ Return zarr arrays for a feature, creating them if necessary """
         assert(self.is_open), f'{self} is not open'
         as_nan = silence_warnings(lambda T: np.array(np.nan).astype(T).take(0))
         if name not in self._arrays:
-            
+
             # Create the coordinates if they don't exist
             for dim, size, chunk in zip(self.dims, self.shape, self.chunksize):
                 if dim not in self._zarr_f:
@@ -294,7 +294,7 @@ class ZarrWriter(Writer):
                     })
                     coords.attrs['_ARRAY_DIMENSIONS'] = [dim]
                     coords[:] = values
-                    
+
             # Create the feature
             array = self._zarr_f.create(**{
                 'name'   : name,
@@ -324,7 +324,7 @@ class ZarrWriter(Writer):
         """ Temporary intermediate output keys (i.e. avg = sum/count) """
         return [f'{name}__{suffix}' for suffix in suffixes]
 
-    
+
     def _list_bucket_files(self, max_files_per_bucket: int) -> list[Path]:
         """ List of parquet files in the staging area for each bucket """
         files = []
