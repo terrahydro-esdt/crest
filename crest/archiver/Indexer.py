@@ -1,4 +1,4 @@
-""" Deprecated: "crest.archiver.Indexer" has moved to "crest.data.archiver.Indexer". This module re-exports everything from there for backwards compatibility and will be removed in a future release. Please update your imports to use "crest.data.archiver.Indexer" directly. See that module for the real documentation.
+""" Deprecated: "crest.archiver.Indexer" has moved to "crest.data.archiving.Indexer". This module re-exports everything from there for backwards compatibility and will be removed in a future release. Please update your imports to use "crest.data.archiving.Indexer" directly. See that module for the real documentation.
 """
 
 import warnings

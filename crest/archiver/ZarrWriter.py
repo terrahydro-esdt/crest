@@ -1,4 +1,4 @@
-""" Deprecated: "crest.archiver.ZarrWriter" has moved to "crest.data.archiver.ZarrWriter". This module re-exports everything from there for backwards compatibility and will be removed in a future release. Please update your imports to use "crest.data.archiver.ZarrWriter" directly. See that module for the real documentation.
+""" Deprecated: "crest.archiver.ZarrWriter" has moved to "crest.data.archiving.ZarrWriter". This module re-exports everything from there for backwards compatibility and will be removed in a future release. Please update your imports to use "crest.data.archiving.ZarrWriter" directly. See that module for the real documentation.
 """
 
 import warnings

@@ -1,7 +1,7 @@
-crest.data.archiver.Indexer module
+crest.data.archiving.Writer module
 ==================================
 
-.. automodule:: crest.data.archiver.Indexer
+.. automodule:: crest.data.archiving.Writer
    :members:
    :undoc-members:
    :show-inheritance:

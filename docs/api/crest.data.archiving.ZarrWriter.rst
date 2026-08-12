@@ -1,7 +1,7 @@
-crest.data.archiver.StageWriter module
+crest.data.archiving.ZarrWriter module
 ======================================
 
-.. automodule:: crest.data.archiver.StageWriter
+.. automodule:: crest.data.archiving.ZarrWriter
    :members:
    :undoc-members:
    :show-inheritance:

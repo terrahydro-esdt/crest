@@ -1,4 +1,4 @@
-""" Deprecated: "crest.archiver" has moved to "crest.data.archiver". This
+""" Deprecated: "crest.archiver" has moved to "crest.data.archiving". This
 package re-exports everything from there for backwards compatibility and
 will be removed in a future release. Please update your imports to use
 "crest.data.archiver" directly. See that package for the real documentation.
