@@ -1,12 +1,13 @@
 from __future__ import annotations
+
 from collections.abc import Collection, Callable, Iterator
 from itertools import zip_longest, starmap, compress
 from operator import itemgetter
-from typing import TypeVar, Any, Union
+from typing import TypeVar
 
 import numpy as np
-import dask 
-import operator 
+import dask
+import operator
 
 from .BaseAbstract import BaseAbstract
 
@@ -23,18 +24,18 @@ class BaseSet(BaseAbstract):
     This class allows operations over sets of classes. For example,
     a Blockset(BaseSet) class would hold a set of Block objects, and
     allow functions to be applied seamlessly to all Block objects within
-    its container (e.g. Blockset.resolution would return a list of 
+    its container (e.g. Blockset.resolution would return a list of
     Block.resolution values, assuming 'resolution' is a property of Block).
 
     In addition, a list of parameters can be mapped over the set elements
     by calling the same function and passing _map=[parameters] as a keyword.
-    Similarly, keywords can be used via _kwmap={'param': parameters}. 
+    Similarly, keywords can be used via _kwmap={'param': parameters}.
 
     Parameters
     ----------
     objs : Collection
         Collection of objects that this class is wrapping. This needs to be
-        a homogeneous collection, with all objects the same class. 
+        a homogeneous collection, with all objects the same class.
 
     Examples
     --------
@@ -53,7 +54,7 @@ class BaseSet(BaseAbstract):
     >>> strings.upper().split(' ')
     StringSet[['A', 'B', 'C'], ['D.E.F']]
 
-    """ 
+    """
     def __init__(self, objs: Collection[T] | map):
         if isinstance(objs, map):
             objs = list(objs)
@@ -69,11 +70,11 @@ class BaseSet(BaseAbstract):
         return f"{super().__repr__()}{getattr(self, 'container', '')}"
 
 
-    def __eq__(self, other: Any) -> Union[bool, 'BaseSet']:
+    def __eq__(self, other: object) -> bool | BaseSet:
         """ Check for equality with another container """
         if isinstance(other, BaseSet) and len(self) == len(other):
             return all(a == b for a,b in zip(self, other))
-        return self._wrap([a == other for a in self]) 
+        return self._wrap([a == other for a in self])
 
 
     def __len__(self) -> int:
@@ -91,9 +92,9 @@ class BaseSet(BaseAbstract):
         return obj in self.container
 
 
-    def __getitem__(self, idx: Any) -> Union[T, 'BaseSet']:
+    def __getitem__(self, idx: object) -> T | BaseSet:
         """ Get an element in the container """
-        # Wrap the sliced container in a new BaseSet 
+        # Wrap the sliced container in a new BaseSet
         if isinstance(idx, slice):
             return self.__class__(self.container[idx])
 
@@ -103,9 +104,9 @@ class BaseSet(BaseAbstract):
                 return self.__class__([self.container[i] for i in idx])
             return self.__class__(list(compress(self, idx)))
         return self.container[idx]
-    
 
-    def __setitem__(self, idx: Any, val: T) -> None:
+
+    def __setitem__(self, idx: object, val: T) -> None:
         """ Set an element in the container """
         self.container[idx] = val
 
@@ -118,13 +119,13 @@ class BaseSet(BaseAbstract):
         """ Format the set nicely for notebooks """
         item_rep = lambda item: getattr(item, '_repr_html_', item.__repr__)()
         sub_html = ''.join(map(item_rep, self.container))
-        return f'<h3>{self}:</h3><div>{sub_html}</div>' 
+        return f'<h3>{self}:</h3><div>{sub_html}</div>'
 
 
-    def _wrap(self, objs: Collection) -> Union['BaseSet', Collection]:
-        """ Wrap the return objects in either the original 
+    def _wrap(self, objs: Collection) -> BaseSet | Collection:
+        """ Wrap the return objects in either the original
             *Set class if the obj type hasn't changed, or
-            in a BaseSet class otherwise """ 
+            in a BaseSet class otherwise """
         if isinstance(objs[0], self[0].__class__):
             return self.__class__(objs)
 
@@ -132,39 +133,51 @@ class BaseSet(BaseAbstract):
         try:              return BaseSet(objs)
         except TypeError: return objs
 
-        
-    def __setattr__(self, attr: str, vals: Any):
+
+    def __setattr__(self, attr: str, vals: object):
         """ Pass through new attr values to the objects composing this set"""
         try:
-            if hasattr(self, 'container'):
-                if hasattr(vals, '__len__') and (len(vals) == len(self)):
-                    if hasattr(vals, '__iter__'):
-                        for obj, val in zip(self, vals):
-                            if not hasattr(obj, attr):
-                                break
-                        else:
-                            for obj, val in zip(self, vals):
-                                setattr(obj, attr, val)
-                            return
-        except: pass
+            if (
+                hasattr(self, 'container')
+                and hasattr(vals, '__len__')
+                and len(vals) == len(self)
+                and hasattr(vals, '__iter__')
+            ):
+                for obj, val in zip(self, vals):
+                    if not hasattr(obj, attr):
+                        break
+                else:
+                    for obj, val in zip(self, vals):
+                        setattr(obj, attr, val)
+                    return
+        except: pass  # noqa: S110
         super().__setattr__(attr, vals)
 
 
-    def __getattr__(self, attr: str) -> 'BaseSet':
+    def __getattr__(self, attr: str) -> BaseSet:
         """ Allow calls to be passed to the objects composing this set """
-        if attr == 'container': return object.__getattribute__(self, attr)
+        if attr == 'container':
+            return object.__getattribute__(self, attr)
 
         # Ignore pickle functions to avoid recursion issues
-        if attr in ['__getstate__', '__setstate__', '__array_struct__', '__array_interface__']:
+        if attr in ['__getstate__', '__setstate__', '__array_struct__',
+                    '__array_interface__']:
             raise AttributeError()
 
         objs_attr = [getattr(obj, attr) for obj in self]
-        if not callable(objs_attr[0]): 
+        if not callable(objs_attr[0]):
             return self._wrap(objs_attr)
-        
-        def wrapper(*args, _map=[], _kwmap={}, _delay=True, __objs=objs_attr, **kwargs) -> 'BaseSet':
-            """ Wrapper function which allows distributing parameters 
-                over the container objects. 
+
+        def wrapper(
+            *args,
+            _map   : list[list] = [],
+            _kwmap : dict[str, list] = {},
+            _delay : bool = True,
+            __objs : list[object] = objs_attr,
+            **kwargs,
+        ) -> BaseSet:
+            """ Wrapper function which allows distributing parameters
+                over the container objects.
 
             Parameters
             ----------
@@ -173,25 +186,32 @@ class BaseSet(BaseAbstract):
             _map   : list[list]
                 Any parameters passed to _map are distributed over container
                 objects - and so the length of each _map element must equal
-                the number of objects in the container. 
+                the number of objects in the container.
             _kwmap : dict[str, list]
                 Equivalent to _map, but allows using keyword arguments for
-                the distributed parameters. 
+                the distributed parameters.
+            _delay : bool
+                Whether or not to use dask to parallelize the call across
+                the container objects.
+            __objs : list[object]
+                The list of objects that should be mapped over. This should
+                generally not be passed in by the user, as it is handled
+                automatically by internal processes.
             **kwargs
                 Equivalent to *args, but allows using keyword arguments to
                 pass the same value to all container objects.
 
             Returns
             -------
-            BaseSet 
+            BaseSet
                 Returns a *Set object whose container is a list of the
                 results from calling the function referred to by `attr`
-                on all of the current *Set container's objects. 
+                on all of the current *Set container's objects.
 
             Notes
             -----
-            - Dask is used to perform the operation over the container
-            objects in parallel
+            - Dask can be used to perform the operation over the container
+              objects in parallel (on by default, controlled by `_delay`)
             - See the BaseSet docstring for examples
 
             """
@@ -224,19 +244,19 @@ class BaseSet(BaseAbstract):
         return wrapper
 
 
-    def sort(self, 
+    def sort(self,
         function  : Callable   | None = None,
         container : Collection | None = None,
     ) -> Collection:
-        """Sort the container with the given function. 
-        
+        """Sort the container with the given function.
+
         Parameters
         ----------
         function  : Callable   | None
             Sorting function to use. This function should take one input
-            parameter, which is the current element to sort; and return 
+            parameter, which is the current element to sort; and return
             one value, which is the value to use for that element when sorting.
-            If no function is given or function is None, the container is 
+            If no function is given or function is None, the container is
             sorted according to the original ordering of the data (self.order).
         container : Collection | None
             The container to sort. If no container is given, the container
@@ -245,18 +265,18 @@ class BaseSet(BaseAbstract):
         Returns
         -------
         Collection
-            The collection which was sorted. If no collection was given as 
+            The collection which was sorted. If no collection was given as
             input, this will be self.container; otherwise it is the sorted
-            container which was given as input. 
+            container which was given as input.
 
         """
-        
+
         # If we're reordering, first return to the original order
         if function is not None:
             self.sort(container=container)
 
         overwrite = container is None
-        container = container if not overwrite else self.container 
+        container = container if not overwrite else self.container
 
         # If no function is given, use the existing order to sort
         if function is None:
@@ -266,7 +286,7 @@ class BaseSet(BaseAbstract):
             assert(len(container) == len(self.order))
             target = zip(self.order, container)
             sorter = lambda i: i[0]
-        
+
         else:
             target = enumerate(container)
             sorter = lambda i: function(i[1])
@@ -289,7 +309,7 @@ class BaseSet(BaseAbstract):
             multi = lambda x: isinstance(x, Collection)
             if not multi(i): i = [i] * len(self)
             assert(len(i) == len(self))
-            
+
             values = []
             for j, c in zip(i, self):
                 val = itemgetter(*np.atleast_1d(j))(c)
@@ -307,18 +327,24 @@ class BaseSet(BaseAbstract):
 
     def __new__(cls, *args, **kwargs):
         """ Add special operators to the BaseSet (e.g. __add__) """
+
         def factory(name):
             """ Allow operators to be distributed over the container """
             def wrapper(self, other=None):
                 method = lambda a,b: getattr(a, name)(b)
                 if other is not None:
-                    if isinstance(other, Collection) and (len(other) == len(self)):
+                    if (
+                        isinstance(other, Collection)
+                        and len(other) == len(self)
+                    ):
                         result = [method(c, o) for c,o in zip(self, other)]
-                    else: result = [method(c, other) for c in self]
-                else: result = [getattr(c, name)() for c in self]
-                assert(not any([r is NotImplemented for r in result]))
+                    else:
+                        result = [method(c, other) for c in self]
+                else:
+                    result = [getattr(c, name)() for c in self]
+                assert(not any(r is NotImplemented for r in result))
                 return self._wrap(result)
-            wrapper.__name__ = name 
+            wrapper.__name__ = name
             return wrapper
 
         # Add all Operators except those already contained in the class

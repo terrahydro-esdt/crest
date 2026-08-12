@@ -5,3 +5,10 @@ from .Blockset  import Blockset
 from .Datafile  import Datafile
 from .Dataset   import Dataset
 from .StructuredDataset import StructuredDataset
+
+__all__ = [
+    'Block', 'Blockset',
+    'Datafile', 'Dataset',
+    'Sample', 'SampleSet',
+    'StructuredDataset',
+]

@@ -1,6 +1,5 @@
 from queue import Empty
-import numpy as np
-import time 
+import time
 
 
 class MultiBatcherQueue:
@@ -18,57 +17,56 @@ class MultiBatcherQueue:
     combiner : BatchCombiner
         The BatchCombiner object in the current MultiBatcher pipeline that is
         handling combining batches sourced from different BlockConfigs.
-    context : 
+    context :
 
     """
-    
+
     def __init__(self, size: int, combiner, context):
         self.combiner = combiner
         self.queues = {c: context.Queue(size) for c in combiner.configs}
         self._buffer = []
 
-    
+
     def get(self, timeout: float=0.):
         """ Get item from queue """
         sizes = {c:len(b) for c,b in self.combiner.batches.items()}
-        # hs, qs = zip(*sorted(self.queues.items(), key=lambda cq: self.combiner.configs[cq[0]]))# sizes[cq[0]]))
-        hs, qs = zip(*sorted(self.queues.items(), key=lambda cq: sizes[cq[0]]))
+        _, qs = zip(*sorted(self.queues.items(), key=lambda cq: sizes[cq[0]]))
         for q in qs[:-1]:
             try:
                 return q.get_nowait()
             except Empty: pass
         return qs[-1].get(timeout=timeout)
-            # return np.random.choice(qs[1:]).get(timeout=timeout)
+        # return np.random.choice(qs[1:]).get(timeout=timeout)
 
-            
+
     def put(self, batch):
         """ Put item in queue """
         return self.put_nowait(batch)
 
-    
+
     def put_nowait(self, batch):
         """ Put item in queue """
         if (len(batch) == 2) and isinstance(batch[1], int):
             self.queues[batch[1]].put_nowait(batch)
 
-    
+
     def full(self) -> bool:
         """ Whether queue is full """
         time.sleep(0.01)
         return False
 
-    
+
     def cancel_join_thread(self):
         """ Stops queue threads """
         for q in self.queues.values():
             q.cancel_join_thread()
 
-    
+
     def empty(self):
         """ Whether all queues are empty """
         return all(q.empty() for q in self.queues.values())
 
-    
+
     def get_nowait(self):
         """ Get item from first non-empty queue """
         for q in self.queues.values():
@@ -76,7 +74,7 @@ class MultiBatcherQueue:
                 try:    return q.get_nowait()
                 except: break
 
-    
+
     def qsize(self):
         """ Size of all queues """
         return [q.qsize() for q in self.queues.values()]

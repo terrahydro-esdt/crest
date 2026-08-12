@@ -1,10 +1,10 @@
 from __future__ import annotations
+
 from collections.abc import Collection, Sequence
 from collections import defaultdict as dd
 from functools import cached_property, reduce
 from itertools import starmap, chain
 from numbers import Number, Integral as Int
-from typing import Union
 
 import dask.dataframe as df
 import dask.array as da
@@ -71,15 +71,15 @@ class Block(BaseAbstract):
         block boundaries.
       """
     def __init__(self,
-        data          : Union[da.Array, Collection],
+        data          : da.Array | Collection,
         coords        : da.Array,
         inbound_mask  : da.Array,
         overlap_mask  : da.Array,
-        valid_mask    : Union[None, da.Array]       = None,
-        resolution    : Union[Collection, da.Array] = [],
+        valid_mask    : da.Array | None             = None,
+        resolution    : da.Array | Collection       = [],
         dims          : Collection[str]             = [],
         original_dims : Sequence                    = [],
-        window_depth  : dict[str, np.ndarray]       = {},#dict[str, np.ndarray[Int]] = {},
+        window_depth  : dict[str, np.ndarray]       = {},
         valid_percent : dict[tuple[str], Number]    = {},
         invalid_value : Collection[object]          = [],
         allow_repeats : bool  = False,
@@ -189,7 +189,7 @@ class Block(BaseAbstract):
     @property
     def data(self) -> np.ndarray:
         """ Only compute dask data array upon first use """
-        with self.benchmark(f'data'):
+        with self.benchmark('data'):
             if isinstance(self._data, da.Array):
                 return self._data.compute()
             return np.concatenate(da.compute(*[d for d in self._data]), axis=-1)
@@ -214,8 +214,8 @@ class Block(BaseAbstract):
         """ Only compute dask coords array upon first use """
         if self.is_sparse and len(self.coord_vecs):
             index = np.isfinite(self.sparse_data).all(-1).coords
-            # print(f'\t{self.data.shape=} {self.sparse_data.shape=} {self.sparse_data.coords.shape=} {[c.shape for c in self.coord_vecs]=} {index.shape=}')
-            if not index.size: raise Exception(f'No index found: {self=}')#self.interactive()
+            if not index.size:
+                raise ValueError(f'No finite coords found: {self=}')
             coord = [c[i].compute() for c, i in zip(self.coord_vecs, index)]
             return np.stack(coord, axis=-1)
         with self.benchmark(f'coords {self._coords.shape}'):
@@ -237,7 +237,8 @@ class Block(BaseAbstract):
     @property
     def resolution(self) -> list:
         """ Resolutions only need computed when non-uniform """
-        return [getattr(r, 'compute', lambda: r)() for r in self._resolution]
+        compute = lambda v: v.compute() if hasattr(v, 'compute') else v
+        return list(map(compute, self._resolution))
 
 
     @cached_property
@@ -300,10 +301,12 @@ class Block(BaseAbstract):
         """ Determine valid sample window indices for sparse data """
         # If no window is requested, we can just use the sparse coords directly
         if not self.uses_window:
-            total_percent = np.round(np.prod(list(self.valid_percent.values())), 5)
+            valid_percent = list(self.valid_percent.values())
+            total_percent = np.round(np.prod(valid_percent), 5)
+            finite_values = np.isfinite(self.sparse_data)
             if total_percent >= (1-1e-4):
-                return np.isfinite(self.sparse_data).all(-1).coords
-            return (np.isfinite(self.sparse_data).mean(-1) >= total_percent).coords
+                return finite_values.all(-1).coords
+            return (finite_values.mean(-1) >= total_percent).coords
             # return self.sparse_data.coords[:-1]
 
         # Note that the sparse API isn't fully solidified - there are a few
@@ -321,7 +324,8 @@ class Block(BaseAbstract):
             windows = [slice(-s, e+1) for e, s in self.window_depth.values()]
 
             # Expand the indices to be broadcastable with the N-d window
-            idxs = self.sparse_data[...,0].coords[[self.axes[k] for k in keys]][:, valid]
+            axes = [self.axes[k] for k in keys]
+            idxs = self.sparse_data[...,0].coords[axes][:, valid]
             view = np.expand_dims(idxs, tuple(-(1+np.arange(len(windows)))))
             view = view + np.mgrid[tuple(windows)][:, None] # Broadcast window
             view = view.reshape(len(view), -1)              # (dims, samples)
@@ -346,7 +350,7 @@ class Block(BaseAbstract):
         upper = (data.coords.T + depth[:, 1]) >= data.shape
         outer = (lower | upper).any(1)
         return valid & ~outer
-        # return data.coords[:, valid][:-1]# & inbound.all(-1).flatten()][:-1].T
+        # return data.coords[:,valid][:-1]# & inbound.all(-1).flatten()][:-1].T
         # return valid & inbound.all(-1).flatten()
 
 
@@ -370,13 +374,13 @@ class Block(BaseAbstract):
             maximum = int((1-percent) * n_total)
 
             # Multiple axes can be used to define a combined valid percent
-            # e.g. {(ax1, ax2): 0.8} -> combination of the two must have 80% valid
+            # e.g. {(ax1, ax2): 0.8} -> combination of the two need 80% valid
             for exp, key in enumerate(keys):
                 axis = self.axes[key]
                 size = self.window_total[key]
 
                 if size > invalid.shape[axis]:
-                    raise Exception(f'{self}: Block dimension "{key}" with ' +
+                    raise ValueError(f'{self}: Block dimension "{key}" with ' +
                         f'size={invalid.shape[axis]} is too small for ' +
                         f'requested window size={size}')
 
@@ -389,7 +393,7 @@ class Block(BaseAbstract):
                 invalid = invalid.astype('int32') # Bottleneck is faster w/ int
                 invalid = np.pad(invalid, padding, constant_values=size ** exp)
 
-                # Offset the new invalid elements so that the window is centered
+                # Offset the new invalid elements so the window is centered
                 invalid = bn.move.move_sum(invalid, size, axis=axis)[offsets]
             return invalid > maximum
 
@@ -411,8 +415,8 @@ class Block(BaseAbstract):
         else: invalid = np.zeros(self._inbound.shape, dtype='bool')
 
         # Mask overlapped elements, as they cannot be window centers
-        if not self.allow_repeats:
-            if self.block_index == 0: invalid |= self.overlap_mask
+        if not self.allow_repeats and self.block_index == 0:
+            invalid |= self.overlap_mask
 
         # Mask elements outside the bounds of the data (except virtual)
         invalid |= ~self.inbound_mask
@@ -424,8 +428,9 @@ class Block(BaseAbstract):
         # Mask elements whose window extends outside of the data
         # Note that continuing if percent == 0 implies NaNs outside of the data
         #   are treated as always invalid, compared to NaNs in the data itself
-        for keys, percent in self.valid_percent.items():
+        # for keys, percent in self.valid_percent.items():
             # if percent == 0: continue
+        for keys in self.valid_percent:
 
             for dim in keys:
                 offset = (slice(None),) * self.axes[dim]
@@ -457,11 +462,12 @@ class Block(BaseAbstract):
     def valid_data(self) -> np.ndarray:
         """ Center data values for the valid locations """
         if self.is_sparse:
+            data = self.sparse_data.data
             # If no window is requested, the sparse data is already filtered
             if sum([np.sum(v) for v in self.window_depth.values()]+[0]) == 0:
-                return self.sparse_data.data.reshape(-1, self.sparse_data.data.shape[-1])
+                return data.reshape(-1, data.shape[-1])
             n_dims = self._data.shape[-1]
-            data = self.sparse_data.data.reshape((-1, n_dims))
+            data = data.reshape((-1, n_dims))
             return data[self.valid_windows]
         return self.data[tuple(self.valid_windows)]
 
@@ -475,7 +481,7 @@ class Block(BaseAbstract):
         try:
             res = [r[v] for r,v in zip(self.resolution, self.valid_windows)]
         except IndexError as e:
-            raise Exception(
+            raise IndexError(
                 'An index error here is likely due to blocks needing to be ' +
                 're-cached (not the Dataset cache); this can be done by ' +
                 'passing overwrite=True during Batcher creation.') from e
@@ -525,7 +531,7 @@ class Block(BaseAbstract):
 
         # Splitting large chunks seems to sometimes result in KeyError in dask
         with dask.config.set(**{'array.slicing.split_large_chunks': False}):
-            # Include in the summary stats any coordinates requested as features
+            # Include in the summary stat any coordinates requested as features
             for coord in data.coords:
                 if (coord in features) and (coord != 'datetime'):
                     coords = {c: data[c] for c in data.coords if c != coord}
@@ -538,34 +544,50 @@ class Block(BaseAbstract):
             # Slightly different handling required for sparse data
             if self.is_sparse:
                 def _calc(values):
+                    d_append = dask.delayed(np.append)
+                    d_series = dask.delayed(pd.Series)
+
                     # Explicitly apply functions per-block to avoid densifying
                     blocks = values.data.to_delayed().ravel()
 
                     # Ensure there's always at least one element to avoid errors
-                    delays = [dask.delayed(np.append)(b.data, [np.nan]) for b in blocks]
-                    series = [dask.delayed(pd.Series)(b) for b in delays]
+                    delays = [d_append(b.data, [np.nan]) for b in blocks]
+                    series = [d_series(b) for b in delays]
 
                     # Fake array sizes so dask doesn't complain
                     length = [1] * len(series)
-                    arrays = df.from_delayed(series).to_dask_array(lengths=length)
-                    # Alternatively: values.data.map_blocks(lambda b: b.data[:,None,None])
+                    series = df.from_delayed(series)
+                    arrays = series.to_dask_array(lengths=length)
+                    # Alternatively:
+                    #  values.data.map_blocks(lambda b: b.data[:,None,None])
 
                     # Similar to dense summary, but use dask operations directly
-                    extra = dd(int, {'null' : lambda x: values.size-da.sum(da.isfinite(x))})
+                    extra = dd(int, {
+                        'null' : lambda x: values.size - da.sum(da.isfinite(x)),
+                    })
                     coord = xr.Variable('statistics', stat_keys)
-                    value = lambda k: getattr(da, f'nan{k}', extra[k])(arrays).astype('float32')
+                    nan_f = lambda k: getattr(da, f'nan{k}', extra[k])
+                    value = lambda k: nan_f(k)(arrays).astype('float32')
                     toset = lambda k: xr.DataArray(value(k))
-                    stats = xr.concat(map(toset, stat_keys), coord).to_dataset('statistics')
-                    stats[perc_keys] = da.percentile(arrays, quantiles, internal_method='tdigest')
+                    array = xr.concat(map(toset, stat_keys), coord)
+                    stats = array.to_dataset('statistics')
+
+                    stats[perc_keys] = da.percentile(arrays, quantiles,
+                                                     internal_method='tdigest')
                     return stats.to_array('statistics')
                 stats = data.apply(_calc)
 
             # Dense summary computation relies mostly on xarray operations
             else:
-                extra = dd(int, {'null' : lambda: data.isnull().sum(dtype='int64')})
+                extra = dd(int, {
+                    'null' : lambda: data.isnull().sum(dtype='int64'),
+                })
                 coord = xr.Variable('statistics', stat_keys)
-                value = lambda k: getattr(data, k, extra[k])().to_array('features')
-                stats = xr.concat(map(value, stat_keys), coord).to_dataset('statistics')
+
+                get_f = lambda k: getattr(data, k, extra[k])()
+                value = lambda k: get_f(k).to_array('features')
+                array = xr.concat(map(value, stat_keys), coord)
+                stats = array.to_dataset('statistics')
 
                 # Compute percentiles as a group for efficiency
                 stats[perc_keys] = xr.apply_ufunc(
@@ -585,7 +607,7 @@ class Block(BaseAbstract):
             stats['features'] = stats['features'].astype(str)
             return stats.chunk(-1)
 
-    
+
     def set_feature_masks(self, feature_masks: dict):
         """ Mask the requested features so only values within a bin remain """
         # Need to modify valid_mask to handle zarr features
@@ -602,29 +624,29 @@ class Block(BaseAbstract):
                     f'Unexpected coord shape: {self.coords.shape=} vs '
                     f'data.shape={self._data[0].shape}')
                 return coord, 0
-            raise Exception(f'Unknown {feature=}: {self.features=}')
+            raise ValueError(f'Unknown {feature=}: {self.features=}')
 
         self._feature_mask = True
         for feature in self.feature_subset(list(feature_masks)):
             label = feature.split('@')[0]
             lo,hi = feature_masks[feature]
-            val,i = _get_feature(label)
+            val,_ = _get_feature(label)
             valid = (val >= lo) & (val < hi)
             self._valid_mask &= valid
-            # self._data[i] = da.where(valid, self._data[i], np.nan)
+            # self._data[_] = da.where(valid, self._data[_], np.nan)
             self._feature_mask &= valid
 
         if isinstance(self._feature_mask, bool):
             self.__dict__.pop('_feature_mask')
         self.__dict__.pop('valid_mask', None)
 
-        
+
     def set_valid_percents(self, valid_percent: dict):
         """ Set a new valid_percent after formatting correctly """
         assert(getattr(self, '_original_valid_percent', None) is None)
         self._original_valid_percent = self.valid_percent
         formatted = {}
-        keys = tuple()
+        keys = ()
         for k, v in valid_percent.items():
             if not isinstance(k, tuple):
                 k = (k,)
@@ -643,7 +665,7 @@ class Block(BaseAbstract):
             self._original_valid_percent = None
 
 
-    def invalid(self, data: Union[np.ndarray, None] = None):
+    def invalid(self, data: np.ndarray | None = None):
         """Element-wise mask of invalid values in the given array.
 
         Parameters
@@ -752,7 +774,7 @@ class Block(BaseAbstract):
                 axes = list(set(range(1 ,ndims+1)) - {axis})
                 return np.expand_dims(bound, axes)
 
-            # Expand the bounds so they can be broadcast over the full data/coords
+            # Expand the bounds so they can broadcast over the full data/coords
             windows = tuple(starmap(expand, enumerate(bounds, 1)))
             assert(len(windows[0]) == n_samples), [len(windows), n_samples]
 

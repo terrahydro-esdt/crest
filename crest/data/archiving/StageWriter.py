@@ -27,7 +27,7 @@ class StageWriter(Writer):
     Staging (i.e. calling StageWriter.stage_many_coords and .flush) is process
     safe. Multiple StageWriters can stage data within the same directory, with
     a single ZarrWriter being used to occasionally consolidate into the zarr.
-    
+
     Parameters
     ----------
     data_schema : xr.DataArray
@@ -39,7 +39,7 @@ class StageWriter(Writer):
         cleaned up once the writer is closed.
     max_queue   : int
         The number of batches to collect before writing data held in memory
-        into parquet fragments on disk.         
+        into parquet fragments on disk.
     n_buckets   : int
         The number of hash buckets used to stage data. Enables the randomized
         stream of data to be organized into many localized streams which are
@@ -53,9 +53,9 @@ class StageWriter(Writer):
         instead be written to the nearest value contained within the schema.
     **kwargs
         Additional keyword arguments are discarded.
-        
+
     """
-    
+
     def __init__(self,
         data_schema : xr.DataArray,
         stage_path  : str | Path | None = None,
@@ -74,19 +74,19 @@ class StageWriter(Writer):
             'coords' : self.coords[dim].values,
             'name'   : dim,
             'mode'   : 'strict' if dim in strict_dims else 'nearest',
-        }) for dim in self.dims} 
+        }) for dim in self.dims}
 
 
     @property
     def is_open(self) -> bool:
         """ Whether the writer is currently open """
         return hasattr(self, '_directory')
-        
-    
+
+
     def open(self):
         """ Open the writer and initialize all buffers """
         assert(not self.is_open), f'{self} is already open'
-        
+
         # Create the temporary staging directory
         if self._stage_path is None:
             self._directory = TemporaryDirectory()
@@ -99,8 +99,8 @@ class StageWriter(Writer):
         self._buffers = {b: dd(list) for b in range(self.n_buckets)}
         for b in self._buffers:
             create(self.stage_path.joinpath(f'bucket-{b:04d}'))
-            
-                
+
+
     def close(self):
         """ Close the writer, flushing any pending data to disk """
         if self.is_open:
@@ -111,18 +111,18 @@ class StageWriter(Writer):
             self.__dict__.pop('_counter')
             self.__dict__.pop('_buffers')
 
-    
+
     @property
     def stage_path(self):
         """ Path to the staging area for intermediate data storage """
         assert(self.is_open), f'{self} is not open'
         if isinstance(self._directory, TemporaryDirectory):
             return Path(self._directory.name)
-        return self._directory 
+        return self._directory
 
-    
+
     def stage_many(self,
-        indices : dict[str, np.ndarray],  
+        indices : dict[str, np.ndarray],
         values  : dict[str, np.ndarray],
     ) -> None:
         """ Stage a batch using integer indices """
@@ -140,7 +140,7 @@ class StageWriter(Writer):
         ix_val = zip(indices // np.array(self.chunksize), *indices.T, *vs)
         bucket = lambda iv: hash(tuple(iv[0])) % self.n_buckets
         for b, group in groupby(ix_val, bucket):
-            ix, *vals = zip(*group) 
+            ix, *vals = zip(*group)
 
             # Increment the bucket counter and extend its buffers
             self._counter[b] += len(ix)
@@ -151,9 +151,9 @@ class StageWriter(Writer):
         if sum(self._counter.values()) >= self.max_queue:
             self.flush()
 
-    
+
     def stage_many_coords(self,
-        coords : dict[str, np.ndarray], 
+        coords : dict[str, np.ndarray],
         values : dict[str, np.ndarray],
     ) -> None:
         """ Stage a batch using real coordinates """
@@ -177,14 +177,14 @@ class StageWriter(Writer):
 
     def flush(self) -> None:
         """ Flush each non-empty bucket to a parquet fragment """
-        for b, count in self._counter.items():            
-            if count: 
+        for b, count in self._counter.items():
+            if count:
                 array = {k: pa.array(v) for k,v in self._buffers[b].items()}
                 table = pa.table(array)
-    
+
                 bucket_dir = self.stage_path / f'bucket-{b:04d}'
                 bucket_hex = uuid.uuid4().hex
-    
+
                 # Ensure atomic write
                 tmp = bucket_dir / f'.part-{bucket_hex}.parquet'
                 out = bucket_dir / f'part-{bucket_hex}.parquet'

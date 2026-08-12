@@ -1,15 +1,11 @@
 from __future__ import annotations
+
 from collections.abc import Collection, Iterator
-from collections import defaultdict as dd
-from functools import cached_property
 from tlz import merge_with, dissoc
-import re
 
-import xarray as xr 
-import numpy as np 
-import warnings 
-
-from crest.base import BaseAbstract 
+import xarray as xr
+import numpy as np
+import warnings
 
 
 # class DatafileSample:
@@ -27,7 +23,7 @@ from crest.base import BaseAbstract
 # Inheriting from BaseAbstract nearly triples the time for loading batches
 # e.g. ~190 Batches/sec -> ~70 Batches/sec
 class Sample:#(BaseAbstract):
-    """ Class which holds all Datafile windows for a single location. 
+    """ Class which holds all Datafile windows for a single location.
 
     Notes
     -----
@@ -35,36 +31,40 @@ class Sample:#(BaseAbstract):
     created which holds the xr.Dataset object for each Datafile.
 
     These xr.Dataset objects contain the window which was defined
-    for each Datafile, respectively, when the search was performed 
+    for each Datafile, respectively, when the search was performed
     (e.g. 3 x 3 x 2 window [latitude x longitude x time]).
 
     Each xr.Dataset object contains all variables from the respective
-    Datafile object it represents, as well as the coordinates from 
-    which those variables were retrieved. 
+    Datafile object it represents, as well as the coordinates from
+    which those variables were retrieved.
 
     Parameters
     ----------
     data : Collection[dict]
         The collection of data windows, with exactly one per Datafile.
-        The dictionary elements should each contain all information 
+        The dictionary elements should each contain all information
         necessary to initialize the respective xarray.DataArray object
         (i.e. data, coords, and dims, with one dim named 'features').
 
     """
     def __init__(self, data: Collection[dict], dtype=object):
-        self._features = merge_with(list, [dict.fromkeys(d.get('requested_features', []), i) for i,d in enumerate(data)])
+        self._features = merge_with(list, [
+            dict.fromkeys(d.get('requested_features', []), i)
+            for i,d in enumerate(data)
+        ])
         self.key_label = [d.get('key_label', '') for d in data]
-        self.container = [dissoc(d, 'requested_features', 'key_label') for d in data]
+        self.container = [dissoc(d, 'requested_features', 'key_label')
+                          for d in data]
         self.dtype = dtype
         self.cache = {}
 
 
     def astype(self, T):
         """ No-op for numpy array compatibility """
-        return self 
+        return self
 
 
-    def __array__(self, *args, **kwargs): 
+    def __array__(self, *args, **kwargs):
         a = np.empty(1, dtype=object)
         a[0] = self
         return a
@@ -96,7 +96,7 @@ class Sample:#(BaseAbstract):
         for i, item in enumerate(self.container):
             if feature in item['coords']['features']:
                 return i
-        raise Exception(f'Feature "{feature}" not found in: {self.features}')
+        raise ValueError(f'Feature "{feature}" not found in: {self.features}')
 
 
     @property
@@ -125,7 +125,11 @@ class Sample:#(BaseAbstract):
         is_num = lambda v: np.issubdtype(v.dtype, np.number)
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
-            return {dim: np.nanmean([c[dim].mean() for c in coords if dim in c and is_num(c[dim])]) for dim in self.dims}
+            return {
+                dim: np.nanmean([c[dim].mean()
+                    for c in coords if dim in c and is_num(c[dim])
+                ]) for dim in self.dims
+            }
 
 
     def get_feature_coords(self, feature: str):
@@ -136,7 +140,8 @@ class Sample:#(BaseAbstract):
     @property
     def data(self) -> dict[str, list]:
         """ Data for all items; {feature: [item0_feature, ...]} """
-        to_dict = lambda i,d: dict(zip(d['coords']['features'], [(i,v) for v in d['data']]))
+        to_dict = lambda i,d: dict(zip(
+            d['coords']['features'], [(i,v) for v in d['data']]))
         i_dicts = [to_dict(i, item) for i, item in enumerate(self.container)]
         return self.coords | merge_with(dict, *i_dicts)
 
@@ -152,7 +157,7 @@ class Sample:#(BaseAbstract):
     def features(self) -> list:
         """ All available features """
         return [f for d in self.container for f in d['coords']['features']]
-    
+
 
     def to_list(self, features: list | None = None) -> list:
         """ Extract the requested features into a list """
@@ -168,9 +173,9 @@ class Sample:#(BaseAbstract):
             if i in self.key_label:
                 return self.key_label.index(i)
             try:    return int(i)
-            except: pass
-            raise Exception(f'Unknown key/format: {i=} {self.key_label=}')
-                
+            except: pass  # noqa: S110
+            raise ValueError(f'Unknown key/format: {i=} {self.key_label=}')
+
         for feature_index in (features or self.features):
             if isinstance(feature_index, str):
 
@@ -182,17 +187,19 @@ class Sample:#(BaseAbstract):
                     if feature_index.count(':') != 2:
                         raise ValueError(f'{feature_index=} does not match the'
                             + ' expected format "distance:{{key1}}:{{key2}}"')
-                        
+
                     d1, d2 = feature_index.split(':')[1:]
                     i1, i2 = get_index(d1), get_index(d2)
                     d1, d2 = self.key_label[i1], self.key_label[i2]
                     assert(i1 != i2), f'{feature_index=}: {i1=} == {i2=}'
 
-                    miss = lambda k: np.array([np.nan]).astype(
-                                    'datetime64' if k=='datetime' else 'float32')
-                    item = lambda i,k: self.container[i]['coords'].get(k, miss(k))
-                    diff = lambda k: item(i1, k)[:, None] - item(i2, k)[None]
-                    vals.append({k: diff(k) for k in dims if k != 'features'})
+                    def _diff(k, i1=i1, i2=i2):
+                        dtype = 'datetime64' if k == 'datetime' else 'float32'
+                        nan_v = np.array([np.nan]).astype(dtype)
+                        item1 = self.container[i1]['coords'].get(k, nan_v)
+                        item2 = self.container[i2]['coords'].get(k, nan_v)
+                        return item1[:, None] - item2[None]
+                    vals.append({k: _diff(k) for k in dims if k != 'features'})
 
                 elif '__' in feature_index:
                     if data is None: data = self.data
@@ -201,14 +208,14 @@ class Sample:#(BaseAbstract):
                     if label not in self.key_label:
                         label = self._features.get(feature, [0])[0]
                     vals.append(data[feature][get_index(label)])
-                    
+
                 elif '@' in feature_index:
                     if data is None: data = self.data
                     if feature_index not in data:
                         feature, *index = (feature_index+'@0').split('@')
                         vals.append(data[feature][get_index(index[0])])
-                    else: vals.append(list(data[feature_index].values())[0])
-                        
+                    else: vals.append(next(iter(data[feature_index].values())))
+
                 else:
                     if feature_index not in self._features:
                         feature, *index = (feature_index+'@0').split('@')
@@ -221,14 +228,15 @@ class Sample:#(BaseAbstract):
                             if data is None: data = self.data
                             if feature_index not in data:
                                 vals.append(data[feature][int(index[0])])
-                            elif isinstance(data[feature_index], dict): 
-                                vals.append(list(data[feature_index].values())[0])
+                            elif isinstance(data[feature_index], dict):
+                                vals.append(
+                                    next(iter(data[feature_index].values())))
                             else: vals.append(data[feature_index][0])
-                    else: 
+                    else:
                         if grps is None: grps = self.data_groups
                         f_idx = self._features[feature_index][0]
                         vals.append(grps[f_idx][feature_index])
-            else: 
+            else:
                 if data is None: data = self.data
                 vals.append(data[feature_index][0])
 
@@ -244,7 +252,7 @@ class Sample:#(BaseAbstract):
         assert(len(vals) == len(features or vals)), \
             f'Missing / duplicate features: {len(vals)} vs {len(features)}\n'+\
             f'Expected: {features}'
-        return vals 
+        return vals
 
 
     def to_array(self, features: list | None = None) -> np.ndarray:

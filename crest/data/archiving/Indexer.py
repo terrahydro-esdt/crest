@@ -8,18 +8,20 @@ class Indexer:
     """ Maps real coordinate vectors to integer indices.
 
     Modes:
-      - 'nearest' (default): nearest neighbor index (optionally with absolute tolerance)
+      - 'nearest' (default): nearest neighbor index (with optional tolerance)
       - 'left'/'right': bin edges behavior
       - 'strict': exact match required
 
     Coordinates may be ascending or descending; must be monotonic.
+
     """
+
     coords: np.ndarray
     name: str
     mode: str = 'nearest'
-    tol: float | int | None = None  # float for lat/lon; int ns for datetime64[ns]
+    tol: float|int|None = None  # float for lat/lon; int ns for datetime64[ns]
 
-    
+
     def __post_init__(self):
         """ Perform checks and determine coord order after initialization """
         if self.coords.ndim != 1:
@@ -27,16 +29,17 @@ class Indexer:
         inc = np.all(self.coords[1:] >= self.coords[:-1])
         dec = np.all(self.coords[1:] <= self.coords[:-1])
         if not (inc or dec):
-            raise ValueError(f'Coordinate "{self.name}" must be monotonic (ascending or descending)')
+            raise ValueError(f'Coordinate "{self.name}" must be monotonic '
+                             '(ascending or descending)')
         self._asc = bool(inc)
 
-    
+
     @property
     def size(self) -> int:
         """ Total size of the coordinates """
         return int(self.coords.size)
 
-    
+
     def find(self, coords: np.ndarray) -> np.ndarray:
         """ Find the location of a set of coordinates within the schema """
         schema = self.coords[::1 if self._asc else -1]

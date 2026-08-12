@@ -9,6 +9,8 @@ exclude = [
     '.ipynb_checkpoints',
     'cicd',
     'logs',
+    'crest/archiver',
+    'crest/utils/matchup',
 ]
 output-format = "grouped"
 output-prefer-rule-codes = true
@@ -16,13 +18,23 @@ output-prefer-rule-codes = true
 
 [lint]
 extend-select = ['W', 'E']
+fixable = [
+    'W291',   # trailing whitespace
+    'W292',   # missing EOF newline
+    'W293',   # blank line whitespace
+    'F401',   # imported but not used
+    'F541',   # f-string without placeholders
+    'UP007',  # 'X | Y' instead of Union
+    'UP035',  # switch import module
+    'UP037',  # quotes around type annotation
+]
 ignore = [
     'I001',   # import order
     'N999',   # snake_case module names
     'B006',   # mutable data structures for argument defaults
     'B010',   # setattr on constant attribute value
     'BLE001', # catch blind exceptions: 'Exception'
-    'E128',   # under-indented continuation line
+    # 'E128',   # under-indented continuation line
     'E201',   # whitespace after parentheses
     'E202',   # whitespace before parentheses
     'E203',   # whitespace before colons
@@ -37,6 +49,7 @@ ignore = [
     'E275',   # whitespace after keyword
     'E303',   # too many blank lines
     'E701',   # multiple statements on one line
+    'E722',   # bare `except`
     'E731',   # lambda expression assignments
     'PIE804', # dict kwargs 
     'RUF100', # noqa directives
