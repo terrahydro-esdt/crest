@@ -24,11 +24,9 @@ Submodules
    crest.utils.S3Path
    crest.utils.Stopwatch
    crest.utils.TimedHandler
-   crest.utils.batcher_for_archiver
    crest.utils.chunk_dict
    crest.utils.classproperty
    crest.utils.crest_logger
-   crest.utils.cross_validation
    crest.utils.dask_overlap
    crest.utils.ensure_with
    crest.utils.find_neighbors
