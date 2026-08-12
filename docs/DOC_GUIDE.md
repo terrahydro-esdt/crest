@@ -335,9 +335,9 @@ cd docs/ && make html && open _build/html/index.html
 # Test that notebooks work
 pytest tests/examples/test_nbs.py --examples -v
 
-# Test documentation examples You need to use run_doctest.py):
+# Test documentation examples (you need to use scripts/run_doctest.py):
 # For example:
-python run_doctest.py crest.model.HierarchalTensorGraph -v
+python scripts/run_doctest.py crest.model.HierarchalTensorGraph -v
 
 # Optional
 # --------

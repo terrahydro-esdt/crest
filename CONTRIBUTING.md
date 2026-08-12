@@ -147,7 +147,7 @@ def process_data(
 
 ## Documentation Standards
 
-All contributions must include appropriate documentation. See [DOC_GUIDE.md](DOC_GUIDE.md) for detailed templates.
+All contributions must include appropriate documentation. See [DOC_GUIDE.md](docs/DOC_GUIDE.md) for detailed templates.
 
 ### Minimum Requirements
 
