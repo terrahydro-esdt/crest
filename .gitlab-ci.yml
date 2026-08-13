@@ -17,6 +17,11 @@ test:
     - pytest --color=yes tests
   allow_failure: false
 
+doctest:
+  script:
+    - scripts/run_doctests.sh
+  allow_failure: false
+
 pages:
   stage: deploy
   script:
