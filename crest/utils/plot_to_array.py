@@ -22,8 +22,8 @@ def plot_to_array(dpi: int = 120, width: float = 4.8, height: float = 3.6):
     Examples
     --------
     >>> with plot_to_array() as array:
-    ...     plt.scatter([1, 2], [2, 1])
-    >>> plt.imshow(array)
+    ...     _ = plt.scatter([1, 2], [2, 1])
+    >>> _ = plt.imshow(array[0])  # array has a leading batch dimension
 
     """
 
@@ -53,8 +53,8 @@ def plot_to_array(dpi: int = 120, width: float = 4.8, height: float = 3.6):
 
             # Re-draw artists to update placement and get h/w in pixels
             figure.canvas.draw()
-            w_px, h_px = figure.canvas.get_width_height()
-            figure.savefig(buffer, format='raw', dpi=dpi, bbox_inches=bbox)
+            w_px, h_px = figure.canvas.get_width_height(physical=True)
+            figure.savefig(buffer, format='raw', dpi=dpi)
 
             # Read the buffer to create an image array from the saved figure
             buffer.seek(0)
