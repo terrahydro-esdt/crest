@@ -740,7 +740,7 @@ class Batcher:
         Examples
         --------
         >>> path = 'SavedBatches/batches.pkl'
-        >>> with Batcher.load_saved(dataset, save_path=path) as batches:
+        >>> with Batcher.load_saved(dataset, save_path=path) as batches:  # doctest: +SKIP
         ...    for batch in batches:
         ...        print(batch)
 

@@ -46,13 +46,13 @@ class BaseSet(BaseAbstract):
     >>> strings.join(['1 ', ' 2'])
     StringSet['1 a b c 2', '1 d.e.f 2']
     >>> strings.split(_map=[[' ', '.']])
-    StringSet[['a', 'b', 'c'], ['d', 'e', 'f']]
+    BaseSet[['a', 'b', 'c'], ['d', 'e', 'f']]
     >>> strings.split(_map=[[' ', '.'], [1, 2]])
-    StringSet[['a', 'b c'], ['d', 'e', 'f']]
+    BaseSet[['a', 'b c'], ['d', 'e', 'f']]
     >>> strings.split(_map=[[' ', '.']], _kwmap={'maxsplit': [1, 2]})
-    StringSet[['a', 'b c'], ['d', 'e', 'f']]
+    BaseSet[['a', 'b c'], ['d', 'e', 'f']]
     >>> strings.upper().split(' ')
-    StringSet[['A', 'B', 'C'], ['D.E.F']]
+    BaseSet[['A', 'B', 'C'], ['D.E.F']]
 
     """
     def __init__(self, objs: Collection[T] | map):

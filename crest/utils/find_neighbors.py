@@ -208,14 +208,13 @@ def implode(table):#: np.ndarray | pl.DataFrame):
     Takes a row-expanded representation of data and transforms it into
     a condensed ragged array. For example:
 
-    >>> a = [ [0, 0, 0],
-    ...       [0, 0, 1],
-    ...       [0, 1, 0],
-    ...       [1, 1, 1] ]
-    >>> implode(a.T)
-    [ [[0], [0], [0,1]],
-      [[0], [1], [0]  ],
-      [[1], [1], [1]  ] ]
+    >>> import numpy as np
+    >>> a = np.array([ [0, 0, 0],
+    ...                [0, 0, 1],
+    ...                [0, 1, 0],
+    ...                [1, 1, 1] ])
+    >>> [[list(v) for v in row] for row in implode(a.T)]
+    [[[0], [0], [1]], [[0], [1], [1]], [[0, 1], [0], [1]]]
 
     """
     if pl is None: 

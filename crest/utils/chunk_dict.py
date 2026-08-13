@@ -29,7 +29,7 @@ def chunk_dict(n: int, d: dict | Iterable[dict]) -> Iterator[dict]:
     {'a': [1, 3, 5], 'b': [2, 4, 6]}
     >>> e = chunk_dict(2, d) # Now chunk to a certain size
     >>> print(list(e))
-    [{'a':[1,3], 'b':[2,4]}, {'a':[5], 'b':[6]}]
+    [{'a': [1, 3], 'b': [2, 4]}, {'a': [5], 'b': [6]}]
 
     >>> import numpy as np
     >>> size3 = [{'a': np.array([1,2,3]), 'b': np.array([4,5,6])}, 

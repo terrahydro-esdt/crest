@@ -74,18 +74,21 @@ def limit_calls(
         
     Examples
     --------
-    >>> from time import sleep
+    Use a fake clock in place of real elapsed time, so this example runs
+    instantly and deterministically rather than depending on real timing
+    (which can shift results near the timespan boundary):
+
     >>> @limit_calls(limit=2, timespan=1, logger=False)
-    ... def f(): 
+    ... def f():
     ...     return True
     ...
     >>> for i in range(1, 24):
+    ...     limit_calls.__globals__['time'] = lambda i=i: 0.1 * (i - 1)  # simulate elapsed time
     ...     if i in [1,4,7,10,12,13,14,15,17,18,20,23]:
     ...         if f():
     ...             print(i, f'called ({f._call_skips} skips)')
     ...         else:
     ...             print(f'skipped {i}')
-    ...     sleep(0.1)
     ...
     1 called (0 skips)
     4 called (0 skips)
@@ -93,12 +96,12 @@ def limit_calls(
     skipped 10
     12 called (2 skips)
     skipped 13
-    14 called (1 skips)
-    skipped 15
+    skipped 14
+    15 called (2 skips)
     skipped 17
     skipped 18
     skipped 20
-    23 called (4 skips)
+    23 called (3 skips)
 
     """
 

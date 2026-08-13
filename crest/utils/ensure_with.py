@@ -30,6 +30,7 @@ def ensure_with(
     
     Examples
     --------
+    >>> from contextlib import contextmanager
     >>> identity = lambda x: x
     >>> with ensure_with(identity) as wrapped:
     ...     print(wrapped is identity)
@@ -52,7 +53,7 @@ def ensure_with(
     ...             f(i)
     ...
     >>> iterate(print, 3) # Calls print with no arguments first
-    
+    <BLANKLINE>
     0
     1
     2

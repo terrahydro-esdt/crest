@@ -29,7 +29,7 @@ def print_table(
 
     Examples
     --------
-    >>> with print_table():
+    >>> with print_table():  # doctest: +NORMALIZE_WHITESPACE
     ...   print('a | b | c')
     ...   print('d|e')
       Column 0 Column 1 Column 2
@@ -38,7 +38,7 @@ def print_table(
     1        d        e
     >>> with print_table(['i*2','i*3','skip'], ' ', {'display.max_rows':4}):
     ...   for i in range(8):
-    ...     print(f'{i} {i*2}')
+    ...     print(f'{i*2} {i*3}')
        i*2 i*3
        --- ---
     0    0   0

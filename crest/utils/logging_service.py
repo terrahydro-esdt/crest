@@ -324,6 +324,7 @@ def log_context(**kwargs):
     --------
     Add run_id and stage to all logs:
 
+    >>> logger = get_logger(__name__)
     >>> with log_context(run_id="exp_001", stage="training"):
     ...     logger.info("Starting epoch 1")
     ...     # Log will include: run_id="exp_001", stage="training"

@@ -102,12 +102,12 @@ class Stopwatch:
     Examples
     --------
     >>> import time
-    >>> with Stopwatch():
+    >>> with Stopwatch():  # doctest: +ELLIPSIS +NORMALIZE_WHITESPACE
     ...   time.sleep(1)
-    time=1 seconds  dMem=0 B
-    >>> with Stopwatch('using time.perf_counter', timer=time.perf_counter):
+    [time: 1...s|dMem:...]
+    >>> with Stopwatch('using time.perf_counter', timer=time.perf_counter):  # doctest: +ELLIPSIS
     ...   time.sleep(1)
-    using time.perf_counter: time=1.01 seconds  dMem=0 B
+    [time: 1...s|dMem:...] using time.perf_counter
 
     """
 
@@ -246,13 +246,13 @@ class Stopwatch:
         >>> Stopwatch.readable(12345, 'byte')
         '12.1 KB'
         >>> Stopwatch.readable(12345, 'time')
-        '206 minutes'
+        '206m'
         >>> Stopwatch.readable(1234.5, 'time')
-        '20.6 minutes'
+        '20.6m'
         >>> Stopwatch.readable(123.45, 'time')
-        '123 seconds'
+        '123s'
         >>> Stopwatch.readable(123456, 'time')
-        '34.3 hours'
+        '34.3h'
 
         """
 
