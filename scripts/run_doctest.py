@@ -6,14 +6,17 @@ Usage:
     python run_doctest.py crest.model.HierarchalTensorGraph
     python run_doctest.py crest.model.HierarchalTensorGraph -v
 
-Note: This script is a workaround because 
-    python -m doctest 
-only works with file paths, not module paths, and it doesn't handle 
+Note: This script is a workaround because
+    python -m doctest
+only works with file paths, not module paths, and it doesn't handle
 relative imports well which is how CREST is setup.
 
 """
 import sys
 import doctest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
