@@ -38,10 +38,10 @@ class SysMetrics:
     --------
     >>> sm = SysMetrics()
     >>> with sm.timed("function"):
-    >>>     # code to be measured
+    ...     pass  # code to be measured
 
     """
-    def __init__(self, run_id: str | None, run_dir: str | None):
+    def __init__(self, run_id: str | None = None, run_dir: str | None = None):
         run_dir = run_dir or str(Path("logs") / time.strftime("%Y%m%d-%H%M%S"))
         self.run_id  = run_id  or Path(run_dir).name
         self.run_dir = run_dir
@@ -53,8 +53,6 @@ class SysMetrics:
             kind,
             extra={"kind": kind, "ts": time.time(), **fields}
         )
-
-        emit_metric(kind, run_id=self.run_id, run_dir=self.run_dir, **fields)
 
     @contextmanager
     def timed(self, label: str | None, **extra_fields):

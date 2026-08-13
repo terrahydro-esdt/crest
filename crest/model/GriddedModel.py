@@ -1,7 +1,7 @@
 """
 This module implements a class that combines models with data
 within a configurable object intended to create
-configurable models that run over regions..
+configurable models that run over regions.
 """
 
 import importlib
