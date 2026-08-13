@@ -2,8 +2,7 @@ CREST: Coupled Reusable Earth System Tensor Framework
 Copyright 2026 Craig Pelissier and the CREST Development Team
 
 This product includes software developed by the CREST Development Team.
-# TODO: Update URL when repository is made public on GitHub (planned August 2026)
-(https://github.com/terrahydro/crest)
+(https://github.com/terrahydro-esdt/crest)
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.

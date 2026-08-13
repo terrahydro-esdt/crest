@@ -20,8 +20,7 @@ Clone the repository:
 
 .. code-block:: bash
 
-   # TODO: Update URL when repository is made public on GitHub (planned August 2026)
-   git clone https://gitlab.smce.nasa.gov/astg/terrahydro/development/crest.git
+   git clone https://github.com/terrahydro-esdt/crest.git
    cd crest
 
 Create the Python environment. Choose the file that matches your platform:

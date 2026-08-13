@@ -31,10 +31,9 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
-# TODO: Update URLs when the repository is made public on GitHub (planned August 2026)
 [project.urls]
-Homepage = "https://astg.pages.smce.nasa.gov/terrahydro/development/crest/"
-Documentation = "https://astg.pages.smce.nasa.gov/terrahydro/development/crest/"
+Homepage = "https://terrahydro-esdt.github.io/crest/"
+Documentation = "https://terrahydro-esdt.github.io/crest/"
 Repository = "https://github.com/terrahydro-esdt/crest"
 "Bug Tracker" = "https://github.com/terrahydro-esdt/crest/issues"
 

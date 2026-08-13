@@ -1,7 +1,7 @@
 .. TODO: Uncomment badges once the repository is public and DOI is registered
 
 .. |docs| image:: https://readthedocs.org/projects/crest/badge/?version=latest
-   :target: https://astg.pages.smce.nasa.gov/terrahydro/development/crest/
+   :target: https://terrahydro-esdt.github.io/crest/
    :alt: Documentation Status
 
 .. |license| image:: https://img.shields.io/badge/License-Apache%202.0-blue.svg
@@ -76,7 +76,7 @@ Choose the environment file that matches your platform:
 
 .. code-block:: bash
 
-   git clone https://gitlab.smce.nasa.gov/astg/terrahydro/development/crest   # TODO: change URL at release
+   git clone https://github.com/terrahydro-esdt/crest.git
    cd crest
    conda env create -f cicd/environment_macos_arm64.yaml   # adjust for your platform
    conda activate OCETRA_cpu
@@ -100,12 +100,11 @@ See the `examples/ <examples/>`_ directory for full worked notebooks:
 Documentation
 -------------
 
-.. TODO: change URL at release
-Full documentation: https://astg.pages.smce.nasa.gov/terrahydro/development/crest  
+Full documentation: https://terrahydro-esdt.github.io/crest/
 
-- `Installation Guide <https://astg.pages.smce.nasa.gov/terrahydro/development/crest/quickstart.html>`_
-- `Example Notebooks <https://astg.pages.smce.nasa.gov/terrahydro/development/crest/examples/index.html>`_
-- `API Reference <https://astg.pages.smce.nasa.gov/terrahydro/development/crest/api/index.html>`_
+- `Installation Guide <https://terrahydro-esdt.github.io/crest/quickstart.html>`_
+- `Example Notebooks <https://terrahydro-esdt.github.io/crest/examples/index.html>`_
+- `API Reference <https://terrahydro-esdt.github.io/crest/api/index.html>`_
 
 
 Contributing
