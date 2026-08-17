@@ -1,8 +1,10 @@
-.. TODO: Uncomment badges once the repository is public and DOI is registered
-
 .. |docs| image:: https://readthedocs.org/projects/crest/badge/?version=latest
    :target: https://terrahydro-esdt.github.io/crest/
    :alt: Documentation Status
+
+.. |doi| image:: https://zenodo.org/badge/DOI/10.5281/zenodo.21939177.svg
+   :target: https://doi.org/10.5281/zenodo.21939177
+   :alt: DOI
 
 .. |license| image:: https://img.shields.io/badge/License-Apache%202.0-blue.svg
    :target: https://www.apache.org/licenses/LICENSE-2.0
@@ -16,11 +18,7 @@
    :target: https://tensorflow.org/
    :alt: TensorFlow 2.18+
 
-.. |style| image:: https://img.shields.io/badge/code%20style-black-000000.svg
-   :target: https://github.com/psf/black
-   :alt: Code style: black
-
-|docs| |license| |python| |tf| |style|
+|docs| |doi| |license| |python| |tf|
 
 CREST: Coupled Reusable Earth System Tensor Framework
 =====================================================
@@ -48,8 +46,7 @@ Installation
 ~~~~~~~~~~~~
 
 .. note::
-   CREST will be available on PyPI at public release (planned August 2026).
-   Until then, use the developer install below.
+   CREST is not yet available on PyPI. Use the developer install below.
 
 **Future public install:**
 
@@ -123,10 +120,8 @@ Quick checklist:
 Community and Support
 ---------------------
 
-.. TODO: Confirm all community channels before public release
 - **Issues**: `GitHub Issues <https://github.com/terrahydro-esdt/crest/issues>`_
 - **Discussions**: `GitHub Discussions <https://github.com/terrahydro-esdt/crest/discussions>`_
-- **Email**: crest-dev@example.com
 
 Citation
 --------
@@ -135,11 +130,12 @@ If you use CREST in your research, please cite:
 
 .. code-block:: bibtex
 
-   @software{crest2024,
+   @software{crest2026,
      title   = {CREST: Coupled Reusable Earth System Tensor Framework},
      author  = {Pelissier, Craig and {CREST Development Team}},
-     year    = {2024},
+     year    = {2026},
      url     = {https://github.com/terrahydro-esdt/crest},
+     doi     = {10.5281/zenodo.21939177},
      version = {0.1.0}
    }
 
