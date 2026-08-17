@@ -7,7 +7,7 @@ authors:
     given-names: "Craig"
     affiliation: "SSAI Inc and NASA GSFC "
   - name: "CREST Development Team"
-doi: 10.5281/zenodo.20293610  
+doi: 10.5281/zenodo.21939177
 type: software
 repository-code: "https://github.com/terrahydro-esdt/crest"
 url: "https://terrahydro-esdt.github.io/crest/"
@@ -20,5 +20,4 @@ keywords:
   - "artificial intelligence"
 license: Apache-2.0
 version: 0.1.0
-# TODO: Set to actual release date when the repository is made public
-date-released: "2026-08-15"
+date-released: "2026-08-14"
