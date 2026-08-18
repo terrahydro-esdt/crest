@@ -109,14 +109,6 @@ Contributing
 
 We welcome contributions! See `CONTRIBUTING.md <CONTRIBUTING.md>`_ for full guidelines.
 
-Quick checklist:
-
-- Code follows style guide (PEP 8, ``black`` formatting)
-- Tests added for new functionality
-- Documentation updated (docstrings + tutorials if needed)
-- All tests pass (``pytest tests/``)
-- PR describes changes clearly
-
 Community and Support
 ---------------------
 
