@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-14
+
+### Summary
+
+First release.
+
 ### Fixed
 
 - `GriddedModel` no longer hardcodes a filesystem path as the default `SysMetrics` 
@@ -15,3 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requires (`myst-nb`, `nbsphinx`, `nbsphinx-link`, `pydata-sphinx-theme`,
   `sphinxcontrib-mermaid`), so `pip install ".[docs]"` alone could not build the
   documentation.
+
+[Unreleased]: https://github.com/terrahydro-esdt/crest/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/terrahydro-esdt/crest/releases/tag/v0.1.0

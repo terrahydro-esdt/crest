@@ -283,7 +283,6 @@ that out rather than writing a description from scratch.
 - **Documentation**: https://terrahydro-esdt.github.io/crest/
 - **Issues**: https://github.com/terrahydro-esdt/crest/issues
 - **Discussions**: https://github.com/terrahydro-esdt/crest/discussions
-- **Email**: crest-dev@example.com
 
 ## Recognition
 
