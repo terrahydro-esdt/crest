@@ -240,7 +240,8 @@ class MultiBatcher(Batcher):
 
     def _get_status(self) -> list[str]:
         """ Include configuration queue information in the status """
-        status = [str(self._batch_combiner)] + super()._get_status()
+        config = 'Block Config'+'\n\t'.join(map(str, ['']+self._block_configs))
+        status = [str(self._batch_combiner), config] + super()._get_status()
 
         # Forcing configs to reflect the true queue counts improves resiliency
         self._batch_combiner.update_queued()
@@ -368,6 +369,8 @@ class MultiBatcher(Batcher):
         """ Return the best config to use for the next block computation """
         string = '\n\t'.join(map(str, ['']+self._block_configs))
         self.debug(f'All configs: {string}')
+
+        # If directed sampling is off, find best config for the given block(s)
         if not self.directed_sampling:
             nonzero = [c for c in self._block_configs
                        if any(c.valid_blocks[i]==1 for i in block_idxs)]
@@ -376,15 +379,26 @@ class MultiBatcher(Batcher):
                 #                        f'for block {block_idxs}')
                 config = min(nonzero)
                 self.info(f'Selected {config}')
+
+                # If we don't do this, batches can pile up for easy block
+                #  configs while waiting on batches from a rare config
+                if len(config) > self.max_queue:
+                    self.info(f'len(min(block_configs)) > {self.max_queue=};'
+                              f' skipping block')
+                    return blocks, block_idxs, None
+                    
                 # Increment the number of workers when returning
                 return blocks, block_idxs, config.add_worker()
             else:
                 self.info(f'No configs generate samples for {block_idxs=}')
                 return blocks, block_idxs, None
-
-        # Enforce a soft-cap on the number of batches queued for each config
+                
+        # If directed sampling is on: ignore the given block(s) and instead 
+        #  pick the most-needed block config, then find a block for that config
         config = min(self._block_configs)
         count = 0
+
+        # Enforce a soft-cap on the number of batches queued for each config
         while (len(config) > self.max_queue) and not self._exit:
             mincfg = np.argmin(list(map(len, self._block_configs)))
             config = self._block_configs[mincfg]
