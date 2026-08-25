@@ -176,6 +176,11 @@ class Sample:#(BaseAbstract):
             except: pass  # noqa: S110
             raise ValueError(f'Unknown key/format: {i=} {self.key_label=}')
 
+        def _make_nan(coord_name: str) -> np.ndarray:
+            """ Create a NaN or NaT depending on the coordinate """
+            dtype = 'datetime64' if k == 'datetime' else 'float32'
+            return np.array([np.nan]).astype(dtype)
+
         for feature_index in (features or self.features):
             if isinstance(feature_index, str):
 
@@ -194,8 +199,7 @@ class Sample:#(BaseAbstract):
                     assert(i1 != i2), f'{feature_index=}: {i1=} == {i2=}'
 
                     def _diff(k, i1=i1, i2=i2):
-                        dtype = 'datetime64' if k == 'datetime' else 'float32'
-                        nan_v = np.array([np.nan]).astype(dtype)
+                        nan_v = _make_nan(k)
                         item1 = self.container[i1]['coords'].get(k, nan_v)
                         item2 = self.container[i2]['coords'].get(k, nan_v)
                         return item1[:, None] - item2[None]
@@ -213,7 +217,11 @@ class Sample:#(BaseAbstract):
                     if data is None: data = self.data
                     if feature_index not in data:
                         feature, *index = (feature_index+'@0').split('@')
-                        vals.append(data[feature][get_index(index[0])])
+                        index = get_index(index[0])
+                        if feature in self.dims:
+                            coords = self.container[index]['coords']
+                            vals.append(coords.get(feature, make_nan(feature)))
+                        else: vals.append(data[feature][index])
                     else: vals.append(next(iter(data[feature_index].values())))
 
                 else:
