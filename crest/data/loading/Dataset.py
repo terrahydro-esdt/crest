@@ -590,7 +590,7 @@ class Dataset(BaseSet):
         # Get the current number of blocks
         chunks  = self.chunks.ix[:-1]
         current = self.numblocks.ix[:-1]
-        blocks  = np.array(current[0])
+        blocks = np.array([next((cur[i] for cur,virt in zip(current,self.virtual) if not virt[i]),1) for i in range(len(current[0]))])
         assert(all(((current == blocks) | self.virtual).map(all))), current
 
         # Calculate required overlaps for each Datafile

@@ -997,13 +997,14 @@ class Batcher:
                             break
                         except Full:
                             count += 1
-                            while (not self._exit) and queue.full():
+                            if (not self._exit) and queue.full():
                                 time.sleep(WAIT_TIME)
 
                         # Notify when the queue has been full for a long time
                         if (count % int(seconds*10)) == 0:
                             self.info(f'_safe_queue_batches: {queue=} full ' +
                                       f'for at least {seconds} seconds')
+                            self._get_threads_traceback()
                     if self._exit: break
         except Empty:
             raise
@@ -2427,7 +2428,7 @@ class Batcher:
         return max(len(self.valid_percents), len(self.drop_datafiles), 1)
 
 
-    def _get_threads_traceback(self, limit=6, names=[], return_log=False):
+    def _get_threads_traceback(self, limit=8, names=[], return_log=False):
         """ Prints the stack trace for active threads """
         log = f'\n{self.process_name} Threads Status'
         bar = '_' * len(log)

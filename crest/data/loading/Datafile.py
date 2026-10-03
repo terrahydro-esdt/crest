@@ -18,6 +18,7 @@ import numpy as np
 import warnings
 import hashlib
 import shutil
+import sparse
 import ctypes
 import math
 import dask
@@ -309,7 +310,8 @@ class Datafile(BaseAbstract):
                 raw = raw.assign_coords(datetime=d64)
 
         # All coordinates must be in ascending order, with data chunked by dask
-        return raw.sortby(list(raw.coords)).chunk({})
+        numeric_coords = [c for c in list(raw.coords) if np.issubdtype(raw[c].dtype, np.number)]
+        return raw.sortby(numeric_coords).chunk({})
 
 
     @cached_property
@@ -411,7 +413,7 @@ class Datafile(BaseAbstract):
             self.original_dims[1]
 
         # Transpose dimensions so they are in the correct order, and return
-        order = sorted(set(data.coords) - {'features'})
+        order = sorted(set([c for c in data.dims]) - {'features'})
         return data.transpose(*order, ...)
 
 
@@ -694,8 +696,11 @@ class Datafile(BaseAbstract):
         if 'valid_mask' in null.features:
             null = null.drop_sel(features='valid_mask')
         sparsity = null.data.sum() / data.size
-        return sparsity.compute() if compute else sparsity
-
+        sparsity = sparsity.compute() if compute else sparsity
+        if isinstance(sparsity, sparse.COO):
+            sparsity = 1. # Completely empty data produces a COO object
+        return sparsity
+        
 
     def is_sparse(self, compute=True, threshold=0.99):
         """ Datafile is deemed sparse if sparsity > 99% """
@@ -814,6 +819,7 @@ class Datafile(BaseAbstract):
         # Stack the left/right resolution for each vector
         setattr(self, 'is_uniform', all(map(uniform, vectors)))
         if not self.is_uniform:
+            assert('snotel' not in self.name.lower())
             stack_lr = lambda i, vector: np.stack([
                 np.r_[vector[:1], vector],
                 np.r_[vector, vector[-1:]]
@@ -838,7 +844,6 @@ class Datafile(BaseAbstract):
         vectors = [get_vec(self._typed_data[dim]).round(5) for dim in self.dims]
         return [np.atleast_1d(r).max() for r in vectors]
 
-
     def ensure_dims(self, dims: set[str]) -> None:
         """ Ensure any missing dimensions are added as virtual dimensions """
         missing = dims - set(self.dims)
@@ -857,11 +862,18 @@ class Datafile(BaseAbstract):
             # Add the new dimension(s) to virtual_dims to track numblocks
             self._virtual_dims.update(missing_in_dat)
             self.dims = sorted(dims)
+            
+            # Update data in-place and transpose dims to the correct order
+            data = self.data.expand_dims(dim=missing_in_dat)
+            order = sorted(set(data.coords) - {'features'})
+            self.data = data.transpose(*order, ...)
+            self.original_dims[2].update({
+                k: data[k].dtype for k in missing_in_dat
+            })
 
             # Force a cache refresh for these values
-            for key in ['data', 'valid_percent']:
+            for key in ['valid_percent']:
                 self.__dict__.pop(key, None)
-
 
     @property
     def max_valid_blocks(self) -> list[Number]:
@@ -1412,7 +1424,13 @@ class Datafile(BaseAbstract):
     @property
     def cache_name(self) -> str:
         """ Name of the folder this Datafile would be cached in """
-        ext = '.tiledb' if '.tiledb' in str(self.location) else '.zarr'
+        # ext = '.tiledb' if '.tiledb' in str(self.location) else '.zarr'
+        if '.tiledb' in str(self.location):
+            ext = '.tiledb'
+        elif '.xvec' in str(self.location):
+            ext = '.xvec'
+        else:
+            ext = '.zarr'
         return Path(self.name, f'{self.config_hash}{ext}').as_posix()
 
 
@@ -1450,7 +1468,16 @@ class Datafile(BaseAbstract):
 
         data = self.data.to_dataset('features')
         dest = cache_dir.joinpath(self.cache_name)
-
+        
+        if (
+            'datetime' in data.dims and 
+            data.datetime.dtype != np.dtype('datetime64[ns]')
+        ): 
+            # Pandas > ~3.x appears to break xarray resampling, which can lead
+            # to datetime being cast as datetime64[us] by a preprocessor. This
+            # dtype change then causes downstream issues when using the cache.
+            raise RuntimeError(f'{data.datetime.dtype=}: expected datetime64[ns]')
+            
         if isinstance(dest, Path):
             dest.parent.mkdir(exist_ok=True, parents=True)
 

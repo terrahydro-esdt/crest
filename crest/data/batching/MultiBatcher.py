@@ -539,7 +539,7 @@ class MultiBatcher(Batcher):
                     ' given sampling_edges bin for a sample to be valid. If'
                     ' the intention is actually to generate samples in which'
                     ' any of the sample values fall within a given bin, use a'
-                    ' valid_percent specification thatallows < 100% of a'
+                    ' valid_percent specification that allows < 100% of a'
                     ' sample window to be valid.')
 
         def parse_schema(feature, schema) -> list[tuple[float, float]]:
