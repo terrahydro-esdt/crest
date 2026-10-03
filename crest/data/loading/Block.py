@@ -115,6 +115,9 @@ class Block(BaseAbstract):
         assert(len(set(shapes)) == 1), shapes
         assert(set(map(len, shapes)) == {len(dims)}), [shapes, dims]
 
+        # Store a copy of the data that remains unmasked by sampling_edges
+        self._unmasked_data = list(data) if isinstance(data, list) else data.copy()
+
         # Sparse data should already be filtered so it contains only valid data
         # if self.is_sparse and len(self.invalid_value):
         #     raise Exception('Sparse data should already be filtered')
@@ -160,7 +163,7 @@ class Block(BaseAbstract):
             'silent'  : not hasattr(self, 'logger'),
         } | kwargs))
 
-
+    
     @property
     def is_required(self) -> bool:
         """ Whether this block is required to form a valid sample """
@@ -195,10 +198,26 @@ class Block(BaseAbstract):
             return np.concatenate(da.compute(*[d for d in self._data]), axis=-1)
 
 
+    @property
+    def unmasked_data(self) -> np.ndarray:
+        """ Uses data that has not been masked by sampling_edges """
+        with self.benchmark('unmasked_data'):
+            if isinstance(self._unmasked_data, da.Array):
+                return self._unmasked_data.compute()
+            return np.concatenate(da.compute(*[
+                d for d in self._unmasked_data]), axis=-1)
+
+
     @cached_property
     def sparse_data(self):
         """ Returns data, but as a cached_property due to multiple calls """
         return self.data
+
+
+    @cached_property
+    def unmasked_sparse_data(self):
+        """ Returns data, but as a cached_property due to multiple calls """
+        return self.unmasked_data
 
 
     @property
@@ -213,7 +232,7 @@ class Block(BaseAbstract):
     def coords(self) -> np.ndarray:
         """ Only compute dask coords array upon first use """
         if self.is_sparse and len(self.coord_vecs):
-            index = np.isfinite(self.sparse_data).all(-1).coords
+            index = np.isfinite(self.unmasked_sparse_data).all(-1).coords
             if not index.size:
                 raise ValueError(f'No finite coords found: {self=}')
             coord = [c[i].compute() for c, i in zip(self.coord_vecs, index)]
@@ -301,12 +320,19 @@ class Block(BaseAbstract):
         """ Determine valid sample window indices for sparse data """
         # If no window is requested, we can just use the sparse coords directly
         if not self.uses_window:
+            
+            # Always returns true because sparse.COO drops False values...
             valid_percent = list(self.valid_percent.values())
             total_percent = np.round(np.prod(valid_percent), 5)
             finite_values = np.isfinite(self.sparse_data)
             if total_percent >= (1-1e-4):
-                return finite_values.all(-1).coords
-            return (finite_values.mean(-1) >= total_percent).coords
+                valid = finite_values.all(-1)
+            else:
+                valid = finite_values.mean(-1) >= total_percent
+            if hasattr(self, '_feature_mask'):
+                feature_mask = self._feature_mask.compute()[..., 0]
+                valid &= feature_mask
+            return valid.coords
             # return self.sparse_data.coords[:-1]
 
         # Note that the sparse API isn't fully solidified - there are a few
@@ -448,13 +474,36 @@ class Block(BaseAbstract):
     def valid_coords(self) -> np.ndarray:
         """ Coordinate values for the valid locations """
         if self.is_sparse:
-            if not self.uses_window:
-                return self.coords
-            coords = self.coords
-            if hasattr(coords, 'todense'):
-                n_dims = self._coords.shape[-1]
-                coords = coords.data.reshape((-1, n_dims))
-            return coords[self.valid_windows]
+            # if not self.uses_window:
+            #     return self.coords
+            valid = self.valid_windows
+            if valid.size and np.any(valid):
+                if len(self.coord_vecs):
+                    try:
+                        coords = [c[i].compute() for c, i in 
+                            zip(self.coord_vecs, valid)]
+                    except Exception as e:
+                        debug = print if not hasattr(self, 'logger') else self.logger.debug
+                        debug(f'{e=} {self.coord_vecs=} {valid=} {valid.size=} {len(self.coord_vecs)=}')
+                        raise
+                    return np.stack(coords, axis=-1)
+                coords = self.coords
+                if hasattr(coords, 'todense'):
+                    n_dims = self._coords.shape[-1]
+                    coords = coords.data.reshape((-1, n_dims))
+                return coords[valid]
+            return np.empty((0, len(self.coord_vecs)))
+            
+            # if hasattr(self, '_feature_mask'):
+            #     f_mask = self._feature_mask
+            #     f_mask = getattr(f_mask, 'compute', lambda: f_mask)()[..., 0]
+            #     coords = [c[i].compute() for c, i in zip(self.coord_vecs, f_mask.coords)]
+            #     return np.stack(coords, axis=-1)
+            # coords = self.coords
+            # if hasattr(coords, 'todense'):
+            #     n_dims = self._coords.shape[-1]
+            #     coords = coords.data.reshape((-1, n_dims))
+            # return coords[self.valid_windows]
         return self.coords[tuple(self.valid_windows)]
 
 
@@ -465,7 +514,7 @@ class Block(BaseAbstract):
             data = self.sparse_data.data
             # If no window is requested, the sparse data is already filtered
             if sum([np.sum(v) for v in self.window_depth.values()]+[0]) == 0:
-                return data.reshape(-1, data.shape[-1])
+                return data.reshape(-1, data.shape[-1])[self.valid_windows]
             n_dims = self._data.shape[-1]
             data = data.reshape((-1, n_dims))
             return data[self.valid_windows]
@@ -507,11 +556,11 @@ class Block(BaseAbstract):
             return False
 
         # TODO: this is_sparse block isn't necessary; valid_mask should(?) work
-        if self.is_sparse:
-            n = self.sparse_data.data.size
-            if n and self.uses_window:
-                return not self.valid_windows.any()
-            return n == 0
+        # if self.is_sparse:
+        #     n = np.isfinite(self.sparse_data.data).sum()
+        #     if n and self.uses_window:
+        #         return not self.valid_windows.any()
+        #     return n == 0
         return not self.valid_mask.any()
 
 
@@ -627,18 +676,27 @@ class Block(BaseAbstract):
             raise ValueError(f'Unknown {feature=}: {self.features=}')
 
         self._feature_mask = True
-        for feature in self.feature_subset(list(feature_masks)):
+        debug = print if not hasattr(self, 'logger') else self.logger.debug
+
+        features = self.feature_subset(list(feature_masks))
+        debug(f'\t{self} : feature_subset={features}')
+        for feature in features:
             label = feature.split('@')[0]
             lo,hi = feature_masks[feature]
-            val,_ = _get_feature(label)
+            val,i = _get_feature(label)
             valid = (val >= lo) & (val < hi)
+            debug(f'\t{self} : {label} = ({lo=}, {hi=}) ({i=})')
             self._valid_mask &= valid
-            # self._data[_] = da.where(valid, self._data[_], np.nan)
+            # self._data[i] = da.where(valid, self._data[i], np.nan)
             self._feature_mask &= valid
 
         if isinstance(self._feature_mask, bool):
             self.__dict__.pop('_feature_mask')
-        self.__dict__.pop('valid_mask', None)
+        
+        # Reset any cached properties that masked data affects
+        for key in ['valid_mask', 'valid_windows', 'sparse_data', 
+                    'fast_invalid_check']:
+            self.__dict__.pop(key, None)
 
 
     def set_valid_percents(self, valid_percent: dict):
@@ -781,7 +839,7 @@ class Block(BaseAbstract):
             # Extract windows and drop virtual dimensions
             # Note: SegFault/Access violation here is likely an issue with data
             #       that is cached on disk; try removing the cache to resolve.
-            data = np.append(self.data, self.coords[..., real_dims], axis=-1)
+            data = np.append(self.unmasked_data, self.coords[..., real_dims], axis=-1)
             data = data[..., mask][windows].reshape(
                 (n_samples,) + shape + (len(requested),))
 
@@ -865,13 +923,17 @@ class Block(BaseAbstract):
         # Note: SegFault/Access violation here is likely an issue with data
         #       that is cached on disk; try removing the cache to resolve.
         # data = self.data[windows].reshape((samples,)+shape+(len(features),))
-        is_arr = isinstance(self._data, da.Array)
-        n_feat = self._data.shape[-1] if is_arr else len(self._data)
-        get_ix = lambda i: self._data[..., i] if is_arr else self._data[i]
+        _udata = self._unmasked_data
+        is_arr = isinstance(_udata, da.Array)
+        n_feat = _udata.shape[-1] if is_arr else len(_udata)
+        get_ix = lambda i: _udata[..., i] if is_arr else _udata[i]
 
         # Sparse data matches require different handling than dense arrays
         if self.is_sparse:
             indices = list(indices)
+            us_data = self.unmasked_sparse_data
+            debug = print if not hasattr(self, 'logger') else self.logger.debug
+            debug(f'{self} : preparing to extract {len(indices)} windows {self.uses_window=}')
 
             # If a window is requested along at least one dimension, we need
             # to construct a flattened grid of indices to pull from the 'dense'
@@ -880,7 +942,7 @@ class Block(BaseAbstract):
 
                 # Gather window centers, add dimensions to allow broadcasting
                 newdim = tuple(range(ndims))
-                center = self.sparse_data[..., 0].coords[:, self.valid_windows]
+                center = us_data[..., 0].coords[:, self.valid_windows]
                 window = np.expand_dims(center.T[indices] - lower, newdim).T
 
                 # Create the flattened meshgrid for indexing into sparse.COO
@@ -896,7 +958,7 @@ class Block(BaseAbstract):
                 coords = np.stack(coords, axis=-1).reshape(shapes + [ndims])
 
                 # Extract flat windows from the data, reshape, and materialize
-                data = self.sparse_data[window]
+                data = us_data[window]
                 data = data.reshape(shapes + [len(features)]).todense()
 
                 # Remove any virtual dimensions
@@ -909,13 +971,31 @@ class Block(BaseAbstract):
             # If no window is requested, we can just pull directly out of the
             # sparse representation rather than requiring dense materialization
             else:
+                
+                
                 shape = (samples,) + shape
-                if self.sparse_data.data.size:
-                    data = np.stack([self.sparse_data[..., i].data[indices]
-                                     for i in range(len(features))], axis=-1)
+                debug(f'{self} : {us_data.data.size=} {len(indices)=} {min(indices)=} {max(indices)=} {us_data.shape=} {us_data.data.shape=}')
+                if us_data.data.size and len(indices):
+                    # orig_indices = self.valid_windows[np.asarray(indices)]
+                    orig_indices = self.valid_windows[:, np.asarray(indices)]
+                    idx = tuple(orig_indices)
+                    data = np.stack([
+                        us_data[..., i][idx].todense()
+                        for i in range(len(features))
+                    ], axis=-1)
+                    
+                    # data = np.stack([us_data[..., i].data[orig_indices]
+                    #                  for i in range(len(features))], axis=-1)
                     data = data.reshape(shape+(len(features),))
-                    coords = self.coords[indices].reshape(
-                                        shape+(len(self.dims),))
+                    _axs = tuple(range(len(shape)))
+                    debug(f'{self} : {np.nanmin(data, _axs)=} {np.nanmax(data, _axs)=}')
+                    # coords = self.coords[orig_indices].reshape(
+                    #                     shape+(len(self.dims),))
+                    coords = np.stack([
+                        c[i].compute()
+                        for c, i in zip(self.coord_vecs, orig_indices)
+                    ], axis=-1).reshape(shape+(len(self.dims),))
+                    
                 else:
                     data = np.nan*np.zeros(shape+(len(features),),'float32')
                     coords = np.nan*np.zeros(shape+(len(self.dims),),'float32')
@@ -927,7 +1007,7 @@ class Block(BaseAbstract):
             data   =   np.stack(data, -1).reshape(shape+(len(features),))
             coords = self.coords[windows].reshape(shape+(len(self.dims),))
 
-        for k in ['coords', 'valid_windows', 'valid_mask', 'sparse_data'][:-1]:
+        for k in ['coords', 'valid_windows', 'valid_mask']:
             self.__dict__.pop(k, None)
 
         # Remove virtual dimension from coordinate features
