@@ -1471,6 +1471,7 @@ class Datafile(BaseAbstract):
         
         if (
             'datetime' in data.dims and 
+            np.issubdtype(data.datetime.dtype, np.datetime64) and
             data.datetime.dtype != np.dtype('datetime64[ns]')
         ): 
             # Pandas > ~3.x appears to break xarray resampling, which can lead
