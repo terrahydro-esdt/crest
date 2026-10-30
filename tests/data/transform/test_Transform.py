@@ -33,6 +33,8 @@ all_examples = [
     (example_data_pos, example_stats_pos)
 ]
 
+# Specify any transforms which do not have an inverse
+non_invertible = ['clip']
 
 
 def check_equality(transform, data, transformed, tol=1e-4):
@@ -63,7 +65,7 @@ def check_equality(transform, data, transformed, tol=1e-4):
 @pytest.mark.parametrize('transform', Transform.available_transforms)
 def test_symmetry_single(datastats, transform):
     """ Verify forward and inverse are symmetric for all transforms """
-    if transform != 'combination':
+    if transform not in ['combination'] + non_invertible:
         data, stats = datastats
         transformer = Transform(stats, by_feature={
             '*'           : 'robust',
@@ -81,8 +83,8 @@ def test_symmetry_single(datastats, transform):
 @pytest.mark.parametrize('transform2', Transform.available_transforms)
 def test_symmetry_combination(datastats, transform, transform2):
     """ Verify forward and inverse are symmetric for all combinations """
-    if ((transform  not in ['combination', transform2]) and
-        (transform2 not in ['combination', transform])):
+    if ((transform  not in ['combination', transform2]+non_invertible) and
+        (transform2 not in ['combination',  transform]+non_invertible)):
 
         # Any log transform with negatives can produce all NaNs in combination
         if any('logexp' in t for t in [transform, transform2]):
@@ -157,3 +159,21 @@ def test_by_parameter(datastats):
     for k in keys:
         assert(np.isclose(forward_data[k][..., 0], -5).all()), forward_data[k]
         assert(np.isclose(forward_data[k][..., 1], -2).all()), forward_data[k]
+
+
+@pytest.mark.parametrize('datastats', all_examples)
+@pytest.mark.parametrize('transform', non_invertible)
+def test_non_invertible(datastats, transform):
+    """ Verify non-invertible transforms fail when attempting to invert """
+    with pytest.raises(NotImplementedError, match='cannot be inverted'):
+        data, stats = datastats
+        transformer = Transform(stats, by_feature={
+            '*'           : 'robust',
+            list(data)[0] : 'normalize',
+        })
+
+        forward, inverse = getattr(transformer, transform)
+        transformed_data = inverse(forward(data))
+        check_equality(transform, data, transformed_data)
+
+        
