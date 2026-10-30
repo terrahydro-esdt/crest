@@ -770,9 +770,11 @@ def loss_wrapper(
 
         def scatter(y1: np.ndarray, y2: np.ndarray, **kwargs) -> np.ndarray:
             """ Create scatter plot and return the image as a numpy array """
+            empty = np.empty((0, 1, 1, 3), dtype=np.uint8)
             scope = kwargs['key']
             if scope not in batches:
-                return np.empty((0,0,0), dtype=np.uint8)
+                return empty
+
             k1 = kwargs.get('y1_label', 'y_true')
             y1 = batches[scope][k1]
             k2 = kwargs.get('y2_label', 'y_pred')
@@ -781,11 +783,14 @@ def loss_wrapper(
             y1 = np.concatenate(y1, axis=0).flatten()
             y2 = np.concatenate(y2, axis=0).flatten()
             batches[scope].clear()
-
+                
             mask = np.isfinite(y1) & np.isfinite(y2)
             y1 = y1[mask]
             y2 = y2[mask]
 
+            if not (len(y1) and len(y2)):
+                return empty
+                
             # Write the plot image to the array variable
             with plot_to_array(dpi=150, width=4, height=3.8) as array:
                 try:    r2 = linregress(y1, y2)[2] ** 2 # pyright: ignore
@@ -806,7 +811,11 @@ def loss_wrapper(
                 plt.axline((0,0), slope=1,ls='--',color='k',alpha=0.5,zorder=2)
 
                 # Plot labels
-                plt.ticklabel_format(style='sci',axis='both',scilimits=(-2,3))
+                plt.ticklabel_format(**{
+                        'style'     : 'sci',
+                        'axis'      : 'both',
+                        'scilimits' : (-2,3),
+                })
                 plt.ylabel(kwargs.get('y1_label', 'y_true'), fontsize=18)
                 plt.xlabel(kwargs.get('y2_label', 'y_pred'), fontsize=18)
                 plt.title('  '.join([
@@ -815,12 +824,22 @@ def loss_wrapper(
                     f'N = {len(y1)}',
                 ]), fontsize=18, y=0.95)
 
+                # Use log scaling if data spans multiple orders of magnitude
+                if min(y1.min(), y2.min()) > 0:
+                    yy = np.concatenate([y1, y2], axis=0)
+                    if (np.log10(yy.max()) - np.log10(yy.min())) >= 3:
+                        plt.xscale('log')
+                        plt.yscale('log')
+                        plt.suptitle('log-scaled axes')                    
+                        
                 # Use the same extent limits for both axes
                 minim = min(plt.xlim()[0], plt.ylim()[0])
                 maxim = max(plt.xlim()[1], plt.ylim()[1])
                 plt.xlim((minim, maxim))
                 plt.ylim((minim, maxim))
-                return array
+
+                # Add dimension to satisfy tf.summary.image
+                return array[None]
 
         # Only tensorflow supported for logging to tensorboard
         if keras.backend.backend() != 'tensorflow':

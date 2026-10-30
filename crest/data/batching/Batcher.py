@@ -391,7 +391,7 @@ class Batcher:
             self._handle_dataset_list(dataset)
 
         # Collect all keys indicating which Datafiles aren't required
-        gather_zeros = valfilter(lambda v: np.prod(v.values()))
+        gather_zeros = valfilter(lambda v: np.prod(list(v.values())) == 0)
         zero_percent = map(list, map(gather_zeros, self.valid_percents))
         not_required = set(chain(*zero_percent, *self.drop_datafiles))
 
@@ -406,7 +406,7 @@ class Batcher:
                      if isinstance(v,int) else (v in df.label))
                 where = list(filter(match, not_required))
 
-                if where or np.prod(df_vp.values()) == 0:
+                if where or np.prod(list(df_vp.values())) == 0:
                     df.is_required = False
                     self.info(f'Not required: {index=} {label=} {where=}')
                 else:
@@ -1728,10 +1728,11 @@ class Batcher:
 
             try:
                 # Each element in blocks is the Blockset.find_matches function
+                features = self._feature_selectors if self.fast_path else None
                 samples = compute([find_matches(**{
                     'task_bytes'   : self.task_bytes,
                     'task_samples' : self.block_size,
-                    'features'     : self.features if self.fast_path else None,
+                    'features'     : features,
                     'seed'         : self.seed,
                     'rng'          : self.random,
                     'method'       : self.match_strategy,
@@ -1888,9 +1889,8 @@ class Batcher:
                 with self._remainder_lock:
                     samples, remainder = zip( *map(create_batches,
                         samples, remainder or ([[]] * len(samples))) )
-
-                    if len(remainder[0]):
-                        self._remainder[conf_hash] = remainder
+                    self._remainder[conf_hash] = (
+                        remainder if len(remainder[0]) else [])
                 samples = list(map(self._finalize_batch, zip(*samples)))
 
             else:
@@ -1960,8 +1960,10 @@ class Batcher:
         if (self.features is None) or (len(samples) == 0): return samples[:]
 
         # If an empty list was passed in, all available features are requested
-        if len(self.features) == 0: self.features = samples[0].features
-
+        if len(self.features) == 0: 
+            self.features = samples[0].features
+            self.__dict__.pop('_feature_selectors', None)
+            
         def _extract(sample, features):
             """ Follow the nesting structure given by the features """
             if (
@@ -1970,8 +1972,9 @@ class Batcher:
             ):
                 return type(features)(sample.to_list(features))
             return type(features)(map(partial(_extract, sample), features))
-        return np.frompyfunc(partial(_extract, features=self.features),
-                             nin=1, nout=1)(samples)
+
+        extract = partial(_extract, features=self._feature_selectors)
+        return np.frompyfunc(extract, nin=1, nout=1)(samples)
 
 
     def _finalize_batch(self, batch: np.ndarray) -> np.ndarray | dict | list:
@@ -2012,14 +2015,15 @@ class Batcher:
             batch: dict = {feature: data[:, i].astype(T)
                 for data, dtype in zip(batch, self._dtypes, strict=True)
                 for i, (feature, T) in enumerate(dtype.items())}
-            def _nest(features):
+            def _nest(features, selectors=self._feature_selectors):
                 """ Follow the nesting structure given by the features """
                 if (
                     isinstance(features[0], str)
                     or not hasattr(features[0], '__len__')
                 ):
-                    return {f: batch[f] for f in features}
-                return type(features)(map(_nest, features))
+                    return {feature: batch[selector] for feature, selector in
+                            zip(features, selectors, strict=True)}
+                return type(features)(map(_nest, features, selectors))
             return _nest(self.features) if self.features else batch
 
         def _parse(batch, features):
@@ -2032,7 +2036,47 @@ class Batcher:
             return type(features)(map(_parse, zip(*batch), features))
         return batch if self.features is None else _parse(batch, self.features)
 
+    
+    @cached_property
+    def _feature_selectors(self) -> list | None:
+        """Resolve requested coordinate features to their source Datafiles.
 
+        Returns
+        -------
+        list | None
+            Batcher.features with unqualified coordinate features suffixed by
+            the index of the Datafile which originally requested them.
+
+        """
+        if self.features is None:
+            return None
+
+        datasets = self._datasets
+        dataset = datasets[self.pidx] if len(datasets) > 1 else datasets[0]
+        
+        # StructuredDataset contains Samples directly, not Datafiles
+        if isinstance(dataset, StructuredDataset):
+            return self.features
+        
+        dims = dataset[0]._raw_data.coords
+        
+        def resolve(feature):
+            """ Add a source index to an explicitly requested coordinate """
+            if feature not in dims or '@' in str(feature):
+                return feature
+            for i, requested_features in enumerate(dataset._features):
+                if feature in requested_features:
+                    return f'{feature}@{i}'
+            return feature
+
+        def recurse(features):
+            """ Preserve feature nesting while resolving leaf values """
+            if isinstance(features, str):
+                return resolve(features)
+            return type(features)(map(recurse, features))
+        return recurse(self.features)
+
+        
     def _queue_batches(self,
        process_ix : int,
        shared_attrs : dict,

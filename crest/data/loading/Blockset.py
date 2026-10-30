@@ -129,7 +129,7 @@ class Blockset(BaseSet):
             features = []
 
         # Create a new Blockset object which excludes the specified Blocks
-        drop = drop_datafiles or []
+        drop = list(drop_datafiles or [])
         drop+= [i for i,b in enumerate(self) if not b.feature_subset(features)]
         excl = self._exclude(drop or [], features)
 
@@ -152,13 +152,17 @@ class Blockset(BaseSet):
     def get_feature(self, feature: str) -> xr.Dataset:
         """ Get an xarray dataset containing the requested feature """
         subsets = self.feature_subset(feature)
-        assert(sum(map(bool, subsets)) == 1), \
-            f'Exactly one block should contain {feature=}: {subsets}'
-
+        if sum(map(bool, subsets)) != 1:
+            error = f'Exactly one block should contain {feature=}: {subsets}'
+            index = [i for i, s in enumerate(subsets) if s]
+            if len(index) > 1:
+                error += f'\nA selector could be used to make it unique, like '
+                error += f'{feature}@{index[0]} or {feature}@{index[1]}'
+            raise ValueError(error)
+            
         for contains, block in zip(subsets, self):
             if contains:
-                return block.dataset[[feature.split('@')[0]]]
-
+                return block.dataset[[block._parse_feature(feature)]]
 
 
     def find_matches(self,
@@ -420,10 +424,10 @@ class Blockset(BaseSet):
 
     def _partition(self, names: list[str | int]) -> tuple[list, list]:
         """ Split blocks into [(in names), (not in names)] """
-        select = lambda i, b, n: (n==i) if isinstance(n,int) else (n in b.label)
-        within = lambda i,block: any(select(i, block, n) for n in names)
-        inside = [block for i,block in enumerate(self) if     within(i, block)]
-        not_in = [block for i,block in enumerate(self) if not within(i, block)]
+        select = lambda i, lbl, n: (n==i) if isinstance(n,int) else (n in lbl)
+        within = lambda i, block: any(select(i, block.label, n) for n in names)
+        inside = [b for b in self if     within(b.block_index, b)]
+        not_in = [b for b in self if not within(b.block_index, b)]
         return inside, not_in
 
 
@@ -488,14 +492,14 @@ class Blockset(BaseSet):
                     bounds[k] = f'{v:.3f}'
             return ' | '.join(f'{k}={v}' for k,v in bounds.items())
 
+        for block in by_sparsity:
+            if block.fast_invalid_check:
+                return f'No data available in {block=}'
+
         coord = excl.coords
         minim = _bound(np.nanmin, coord, excl.dims[0])
         maxim = _bound(np.nanmax, coord, excl.dims[0])
         message = f'\tMin Coord: {minim}\n\t\tMax Coord: {maxim}\n\t\t'
-
-        for block in by_sparsity:
-            if block.fast_invalid_check:
-                return f'{message}No data available in {block=}'
 
         for block in by_sparsity:
             if block.is_required and not block.valid_windows.size:
@@ -590,4 +594,5 @@ class Blockset(BaseSet):
                     plt.close(f)
                     return message + filename
 
-        return f'{message}ERROR: all block pairs generate samples'
+        # Note: pairwise matches do not guarantee a full multi-source match
+        return f'{message}ERROR: all independent block pairs generate samples'

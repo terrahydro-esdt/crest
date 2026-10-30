@@ -527,7 +527,7 @@ class MultiBatcher(Batcher):
             features = list(edges)
             for df in self.dataset:
                 if not (
-                    any(k in df.data_features for k in features)
+                    any(k in df.features for k in features)
                     and (max(df.window_total.values()) > 1)
                     and (min(df.valid_percent.values()) >= 1)
                 ):
@@ -686,7 +686,7 @@ class MultiBatcher(Batcher):
                 for c in chunks:
                     if hasattr(c, 'nnz'):
                         c = c.data
-                    c = c.ravel()
+                    c = c.flatten()
                     c.sort()
                     parsed.append(c)
 

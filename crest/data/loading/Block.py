@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from collections import defaultdict as dd
 from functools import cached_property, reduce
-from itertools import starmap, chain
+from dask.delayed import Delayed
+from itertools import chain
 from numbers import Number, Integral as Int
+from copy import copy as shallow_copy
 
-import dask.dataframe as df
 import dask.array as da
 import bottleneck as bn
 import xarray as xr
-import pandas as pd
 import numpy as np
 import warnings
 import dask
@@ -20,12 +20,19 @@ from crest.utils import Stopwatch
 
 
 class Block(BaseAbstract):
-    """Class which wraps a dask block.
+    """Wrap a dense Dask block and its sampling configuration.
 
+    Notes
+    -----
+    Datafile supplies separate feature arrays, a prepared validity mask, and
+    rectilinear coordinate vectors. The constructor defaults remain available
+    for metadata-only use; data access relies on these prepared inputs.
+    
     Parameters
     ----------
-    data          : da.Array
-        Dask Array object containing the data within the block.
+    data          : Collection[da.Array]
+        Separate Dask feature arrays supplied by Datafile, each retaining
+        its singleton final feature axis.
     coords        : da.Array
         Dask Array object containing the coordinates which define the block.
     inbound_mask  : da.Array
@@ -34,6 +41,8 @@ class Block(BaseAbstract):
     overlap_mask  : da.Array
         Dask Array object indicating which elements are part of an overlapped
         chunk (True), vs part of the original center chunk (False).
+    valid_mask    : da.Array
+        Prepared validity mask supplied by Datafile.
     dims          : Collection[str]
         Dimension names, ordered the same as the `data` axes.
     original_dims : Collection
@@ -41,7 +50,7 @@ class Block(BaseAbstract):
         vector. Todo: modify this to pass the information in more cleanly.
     resolution    : Collection[Number]
         Resolution for each dimension, ordered the same as the `data` axes.
-    window_depth  : dict[str, np.ndarray[Int]]
+    window_depth  : dict[str, Collection[Int]]
         Format of {Dimension: (lower, upper)}, where (lower, upper) defines the
         number of elements to the left and to the right of the window center.
         {'time': (1, 0)} would indicate a window which has two elements along
@@ -59,34 +68,31 @@ class Block(BaseAbstract):
         2d grid of latitude x longitude, and subsequently all elements across
         the time dimension must be valid. Note that the dictionary is ordered,
         and so dimensions are evaluated in the order given.
-    invalid_value : Collection[Number]
-        Collection of values which should be treated as NaN in the `data`.
     allow_repeats : bool
         If True, allow block overlap regions to be considered when generating
         valid window centers. With this as True, it means that all possible
         samples should be generated, but there is the potential for duplicate
         samples to be generated across different blocks at the boundaries. If
-        instead this is False (the defalt), there will not be any duplicated
+        instead this is False (the default), there will not be any duplicated
         samples generated, but instead there *may* be samples missing at the
         block boundaries.
-      """
+
+    """
     def __init__(self,
-        data          : da.Array | Collection,
+        data          : Collection[da.Array],
         coords        : da.Array,
         inbound_mask  : da.Array,
         overlap_mask  : da.Array,
-        valid_mask    : da.Array | None             = None,
+        valid_mask    : da.Array,
         resolution    : da.Array | Collection       = [],
         dims          : Collection[str]             = [],
         original_dims : Sequence                    = [],
-        window_depth  : dict[str, np.ndarray]       = {},
+        window_depth  : dict[str, Collection[Int]]  = {},
         valid_percent : dict[tuple[str], Number]    = {},
-        invalid_value : Collection[object]          = [],
         allow_repeats : bool  = False,
-        block_count   : int   = 1,
         block_index   : int   = 0,
         label         : str   = '',
-        sparsity      : float = 0.,
+        sparsity      : Number | da.Array = 0.,
         coord_vecs    : Collection = [],
         key_label     : str | None = None
     ):
@@ -102,9 +108,7 @@ class Block(BaseAbstract):
         self._valid_mask   = valid_mask
         self._window_depth = window_depth
         self.valid_percent = valid_percent
-        self.invalid_value = invalid_value
         self.allow_repeats = allow_repeats
-        self.block_count   = block_count
         self.block_index   = block_index
         self.coord_vecs = coord_vecs
         self.key_label = key_label
@@ -114,67 +118,43 @@ class Block(BaseAbstract):
         shapes = [v.shape[:-1] for v in arrays]
         assert(len(set(shapes)) == 1), shapes
         assert(set(map(len, shapes)) == {len(dims)}), [shapes, dims]
+        
+        vector_shape = tuple(vector.shape[0] for vector in coord_vecs)
+        assert vector_shape == coords.shape[:-1], (
+            f'{self}: {vector_shape=} != {coords.shape[:-1]=}')
+        assert len(self.features) == len(self._data), (
+            f'{self}: {len(self.features)=} != {len(self._data)=}; '
+            f'{self.features=}')
 
-        # Store a copy of the data that remains unmasked by sampling_edges
-        self._unmasked_data = list(data) if isinstance(data, list) else data.copy()
-
-        # Sparse data should already be filtered so it contains only valid data
-        # if self.is_sparse and len(self.invalid_value):
-        #     raise Exception('Sparse data should already be filtered')
-
-
+    
     def __repr__(self) -> str:
-        return f'Block[{self.label}]'
+        return f'{type(self).__name__}[{self.label}]'
 
 
-    def copy(self):
-        """ Make a shallow copy of this block object """
-        blk = Block(
-            data = self._data,
-            coords = self._coords,
-            inbound_mask = self._inbound,
-            overlap_mask = self._overlap,
-            dims = self.dims,
-            label = self.label,
-            sparsity = self.sparsity,
-            original_dims = self.original_dims,
-            resolution = self._resolution,
-            valid_mask = self._valid_mask,
-            window_depth = self._window_depth,
-            valid_percent = self.valid_percent,
-            invalid_value = self.invalid_value,
-            allow_repeats = self.allow_repeats,
-            block_count = self.block_count,
-            block_index = self.block_index,
-            coord_vecs = self.coord_vecs,
-            key_label = self.key_label,
-        )
-        blk.__dict__.update(self.__dict__)
-        return blk
+    def copy(self) -> Block:
+        """ Return a shallow copy of all object attributes """
+        block = shallow_copy(self)
+        block.__dict__.pop('benchmark', None)
+        return block
 
 
     @cached_property
-    def benchmark(self):
-        """ Return a Stopwatch function for benchmarking """
-        debug = print if not hasattr(self, 'logger') else self.logger.debug
-        return lambda label, logger=debug, **kwargs: Stopwatch(**({
-            'message' : f'\t\t\t{self}.{label}',
+    def benchmark(self) -> Callable:
+        """ Helper for benchmarking code timing and memory usage """
+        logger  = print if not hasattr(self, 'logger') else self.logger.debug
+        message = f'\t\t\t{self}'
+        silent  = not hasattr(self, 'logger')
+        return lambda label, **kwargs: Stopwatch(**({
+            'message' : f'{message}.{label}',
             'logger'  : logger,
-            'silent'  : not hasattr(self, 'logger'),
+            'silent'  : silent,
         } | kwargs))
 
-    
+
     @property
     def is_required(self) -> bool:
         """ Whether this block is required to form a valid sample """
         return np.prod(list(self.valid_percent.values())) > 0
-
-
-    @property
-    def is_sparse(self) -> bool:
-        """ Return True if data is a sparse object """
-        data = self._data if isinstance(self._data,da.Array) else self._data[0]
-        return hasattr(type(data._meta), 'todense')
 
 
     @property
@@ -191,52 +171,25 @@ class Block(BaseAbstract):
 
     @property
     def data(self) -> np.ndarray:
-        """ Only compute dask data array upon first use """
+        """ Compute and concatenate the supplied feature arrays """
         with self.benchmark('data'):
-            if isinstance(self._data, da.Array):
-                return self._data.compute()
-            return np.concatenate(da.compute(*[d for d in self._data]), axis=-1)
-
-
-    @property
-    def unmasked_data(self) -> np.ndarray:
-        """ Uses data that has not been masked by sampling_edges """
-        with self.benchmark('unmasked_data'):
-            if isinstance(self._unmasked_data, da.Array):
-                return self._unmasked_data.compute()
-            return np.concatenate(da.compute(*[
-                d for d in self._unmasked_data]), axis=-1)
-
-
-    @cached_property
-    def sparse_data(self):
-        """ Returns data, but as a cached_property due to multiple calls """
-        return self.data
-
-
-    @cached_property
-    def unmasked_sparse_data(self):
-        """ Returns data, but as a cached_property due to multiple calls """
-        return self.unmasked_data
+            return np.concatenate(da.compute(*self._data), axis=-1)
 
 
     @property
     def dataset(self) -> xr.Dataset:
-        """ Create an xarray dataset from the data and coordinates """
-        flat = [(self.dims, v[..., 0]) for v in self._data]
-        data = dict(zip(self.features, flat))
-        return xr.Dataset(data, coords=dict(zip(self.dims, self.coord_vecs)))
+        """ Build a lazy xarray view """
+        arrays = self._data
+        values = [(self.dims, array[..., 0]) for array in arrays]
+        return xr.Dataset(**{
+            'data_vars' : dict(zip(self.features, values)),
+            'coords'    : dict(zip(self.dims, self.coord_vecs)),
+        })
 
 
     @cached_property
     def coords(self) -> np.ndarray:
-        """ Only compute dask coords array upon first use """
-        if self.is_sparse and len(self.coord_vecs):
-            index = np.isfinite(self.unmasked_sparse_data).all(-1).coords
-            if not index.size:
-                raise ValueError(f'No finite coords found: {self=}')
-            coord = [c[i].compute() for c, i in zip(self.coord_vecs, index)]
-            return np.stack(coord, axis=-1)
+        """Compute the coordinate grid only on first use."""
         with self.benchmark(f'coords {self._coords.shape}'):
             return self._coords.compute()
 
@@ -263,12 +216,8 @@ class Block(BaseAbstract):
     @cached_property
     def dtype(self) -> np.dtype:
         """ Create a composite datatype based on shapes of the data windows """
-        if isinstance(self._data, da.Array):
-            n_features = self._data.shape[-1]
-            data_dtype = self._data.dtype
-        else:
-            n_features = len(self._data)
-            data_dtype = self._data[0].dtype
+        n_features = len(self._data)
+        data_dtype = self._data[0].dtype
 
         sizes = {'features': n_features} | self.window_total
         return np.dtype(
@@ -298,7 +247,7 @@ class Block(BaseAbstract):
 
 
     @property
-    def window_depth(self) -> dict[str, (Int, Int)]:
+    def window_depth(self) -> dict[str, Collection[Int]]:
         """ Window sizes for each dimension: {dim: (n_left, n_right)} """
         return {dim: self._window_depth.get(dim, (0,0)) for dim in self.dims}
 
@@ -315,80 +264,14 @@ class Block(BaseAbstract):
         return any(size > 1 for size in self.window_total.values())
 
 
-    @property
-    def valid_windows_sparse(self):
-        """ Determine valid sample window indices for sparse data """
-        # If no window is requested, we can just use the sparse coords directly
-        if not self.uses_window:
-            
-            # Always returns true because sparse.COO drops False values...
-            valid_percent = list(self.valid_percent.values())
-            total_percent = np.round(np.prod(valid_percent), 5)
-            finite_values = np.isfinite(self.sparse_data)
-            if total_percent >= (1-1e-4):
-                valid = finite_values.all(-1)
-            else:
-                valid = finite_values.mean(-1) >= total_percent
-            if hasattr(self, '_feature_mask'):
-                feature_mask = self._feature_mask.compute()[..., 0]
-                valid &= feature_mask
-            return valid.coords
-            # return self.sparse_data.coords[:-1]
-
-        # Note that the sparse API isn't fully solidified - there are a few
-        # different ways to handle extracting the valid windows (e.g. using
-        # the sparse vectors explicitly; or using the COO interface into the
-        # sparse array, similar to the dense calculation). Need to perform
-        # some timing tests to see if using an API equivalent to dense (as
-        # is currently implemented) results in any slowdown / memory issues.
-        def window_count(valid: np.ndarray, keys_pct: tuple) -> np.ndarray:
-            """ Calculate the number of elements in the N-d rolling window """
-            keys, percent = keys_pct
-
-            # Get the required number of elements for a valid window
-            n_total = np.prod([self.window_total[k] for k in keys])
-            windows = [slice(-s, e+1) for e, s in self.window_depth.values()]
-
-            # Expand the indices to be broadcastable with the N-d window
-            axes = [self.axes[k] for k in keys]
-            idxs = self.sparse_data[...,0].coords[axes][:, valid]
-            view = np.expand_dims(idxs, tuple(-(1+np.arange(len(windows)))))
-            view = view + np.mgrid[tuple(windows)][:, None] # Broadcast window
-            view = view.reshape(len(view), -1)              # (dims, samples)
-
-            # Count the number of times an index appears and return valid ones
-            view, counts = np.unique(view, axis=1, return_counts=True)
-            valid_window = view[:, counts >= (percent * n_total)][:, None]
-            valid[valid] = (idxs[..., None] == valid_window).all(0).any(-1)
-            return valid
-
-        # return idxs[ counts >= (percent * n_total) ]
-        # Create a mask indicating valid elements, and extract indices
-        data  = self.sparse_data[..., 0]
-        valid = ~self.invalid(data.data)
-        valid = reduce(window_count, self.valid_percent.items(), valid)
-
-        # Remove indices outside of coordinate bounds (except virtual)
-        # inbound = np.isfinite(self.coords)
-        # inbound|= np.isnan(self.coords).all(tuple(range(self.ndim)))
-        depth = np.array([self.window_depth[k] for k in self.dims])
-        lower = (data.coords.T - depth[:, 0]) < 0
-        upper = (data.coords.T + depth[:, 1]) >= data.shape
-        outer = (lower | upper).any(1)
-        return valid & ~outer
-        # return data.coords[:,valid][:-1]# & inbound.all(-1).flatten()][:-1].T
-        # return valid & inbound.all(-1).flatten()
-
-
     @cached_property
-    def valid_windows(self) -> np.ndarray:#[Int]:
+    def valid_windows(self) -> np.ndarray:
         """ Determine indices for all valid sample windows in the block """
-        if self.is_sparse: return self.valid_windows_sparse
 
         def moving_sum(invalid: np.ndarray, keys_pct: tuple) -> np.ndarray:
             """ Fast moving sum using bottleneck """
-            if invalid.all(): return invalid
-
+            if invalid.all(): 
+                return invalid
             keys, percent = keys_pct
 
             # Valid percent is handled in a way that allows a small percent
@@ -396,12 +279,14 @@ class Block(BaseAbstract):
             # in a 3x3 spatial window a valid percent of 0.01 could be used
             # to ensure at least one element in windows are valid. In other
             # words, percentages are interpreted as ceil(n_elements * pct).
-            n_total = np.prod([self.window_total[k] for k in keys])
-            maximum = int((1-percent) * n_total)
+            n_total = int(np.prod([self.window_total[k] for k in keys]))
+            require = int(np.ceil(np.nextafter(percent*n_total, 0.)))
+            maximum = n_total - min(n_total, require)
 
             # Multiple axes can be used to define a combined valid percent
             # e.g. {(ax1, ax2): 0.8} -> combination of the two need 80% valid
-            for exp, key in enumerate(keys):
+            pad_val = 1
+            for key in keys:
                 axis = self.axes[key]
                 size = self.window_total[key]
 
@@ -410,52 +295,46 @@ class Block(BaseAbstract):
                         f'size={invalid.shape[axis]} is too small for ' +
                         f'requested window size={size}')
 
-                # Calculate window offets and padding
+                # Width-one rolling sums are an identity operation
+                if size == 1: continue
+
+                # Calculate window offsets and padding
                 offsets = (slice(None),) * axis + (slice(size - 1, None),)
                 padding = [(0,0)] * invalid.ndim
                 padding[axis] = self.window_depth.get(key, (0,0))
 
                 # Pad the invalid mask in order to center the window
                 invalid = invalid.astype('int32') # Bottleneck is faster w/ int
-                invalid = np.pad(invalid, padding, constant_values=size ** exp)
+                invalid = np.pad(invalid, padding, constant_values=pad_val)
 
                 # Offset the new invalid elements so the window is centered
                 invalid = bn.move.move_sum(invalid, size, axis=axis)[offsets]
+                pad_val*= size
             return invalid > maximum
 
-        # Create mask indicating invalid elements, checking shortcuts first
-        total_percent = np.round(np.prod(list(self.valid_percent.values())), 5)
-
         # If some elements need to be valid, we need to check for valid windows
-        if total_percent > 0:
-            # We need to mask features independently before collapsing the axis
-            invalid = ~self.valid_mask#self.invalid()
-
-            # Unless 100% need to be valid, in which case we can collapse now
-            if total_percent == 1: invalid = invalid.any(-1, keepdims=True)
+        if self.is_required:
+            # Datafile has already collapsed feature validity into one mask
+            invalid = ~self.valid_mask[..., 0]
 
             # Calculate the running invalid mask over all dimensions
             invalid = reduce(moving_sum, self.valid_percent.items(), invalid)
 
         # Otherwise, checking is unnecessary since 0% are required to be valid
-        else: invalid = np.zeros(self._inbound.shape, dtype='bool')
+        else: invalid = np.zeros(self.shape, dtype='bool')
 
         # Mask overlapped elements, as they cannot be window centers
         if not self.allow_repeats and self.block_index == 0:
-            invalid |= self.overlap_mask
+            invalid |= self.overlap_mask[..., 0]
 
         # Mask elements outside the bounds of the data (except virtual)
-        invalid |= ~self.inbound_mask
+        invalid |= ~self.inbound_mask[..., 0]
 
+        # Bin masks restrict centers as well as contributing to window validity
         if hasattr(self, '_feature_mask'):
-            f_mask = self._feature_mask
-            invalid |= ~getattr(f_mask, 'compute', lambda: f_mask)()
+            invalid |= ~self._feature_mask.compute()[..., 0]
 
-        # Mask elements whose window extends outside of the data
-        # Note that continuing if percent == 0 implies NaNs outside of the data
-        #   are treated as always invalid, compared to NaNs in the data itself
-        # for keys, percent in self.valid_percent.items():
-            # if percent == 0: continue
+        # Clip only dimensions in the policy
         for keys in self.valid_percent:
 
             for dim in keys:
@@ -465,60 +344,27 @@ class Block(BaseAbstract):
                 invalid[offset + (slice(None, lo),)] = True
                 invalid[offset + (slice(hi, None),)] = True
 
-        # Collapse feature dimension, since all features must be valid
-        dtype = 'uint16' if max(invalid.shape) < 65634 else 'int32'
-        return np.array(np.where((~invalid).all(-1)), dtype=dtype, order='F')
+        # Store integer centers without carrying the singleton feature axis
+        largest = max(self.shape, default=0) - 1
+        dtype = np.min_scalar_type(max(0, largest))
+        if dtype.itemsize < 2: dtype = np.dtype('uint16')
+        return np.array(np.where(~invalid), dtype=dtype, order='F')
 
 
     @property
     def valid_coords(self) -> np.ndarray:
-        """ Coordinate values for the valid locations """
-        if self.is_sparse:
-            # if not self.uses_window:
-            #     return self.coords
-            valid = self.valid_windows
-            if valid.size and np.any(valid):
-                if len(self.coord_vecs):
-                    try:
-                        coords = [c[i].compute() for c, i in 
-                            zip(self.coord_vecs, valid)]
-                    except Exception as e:
-                        debug = print if not hasattr(self, 'logger') else self.logger.debug
-                        debug(f'{e=} {self.coord_vecs=} {valid=} {valid.size=} {len(self.coord_vecs)=}')
-                        raise
-                    return np.stack(coords, axis=-1)
-                coords = self.coords
-                if hasattr(coords, 'todense'):
-                    n_dims = self._coords.shape[-1]
-                    coords = coords.data.reshape((-1, n_dims))
-                return coords[valid]
-            return np.empty((0, len(self.coord_vecs)))
-            
-            # if hasattr(self, '_feature_mask'):
-            #     f_mask = self._feature_mask
-            #     f_mask = getattr(f_mask, 'compute', lambda: f_mask)()[..., 0]
-            #     coords = [c[i].compute() for c, i in zip(self.coord_vecs, f_mask.coords)]
-            #     return np.stack(coords, axis=-1)
-            # coords = self.coords
-            # if hasattr(coords, 'todense'):
-            #     n_dims = self._coords.shape[-1]
-            #     coords = coords.data.reshape((-1, n_dims))
-            # return coords[self.valid_windows]
-        return self.coords[tuple(self.valid_windows)]
+        """ Valid coordinates without materializing the full grid """
+        indices = self.valid_windows
+        if not indices.shape[1]:
+            return np.empty((0, self.ndim), dtype=self._coords.dtype)
 
-
-    @property
-    def valid_data(self) -> np.ndarray:
-        """ Center data values for the valid locations """
-        if self.is_sparse:
-            data = self.sparse_data.data
-            # If no window is requested, the sparse data is already filtered
-            if sum([np.sum(v) for v in self.window_depth.values()]+[0]) == 0:
-                return data.reshape(-1, data.shape[-1])[self.valid_windows]
-            n_dims = self._data.shape[-1]
-            data = data.reshape((-1, n_dims))
-            return data[self.valid_windows]
-        return self.data[tuple(self.valid_windows)]
+        # A single-chunk lookup must not split repeated indices into tasks
+        vectors = []
+        for vector, index in zip(self.coord_vecs, indices):
+            if isinstance(vector, da.Array) and vector.numblocks == (1,):
+                vector = vector.to_delayed(optimize_graph=False).item()
+            vectors.append(vector[index])
+        return np.stack(dask.compute(*vectors), axis=-1)
 
 
     @property
@@ -526,7 +372,6 @@ class Block(BaseAbstract):
         """ Resolution for valid locations, parsing left/right if necessary """
         if self.is_uniform:
             return np.array(self.resolution)
-        assert(not self.is_sparse), f'{self.resolution=}'
         try:
             res = [r[v] for r,v in zip(self.resolution, self.valid_windows)]
         except IndexError as e:
@@ -539,37 +384,27 @@ class Block(BaseAbstract):
 
     @cached_property
     def valid_mask(self) -> np.ndarray:
-        """ Mask of valid pixels across all features """
-        if self._valid_mask is not None:
-            nbyte = f'{self._valid_mask.nbytes:,} bytes'
-            shape = f'valid_mask {self._valid_mask.shape}'
-            with self.benchmark(f'{shape} {nbyte}'):
-                return self._valid_mask.compute()
-        return ~self.invalid()
+        """ Compute the element-wise validity mask """
+        nbyte = f'{self._valid_mask.nbytes:,} bytes'
+        shape = f'valid_mask {self._valid_mask.shape}'
+        with self.benchmark(f'{shape} {nbyte}'):
+            return self._valid_mask.compute()
 
 
     @cached_property
     def fast_invalid_check(self) -> bool:
-        """ Quick verification: returns True if no valid data exists """
-        # If any dimension can have 0% existing and still be valid, don't check
+        """ Return True when a required block has no valid data """
         if not self.is_required:
             return False
-
-        # TODO: this is_sparse block isn't necessary; valid_mask should(?) work
-        # if self.is_sparse:
-        #     n = np.isfinite(self.sparse_data.data).sum()
-        #     if n and self.uses_window:
-        #         return not self.valid_windows.any()
-        #     return n == 0
         return not self.valid_mask.any()
 
 
     def summary(self, features: list[str] | None = None) -> xr.DataArray:
         """ Return summary statistics for data """
-        features = self.feature_subset(features or self.features)
+        features = self.feature_subset(features or self.features, parse=True)
         data = self.dataset[features]
 
-        quantiles = list(range(1, 100))#[2, 10, 25, 50, 75, 90, 98]
+        quantiles = list(range(1, 100))
         perc_keys = [f'p{q}'.replace('p50', 'median') for q in quantiles]
         stat_keys = ['mean', 'std', 'min', 'max', 'null']
         all_stats = stat_keys + perc_keys
@@ -590,64 +425,7 @@ class Block(BaseAbstract):
                         .transpose(*list(data.dims)) \
                         .chunk(data.chunksizes)
 
-            # Slightly different handling required for sparse data
-            if self.is_sparse:
-                def _calc(values):
-                    d_append = dask.delayed(np.append)
-                    d_series = dask.delayed(pd.Series)
-
-                    # Explicitly apply functions per-block to avoid densifying
-                    blocks = values.data.to_delayed().ravel()
-
-                    # Ensure there's always at least one element to avoid errors
-                    delays = [d_append(b.data, [np.nan]) for b in blocks]
-                    series = [d_series(b) for b in delays]
-
-                    # Fake array sizes so dask doesn't complain
-                    length = [1] * len(series)
-                    series = df.from_delayed(series)
-                    arrays = series.to_dask_array(lengths=length)
-                    # Alternatively:
-                    #  values.data.map_blocks(lambda b: b.data[:,None,None])
-
-                    # Similar to dense summary, but use dask operations directly
-                    extra = dd(int, {
-                        'null' : lambda x: values.size - da.sum(da.isfinite(x)),
-                    })
-                    coord = xr.Variable('statistics', stat_keys)
-                    nan_f = lambda k: getattr(da, f'nan{k}', extra[k])
-                    value = lambda k: nan_f(k)(arrays).astype('float32')
-                    toset = lambda k: xr.DataArray(value(k))
-                    array = xr.concat(map(toset, stat_keys), coord)
-                    stats = array.to_dataset('statistics')
-
-                    stats[perc_keys] = da.percentile(arrays, quantiles,
-                                                     internal_method='tdigest')
-                    return stats.to_array('statistics')
-                stats = data.apply(_calc)
-
-            # Dense summary computation relies mostly on xarray operations
-            else:
-                extra = dd(int, {
-                    'null' : lambda: data.isnull().sum(dtype='int64'),
-                })
-                coord = xr.Variable('statistics', stat_keys)
-
-                get_f = lambda k: getattr(data, k, extra[k])()
-                value = lambda k: get_f(k).to_array('features')
-                array = xr.concat(map(value, stat_keys), coord)
-                stats = array.to_dataset('statistics')
-
-                # Compute percentiles as a group for efficiency
-                stats[perc_keys] = xr.apply_ufunc(
-                    lambda x: da.percentile(x.ravel(), quantiles,
-                                            internal_method='tdigest'),
-                    data, **{
-                        'dask'             : 'allowed',
-                        'input_core_dims'  : [list(data.dims)],
-                        'output_core_dims' : [['statistics']],
-                    }).to_array('features').to_dataset('statistics')
-                stats = stats.to_array('statistics').to_dataset('features')
+            stats = self._summary(data, stat_keys, perc_keys, quantiles)
 
             stats = stats.rename({
                 f'{c}_f':c for c in data.coords if f'{c}_f' in stats})
@@ -657,49 +435,82 @@ class Block(BaseAbstract):
             return stats.chunk(-1)
 
 
-    def set_feature_masks(self, feature_masks: dict):
+    def _summary(self,
+        data      : xr.Dataset,
+        stat_keys : list[str],
+        perc_keys : list[str],
+        quantiles : list[int],
+    ) -> xr.Dataset:
+        """ Calculate statistics using the dense xarray representation """
+        extra = dd(int, {
+            'null' : lambda: data.isnull().sum(dtype='int64'),
+        })
+        coord = xr.Variable('statistics', stat_keys)
+
+        get_f = lambda k: getattr(data, k, extra[k])()
+        value = lambda k: get_f(k).to_array('features')
+        array = xr.concat(map(value, stat_keys), coord)
+        stats = array.to_dataset('statistics')
+
+        # Compute percentiles as a group for efficiency
+        stats[perc_keys] = xr.apply_ufunc(
+            lambda x: da.percentile(x.ravel(), quantiles, **{
+                'internal_method' : 'tdigest',
+            }),
+            data, **{
+                'dask'             : 'allowed',
+                'input_core_dims'  : [list(data.dims)],
+                'output_core_dims' : [['statistics']],
+            }).to_array('features').to_dataset('statistics')
+        stats = stats.to_array('statistics').to_dataset('features')
+        return stats
+
+
+    def _get_coordinate(self, index: int) -> da.Array:
+        """ Return coordinate values for one axis """
+        return self._coords[..., index:index+1]
+
+
+    def set_feature_masks(self, feature_masks: dict) -> None:
         """ Mask the requested features so only values within a bin remain """
-        # Need to modify valid_mask to handle zarr features
+        # Sampling filters change masks, not the source feature values
         assert(isinstance(self._data, list))
 
-        def _get_feature(feature):
+        def _get_feature(feature: str) -> tuple:
             if feature in self.features:
                 index = self.features.index(feature)
                 return self._data[index], index
             if feature in self.dims:
                 index = self.dims.index(feature)
-                coord = self.coords[..., index:index+1]
+                coord = self._get_coordinate(index)
                 assert(coord.shape == self._data[0].shape), (
                     f'Unexpected coord shape: {self.coords.shape=} vs '
                     f'data.shape={self._data[0].shape}')
                 return coord, 0
             raise ValueError(f'Unknown {feature=}: {self.features=}')
 
-        self._feature_mask = True
-        debug = print if not hasattr(self, 'logger') else self.logger.debug
-
+        mask = True
         features = self.feature_subset(list(feature_masks))
-        debug(f'\t{self} : feature_subset={features}')
         for feature in features:
-            label = feature.split('@')[0]
+            label = self._parse_feature(feature)
             lo,hi = feature_masks[feature]
             val,i = _get_feature(label)
             valid = (val >= lo) & (val < hi)
-            debug(f'\t{self} : {label} = ({lo=}, {hi=}) ({i=})')
-            self._valid_mask &= valid
-            # self._data[i] = da.where(valid, self._data[i], np.nan)
-            self._feature_mask &= valid
+            mask &= valid
 
-        if isinstance(self._feature_mask, bool):
-            self.__dict__.pop('_feature_mask')
-        
-        # Reset any cached properties that masked data affects
-        for key in ['valid_mask', 'valid_windows', 'sparse_data', 
-                    'fast_invalid_check']:
-            self.__dict__.pop(key, None)
+        # Retain separate window-content and center restrictions
+        if isinstance(mask, bool):
+            self.__dict__.pop('_feature_mask', None)
+        else:
+            # Note no in-place mutation occurs, as _valid_mask is a dask array
+            self._valid_mask &= mask
+            self._feature_mask = mask
+
+        # Reset any cached properties that sampling masks affect
+        self._clear_validity()
 
 
-    def set_valid_percents(self, valid_percent: dict):
+    def set_valid_percents(self, valid_percent: dict) -> None:
         """ Set a new valid_percent after formatting correctly """
         assert(getattr(self, '_original_valid_percent', None) is None)
         self._original_valid_percent = self.valid_percent
@@ -714,330 +525,235 @@ class Block(BaseAbstract):
             if d not in keys:
                 formatted[(d,)] = 1
         self.valid_percent = formatted
+        self._clear_validity()
 
 
-    def reset_valid_percents(self):
-        """ Undo any set_valid_percents call """
-        if getattr(self, '_original_valid_percent', None) is not None:
-            self.valid_percent = self._original_valid_percent
-            self._original_valid_percent = None
+    def _clear_validity(self) -> None:
+        """ Discard cached attributes after a sampling-policy change """
+        for key in ['valid_mask', 'valid_windows', 'fast_invalid_check']:
+            self.__dict__.pop(key, None)
 
 
-    def invalid(self, data: np.ndarray | None = None):
-        """Element-wise mask of invalid values in the given array.
+    def _parse_feature(self, feature: str) -> str:
+        """ Discard any selectors to return only the actual feature name """
+        return f'__{feature}'.split('@')[0].split('__', 2)[-1]
+
+    
+    def cleanup(self) -> None:
+        """ Release computed objects but retain lazy source graphs """
+        for key in ['valid_windows', 'valid_mask', 'coords',
+                    'fast_invalid_check']:
+            self.__dict__.pop(key, None)
+
+
+    def _gather_windows(self,
+        windows     : tuple,
+        features    : list[int],
+        coordinates : list[int],
+    ) -> tuple:
+        """Gather requested values in one Dask computation.
 
         Parameters
         ----------
-        data : np.ndarray | None
-            The array to create a mask for. If no parameter is given,
-            self.data is used (the full block data).
+        windows : tuple
+            Broadcastable integer indices, with samples on the first axis.
+        features : list[int]
+            Data-feature positions to read, in output order.
+        coordinates : list[int]
+            Coordinate-component positions to read, in output order.
 
         Returns
         -------
-        np.ndarray
-            Boolean mask which indicates where there are invalid values.
-
+        tuple
+            Data and optional coordinate arrays, with components on the last
+            axis. Only the selected windows are materialized as output arrays.
         """
-        data = (data if data is not None else self.data)
+        arrays = [self._data[i][..., 0] for i in features]
 
-        # Need to cast to object if either array is not numeric
-        if not np.issubdtype(data.dtype, np.number):
-            invalid = np.array(self.invalid_value, dtype=object)
-        else: invalid = np.array(self.invalid_value)
+        def select(
+            array: da.Array | np.ndarray,
+        ) -> da.Array | np.ndarray | Delayed:
+            """ Preserve shared graph keys and prune unused input chunks """
+            if not isinstance(array, da.Array): return array[windows]
+            if all(count == 1 for count in array.numblocks):
+                return array.to_delayed(optimize_graph=False).item()[windows]
+            return array.vindex[windows]
 
-        # Numpy also converts something like [1,'a'] to ['1','a']
-        # so we need to recast invalid as an object dtype in case
-        if not np.issubdtype(invalid.dtype, np.number):
-            invalid = np.array(self.invalid_value, dtype=object)
-            data = data.astype(object)
+        # Joint computation must see original shared source keys. Converting
+        # each feature with delayed(array) can optimize the readers separately.
+        delays = [select(array) for array in arrays]
 
-        # np.isnan does not work on object dtype
-        # with pd.option_context('use_inf_as_na', True):
-        return pd.isna(data) | np.isin(data, invalid)
+        # Select grid components first, preserving padding and shared reads
+        if coordinates:
+            coords = self.__dict__.get('coords', self._coords)
+            delays.extend(select(coords[..., i]) for i in coordinates)
+        values = dask.compute(*delays)
 
-
-    def cleanup(self):
-        """ Delete cached objects to free memory; uncertain whether
-            this is actually necessary, and may cause minor slowdowns """
-        for key in ['valid_coords', 'valid_windows', 'data', 'coords']:
-            if key in self.__dict__:
-                del self.__dict__[key]
+        shape = np.broadcast_shapes(*(index.shape for index in windows))
+        data  = (np.stack(values[:len(features)], axis=-1) if features else
+                 np.empty(shape + (0,), dtype=self._coords.dtype))
+        coord = (np.stack(values[len(features):], axis=-1)
+                 if coordinates else None)
+        return data, coord
 
 
     def extract(self,
-        matches : np.ndarray,
+        matches         : np.ndarray,
         return_features : list[str] | None = None,
-        empty : bool = False,
-    ):# -> dict[Int, xr.Dataset]:
-        """Extract a list of windows from data, wrapping each with xarray.
-
+        empty           : bool = False,
+    ) -> list | tuple:
+        """Extract windows as raw sample dictionaries or direct feature arrays.
+        
+        Notes
+        -----
+        Neither output path constructs an xarray object. Subclasses override
+        only the storage-specific gather and valid-center representation.
+        
         Parameters
         ----------
         matches : np.ndarray
-            Indices for valid_windows, which indicates which window locations
-            are being used for this (eventually created) SampleSet.
+            Positions within valid centers. Repeated positions reuse the same
+            extraction. Non-finite entries denote missing optional matches.
+        return_features : list[str] | None
+            Features already selected for this block by feature_subset. None
+            requests raw dictionaries for Sample initialization; otherwise
+            return an array and its ordered feature-dtype mapping.
+        empty : bool
+            Return one missing-block template without reading any source data.
 
         Returns
         -------
-        list[xr.Dataset]
-            Returns a list of the extracted xr.Dataset windows, where each
-            one corresponds to a location taken from data/coords, and the
-            size is defined by the original window_depth. Length of the
-            returned list equals the length of the input `indices`.
+        list | tuple
+            Nested window dictionaries, or (values, dtypes). Direct arrays have
+            match axes first, followed by features and original spatial axes.
+            Empty-block templates omit the match axes for Blockset to expand.
 
         """
-        # If we already know the set of features needed, just return that array
-        if return_features is not None:
-            orig_dims, features, dtypes, req_features = self.original_dims
-            orig_dims = ['features'] + [d for d in orig_dims if d!='features']
-            keep_dims = [f for f in self.dims if f in orig_dims] + ['features']
+        original, features, dtypes = self.original_dims
+        real_dims = [dim for dim in original if dim != 'features']
+        keep_dims = [dim for dim in self.dims if dim in real_dims]
+        out_dims  = ['features'] + real_dims
+        depths    = self.window_depth
+        totals    = self.window_total
+        shape     = tuple(totals[dim] for dim in real_dims)
+        raw       = return_features is None
 
-            # Extract only the requested features to be returned
-            available = np.array(list(features) + list(orig_dims)[1:])
-            requested = [f.split('@')[0] for f in return_features]
-
-            # Cast dtypes for each feature later (to avoid mixed type array)
-            mask = np.isin(available, requested)
-            keys = dict(zip(requested, return_features))
-            dtypes = {keys[k]: dtypes[k] for k in available[mask]}
-
-            # Create arrays for the left and total window depths
-            lower = np.array([self.window_depth[k][0] for k in self.dims])
-            total = np.array([self.window_total[k]    for k in self.dims])
-            shape = tuple(s for s,d in zip(total, self.dims) if d in orig_dims)
-            ndims = len(self.dims)
-
-            # If this was a dropped Block, return just a NaN array placeholder
-            if empty:
-                return (
-                    np.nan * np.zeros((len(requested),) + shape, 'float32'),
-                    dtypes,
-                )
-
-            # Otherwise, get all unique match indices
-            unique, indices = np.unique(matches, return_inverse=True)
-
-            # Calculate the lower and upper bounds for each window dimension
-            center = np.array(self.valid_windows)[:, unique, None]
-            center-= lower[:, None, None]
-            bounds = [left + np.arange(size)
-                      for left, size in zip(center, total)]
-
-            # Remove virtual dimension from coordinate features
-            real_dims = sorted(map(self.dims.index, orig_dims[1:]))
-            n_samples = len(unique)
-
-            def expand(axis: int, bound: np.ndarray) -> np.ndarray:
-                """ Add axes to each bound based on the dim it applies to """
-                axes = list(set(range(1 ,ndims+1)) - {axis})
-                return np.expand_dims(bound, axes)
-
-            # Expand the bounds so they can broadcast over the full data/coords
-            windows = tuple(starmap(expand, enumerate(bounds, 1)))
-            assert(len(windows[0]) == n_samples), [len(windows), n_samples]
-
-            # Extract windows and drop virtual dimensions
-            # Note: SegFault/Access violation here is likely an issue with data
-            #       that is cached on disk; try removing the cache to resolve.
-            data = np.append(self.unmasked_data, self.coords[..., real_dims], axis=-1)
-            data = data[..., mask][windows].reshape(
-                (n_samples,) + shape + (len(requested),))
-
-            # Transpose data to the correct order: [samples, features, ...]
-            data = data.transpose(tuple(
-                map((['']+keep_dims).index, ['']+orig_dims)
-            ))
-            return data[indices], dtypes
-
-        orig_dims, features, dtypes, req_features = self.original_dims
-        orig_dims = ['features'] + [d for d in orig_dims if d != 'features']
-
-        # Create arrays for the left and total window depths
-        lower = np.array([self.window_depth[k][0] for k in self.dims])
-        total = np.array([self.window_total[k]    for k in self.dims])
-        ndims = len(self.dims)
-        shape = tuple(s for s,d in zip(total, self.dims) if d in orig_dims)
-
-        # Initialize the final result dict with all globally applicable values
-        keep_dims = [f for f in self.dims if f in orig_dims] + ['features']
-        xr_kwargs = {
-            'dims' : orig_dims,
-            'key_label' : self.key_label,
-            'requested_features' : req_features,
-        } | ({'attrs' : {'resolution': dict(zip(self.dims, self.resolution))}}
-                if self.is_uniform else {})
-
-        def cast_dtype(key: str, value: np.ndarray) -> np.ndarray:
-            """ Cast the given value array back to its original dtype """
-            with warnings.catch_warnings():
-                warnings.filterwarnings('ignore')
-                return value.astype(dtypes[key])
-
-        def expand(axis: int, bound: np.ndarray) -> np.ndarray:
-            """ Add dimensions to each bound based on the dim it applies to """
-            return np.expand_dims(bound, list(set(range(1, ndims+1)) - {axis}))
-
-        def collapse(axis: int, coord: np.ndarray) -> np.ndarray:
-            """ Collapse the coord grid into its respective coord vector """
-            return coord[(0,)*(coord.ndim-axis-2)+(slice(None),)+(0,)*axis].T
-
-        def gen_xr_dict(data: np.ndarray, *coords: np.ndarray) -> dict:
-            """ Generate the xr.Dataset dict for given data/coord windows """
-            return { 'data'   : list(map(cast_dtype, features, data)),
-                     'coords' : dict(zip(keep_dims,
-                                    map(cast_dtype, keep_dims, coords))) | {
-                    'features': features} } | dict(xr_kwargs)
-
-        nan_matches = ~np.isfinite(matches)
-
-        # If this was a dropped Block, use just NaN array placeholders
-        if empty or nan_matches.all():
-            data = np.nan * np.zeros((len(features),)+shape, 'float32')
-            coords = [np.nan * np.zeros(s, 'float32') for s in shape]
-            values = [gen_xr_dict(data, *coords)]
-            if empty:
-                return values
-            return [values * len(np.atleast_1d(idx)) for idx in matches]
-
-        # Replace any NaN matches with -1 to select last item
-        matches[nan_matches] = -1
-        matches = matches.astype(int)
-
-        # Get all unique match indices and drop any -1 values
-        ravel   = lambda v: getattr(v, 'ravel', lambda: v)()
-        indices = tuple(np.unique([j for i in matches
-                                   for j in ravel(i) if j != -1]).astype(int))
-        samples = len(indices)
-
-        # Calculate the lower and upper bounds for each window dimension
-        if not self.is_sparse:
-            center = np.array(self.valid_windows)[:, indices, None]
-            center-= lower[:, None, None].astype(center.dtype)
-            bounds = [left + np.arange(size, dtype=center.dtype)
-                      for left, size in zip(center, total)]
-            # Expand bounds so they can be broadcast over the full data/coords
-            windows = tuple(starmap(expand, enumerate(bounds, 1)))
-            assert(len(windows[0]) == samples), [len(windows), samples]
-
-        # Extract windows and drop virtual dimensions
-        # Note: SegFault/Access violation here is likely an issue with data
-        #       that is cached on disk; try removing the cache to resolve.
-        # data = self.data[windows].reshape((samples,)+shape+(len(features),))
-        _udata = self._unmasked_data
-        is_arr = isinstance(_udata, da.Array)
-        n_feat = _udata.shape[-1] if is_arr else len(_udata)
-        get_ix = lambda i: _udata[..., i] if is_arr else _udata[i]
-
-        # Sparse data matches require different handling than dense arrays
-        if self.is_sparse:
-            indices = list(indices)
-            us_data = self.unmasked_sparse_data
-            debug = print if not hasattr(self, 'logger') else self.logger.debug
-            debug(f'{self} : preparing to extract {len(indices)} windows {self.uses_window=}')
-
-            # If a window is requested along at least one dimension, we need
-            # to construct a flattened grid of indices to pull from the 'dense'
-            # COO object representation (as advanced indexing isn't available)
-            if self.uses_window:
-
-                # Gather window centers, add dimensions to allow broadcasting
-                newdim = tuple(range(ndims))
-                center = us_data[..., 0].coords[:, self.valid_windows]
-                window = np.expand_dims(center.T[indices] - lower, newdim).T
-
-                # Create the flattened meshgrid for indexing into sparse.COO
-                offset = map(np.arange, total)
-                offset = np.meshgrid(indices, *offset, indexing='ij')[1:]
-                window = [dim+right for dim, right in zip(window, offset)]
-                window = tuple(w.ravel() for w in window)
-
-                # Extract flat windows from the coordinate vectors and reshape
-                shapes = [samples] + list(total)
-                c_vecs = self.coord_vecs
-                coords = [v[w].compute() for v, w in zip(c_vecs, window)]
-                coords = np.stack(coords, axis=-1).reshape(shapes + [ndims])
-
-                # Extract flat windows from the data, reshape, and materialize
-                data = us_data[window]
-                data = data.reshape(shapes + [len(features)]).todense()
-
-                # Remove any virtual dimensions
-                idxs = [slice(None)] * data.ndim
-                for i, d in enumerate(self.dims, 1):
-                    if d not in keep_dims:
-                        idxs[i] = 0
-                data = data[tuple(idxs)]
-
-            # If no window is requested, we can just pull directly out of the
-            # sparse representation rather than requiring dense materialization
-            else:
-                
-                
-                shape = (samples,) + shape
-                debug(f'{self} : {us_data.data.size=} {len(indices)=} {min(indices)=} {max(indices)=} {us_data.shape=} {us_data.data.shape=}')
-                if us_data.data.size and len(indices):
-                    # orig_indices = self.valid_windows[np.asarray(indices)]
-                    orig_indices = self.valid_windows[:, np.asarray(indices)]
-                    idx = tuple(orig_indices)
-                    data = np.stack([
-                        us_data[..., i][idx].todense()
-                        for i in range(len(features))
-                    ], axis=-1)
-                    
-                    # data = np.stack([us_data[..., i].data[orig_indices]
-                    #                  for i in range(len(features))], axis=-1)
-                    data = data.reshape(shape+(len(features),))
-                    _axs = tuple(range(len(shape)))
-                    debug(f'{self} : {np.nanmin(data, _axs)=} {np.nanmax(data, _axs)=}')
-                    # coords = self.coords[orig_indices].reshape(
-                    #                     shape+(len(self.dims),))
-                    coords = np.stack([
-                        c[i].compute()
-                        for c, i in zip(self.coord_vecs, orig_indices)
-                    ], axis=-1).reshape(shape+(len(self.dims),))
-                    
-                else:
-                    data = np.nan*np.zeros(shape+(len(features),),'float32')
-                    coords = np.nan*np.zeros(shape+(len(self.dims),),'float32')
-
-        else:
-            shape  = (samples,) + shape
-            delays = [dask.delayed(get_ix(i))[windows] for i in range(n_feat)]
-            data   = da.compute(*delays)
-            data   =   np.stack(data, -1).reshape(shape+(len(features),))
-            coords = self.coords[windows].reshape(shape+(len(self.dims),))
-
-        for k in ['coords', 'valid_windows', 'valid_mask']:
-            self.__dict__.pop(k, None)
-
-        # Remove virtual dimension from coordinate features
-        coords = coords[..., sorted(map(self.dims.index, orig_dims[1:]))]
-
-        # Transpose data to the correct order: [samples, features, ...]
-        data = data.transpose(tuple(
-            map((['']+keep_dims).index, ['']+orig_dims)
-        ))
-
-        # Extract coordinate vectors
-        coord_vectors = starmap(collapse, enumerate(coords.T))
-        coord_vectors = list(map(cast_dtype, keep_dims, coord_vectors))
-
-        # Extract final window dictionaries to use for Sample initialization
-        windows = dict(zip(indices, map(gen_xr_dict, data, *coord_vectors)))
-        if nan_matches.any():
-            val = windows[indices[0]]
-            to_nan = lambda v: np.ones_like(v, dtype='float32') * np.nan
-            windows[-1] = val | {
-                'data'   : [v*np.nan for v in val['data']],
-                'coords' : {k: (v if k == 'features' else
-                    to_nan(v).astype(v.dtype))
-                    for k, v in val['coords'].items()
-                },
+        # Resolve metadata before reading anything, including missing templates
+        if raw:
+            positions  = list(range(len(features)))
+            coord_keys = real_dims
+            metadata = {
+                'dims'               : out_dims,
+                'key_label'          : self.key_label,
             }
-        return [[windows[i] for i in np.atleast_1d(idx)] for idx in matches]
+            if self.is_uniform:
+                resolution = dict(zip(self.dims, self.resolution))
+                metadata['attrs'] = {'resolution': resolution}
+        else:
+            labels = {self._parse_feature(key): key for key in return_features}
+            positions  = [i for i, key in enumerate(features) if key in labels]
+            data_keys  = [features[i] for i in positions]
+            coord_keys = [key for key in real_dims if key in labels]
+            types = {labels[k]: dtypes[k] for k in data_keys + coord_keys}
+
+        def cast(key: str, value: np.ndarray) -> np.ndarray:
+            """ Restore source dtypes only for raw Sample output """
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', RuntimeWarning)
+                return value.astype(dtypes[key], copy=False)
+
+        def missing_window() -> dict:
+            """ Build a metadata-only placeholder for an unmatched source """
+            values = [cast(key, np.full(shape, np.nan, dtype='float32'))
+                      for key in features]
+            coords = {dim: cast(dim, np.full(totals[dim], np.nan, 'float32'))
+                      for dim in real_dims}
+            return {
+                'data'   : values,
+                'coords' : coords | {'features': features},
+            } | metadata
+
+        missing = ~np.isfinite(matches) | (matches == -1)
+        if empty or missing.all():
+            if raw:
+                window = missing_window()
+                if empty: return [window]
+                return [[window] * len(np.atleast_1d(index))
+                        for index in matches]
+            dims = (len(types),) + shape
+            if not empty: dims = matches.shape + dims
+            return np.full(dims, np.nan, dtype='float32'), types
+
+        # Index a separate array; never replace NaNs in the caller's matches
+        indices = np.where(missing, -1, matches).astype(np.intp)
+        unique  = np.unique(indices[~missing])
+        centers = self.valid_windows[:, unique].astype(np.intp, copy=False)
+        windows = []
+        for axis, dim in enumerate(self.dims):
+            bound = centers[axis, :, None] - depths[dim][0]
+            bound = bound + np.arange(totals[dim])
+            sizes = [len(unique)] + [1] * self.ndim
+            sizes[axis + 1] = totals[dim]
+            windows.append(bound.reshape(sizes))
+
+        # Subclasses implement the entire gather, not per-element dispatch
+        data, coords = self._gather_windows(tuple(windows), **{
+            'features'    : positions,
+            'coordinates' : [self.dims.index(key) for key in coord_keys],
+        })
+
+        # Virtual dimensions have unit window depth and are omitted from output
+        sizes = (len(unique),) + tuple(totals[dim] for dim in keep_dims)
+        axes  = [0, len(keep_dims) + 1]
+        axes += [keep_dims.index(dim) + 1 for dim in real_dims]
+
+        if not raw:
+            values = (data if coords is None else
+                      np.concatenate((data, coords), axis=-1))
+            values = values.reshape(sizes + (len(types),)).transpose(axes)
+            mapped = np.searchsorted(unique, np.maximum(indices, 0))
+            mapped = np.minimum(mapped, len(unique) - 1)
+            output = values[mapped]
+            if missing.any():
+                if not np.issubdtype(output.dtype, np.inexact):
+                    output = output.astype('float64')
+                output[missing] = np.nan
+            return output, types
+
+        # Raw windows retain original coordinate-vector order and dtype
+        data = data.reshape(sizes + (len(features),)).transpose(axes)
+        if coords is not None:
+            coords = coords.reshape(sizes + (len(coord_keys),))
+        vectors = {}
+        for component, dim in enumerate(coord_keys):
+            selector = [slice(None)] + [0] * len(keep_dims) + [component]
+            selector[keep_dims.index(dim) + 1] = slice(None)
+            vectors[dim] = cast(dim, coords[tuple(selector)])
+
+        result = {}
+        for row, index in enumerate(unique):
+            result[index] = {
+                'data'   : [cast(key, values) for key, values in
+                            zip(features, data[row])],
+                'coords' : {dim: vec[row] for dim, vec in vectors.items()}
+                           | {'features': features},
+            } | metadata
+            
+        if missing.any():
+            result[-1] = missing_window()
+            values = result[unique[0]]['data']
+            result[-1]['data'] = [value * np.nan for value in values]
+
+        for key in ['coords', 'valid_windows', 'valid_mask']:
+            self.__dict__.pop(key, None)
+        return [[result[index] for index in np.atleast_1d(group)]
+                for group in indices]
 
 
-    def feature_subset(self, features: Sequence|None = []) -> list[str] | None:
+    def feature_subset(self, 
+        features : Sequence | None = [], 
+        parse    : bool = False,
+    ) -> list[str] | None:
         """ Return a list of the features that can be provided by this Block.
 
         Parameters
@@ -1051,6 +767,9 @@ class Block(BaseAbstract):
             docstring in `Batcher` for additional information on nesting.
             If an empty list is given, all available features are returned;
             if None is given, None is returned.
+        parse : bool
+            Whether the returned feature strings should be parsed into their
+            actual feature names (e.g. 'feature@1' returned as 'feature').
 
         Returns
         -------
@@ -1073,13 +792,30 @@ class Block(BaseAbstract):
                 if not isinstance(feature, str):
                     return chain(*map(recurse, feature or available_features))
 
+                # Also need to handle __{source} syntax, to allow feature
+                # selection by Datafile label (rather than solely its index)
+                *extra, source, name = f'__{feature}'.split('__', 2)
+
+                if source and source.replace('$', '/') == self.key_label:
+                    if name in available_features:
+                        return [name if parse else feature]
+                    
+                    # Duplicate key_labels are possible if a Datafile requests
+                    # multiple window sizes across its features
+                    return []
+                
                 # Also need to handle @{index} syntax, to allow feature
                 # selection by Datafile when there are duplicated features
                 name, i, *extra = (feature+f'@{self.block_index}').split('@')
 
-                if int(i) == self.block_index:
+                try: 
+                    i = int(i)
+                except:
+                    raise ValueError(f'"@" selector needs an int: {feature=}')
+                    
+                if i == self.block_index:
                     if name in available_features:
-                        return [feature]
+                        return [name if parse else feature]
 
                     # If any indices remain, it means this block was explicitly
                     # requested to provide this feature - which it doesn't have

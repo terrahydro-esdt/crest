@@ -4,7 +4,7 @@ from collections.abc import Collection, Callable
 from collections import defaultdict as dd
 from fsspec.mapping import FSMap
 from functools import cached_property, partial
-from itertools import starmap, product
+from itertools import starmap, product, compress
 from numbers import Number, Integral as Int
 from pathlib import Path
 from typing import ClassVar
@@ -30,6 +30,7 @@ from crest.utils import S3Path, Stopwatch, dask_overlap
 from crest.utils.logging_service import get_logger
 from .backend import get_backend
 from .Block import Block
+from .SparseBlock import SparseBlock
 
 
 # Bool type which allows numpy bools as well
@@ -92,6 +93,12 @@ class Datafile(BaseAbstract):
         2d grid of latitude x longitude, and subsequently all elements across
         the time dimension must be valid. Note that the dictionary is ordered,
         and so dimensions are evaluated in the order given.
+    valid_feature : str
+        Method used to combine feature validity at each location. ``'all'``
+        requires every requested feature to be non-null, while ``'any'``
+        requires at least one requested feature to be non-null. This determines
+        the Datafile-level ``valid_mask``; ``valid_percent`` is subsequently
+        applied across Block windows.
     invalid_value : Number | Collection[Number]
         A single value or a collection of values which should be treated as
         NaN in the `data`. Note that np.NaN and its integer representation
@@ -169,8 +176,9 @@ class Datafile(BaseAbstract):
 
     # Any attributes set in __init__ which are not contained in this list will
     # be included in the hash calculation that is used to name the cache folder
-    CACHE_KEY_EXCLUSIONS: ClassVar[str] = [
+    CACHE_KEY_EXCLUSIONS: ClassVar[list[str]] = [
         '_window_depth', 'match_radius', 'dataset_index', 'is_required',
+        '_valid_percent', 'no_overlaps', 'allow_repeats', 'sort_dims',
     ]
 
 
@@ -181,6 +189,7 @@ class Datafile(BaseAbstract):
         window_depth  : dict[str, int | Collection[int] | None] = {},
         match_radius  : dict[str, str | Number] = {},
         valid_percent : dict[str | tuple[str], Number] = {},
+        valid_feature : str = 'all',
         invalid_value : object = [],
         preprocessors : list[Callable] = [],
         sort_dims     : bool = True,
@@ -195,12 +204,13 @@ class Datafile(BaseAbstract):
         if isinstance(location, FSMap):
             location = S3Path(location)
 
-        self.location = location
-        self.features = sorted(features)
-        self.extent   = extent.copy()
-        self._kwargs  = kwargs
+        self.location  = location
+        self._features = sorted(features)
+        self.extent    = extent.copy()
+        self._kwargs   = kwargs
         self._window_depth  = window_depth.copy()
         self._valid_percent = valid_percent.copy()
+        self.valid_feature  = valid_feature
         self._invalid_value = invalid_value
         self.match_radius   = match_radius
         self.preprocessors  = preprocessors
@@ -247,7 +257,7 @@ class Datafile(BaseAbstract):
         return f'Datafile[{self.label}]'
 
 
-    def to_string(self, show_stats: bool = False) -> str:
+    def to_string(self, data = None, show_stats: bool = False) -> str:
         """Long-form representation.
 
         Parameters
@@ -261,10 +271,12 @@ class Datafile(BaseAbstract):
             String containing information about the underlying data.
 
         """
+        if data is None:
+            data = self.data
         s = [
             f'Datafile: {self.name} (Dataset[{self.dataset_index}])',
             f'Location: {self.location}',
-            f'XArray: \n{self.data}'.replace('\n', '\n\t'),
+            f'XArray: \n{data}'.replace('\n', '\n\t'),
         ]
         if show_stats:
             with pd.option_context('display.max_columns', None):
@@ -276,19 +288,19 @@ class Datafile(BaseAbstract):
     @cached_property
     def _raw_data(self):
         """ Only read the data once necessary """
-        if isinstance(self.location, xr.Dataset):
-            raw = self.location
-        else:
-            # If the given location isn't already an xr.Dataset, open it
-            if (
-                isinstance(self.location, FSMap)
-                and not isinstance(self.location, S3Path)
-            ):
-                self.location = S3Path(self.location)
+        raw = self.location
+        
+        # If the given location isn't already an xr.Dataset, open it
+        if not isinstance(self.location, xr.Dataset):
+
+            # Wrap S3 locations to enable a singular API interface
+            if isinstance(self.location, FSMap):
+                if not isinstance(self.location, S3Path):
+                    self.location = S3Path(self.location)
             raw = get_backend(self.location).open(**self._kwargs)
 
         # Keep the valid_mask only if it is still accurate for this Datafile
-        if 'valid_mask' in raw and len(self.preprocessors) or len(self.extent):
+        if 'valid_mask' in raw and self.caching_required:
             raw = raw.drop_vars(['valid_mask'], errors='ignore')
 
         # Handle the summary statistics
@@ -296,24 +308,23 @@ class Datafile(BaseAbstract):
 
             # If no extents are changed / preprocessors applied, raw_data
             # statistics will be the same as data statistics
-            if not (len(self.preprocessors) or len(self.extent)):
+            if not self.caching_required:
                 self.__dict__['summary'] = raw['summary']
             raw = raw.drop_vars(['summary', 'features', 'statistics'],
                                 errors='ignore')
 
             # Set datetime dtype back to np.datetime64 if it was converted
-            if (
-                hasattr(raw, 'datetime')
-                and np.issubdtype(raw.datetime.dtype, np.float32)
-            ):
-                d64 = raw.datetime.astype('datetime64[m]')
-                raw = raw.assign_coords(datetime=d64)
+            if hasattr(raw, 'datetime'):
+                if np.issubdtype(raw.datetime.dtype, np.floating):
+                    d64 = raw.datetime.astype('datetime64[m]')
+                    raw = raw.assign_coords(datetime=d64)
 
         # All coordinates must be in ascending order, with data chunked by dask
-        numeric_coords = [c for c in list(raw.coords) if np.issubdtype(raw[c].dtype, np.number)]
+        numeric_coords = [key for key in list(raw.coords) 
+                          if np.issubdtype(raw[key].dtype, np.number)]
         return raw.sortby(numeric_coords).chunk({})
 
-
+    
     @cached_property
     def region_mask(self):
         """ Use RegionalMaskGenerator to create mask for chosen region """
@@ -338,12 +349,12 @@ class Datafile(BaseAbstract):
                 data = func(self, data)
 
         # Select only requested features
-        keys = sorted(self.features or data.keys())
-        keys = keys + (['valid_mask'] if 'valid_mask' in data else [])
+        keys = sorted(self._features or data.keys())
+        keys = [k for k in keys if k != 'valid_mask']
         data = data[keys]
-
-        # Add virtual dimensions here, after dropping extra features (which may
-        # have dropped some dimensions as a side-effect)
+                    
+        # Add virtual dimensions here, after dropping extra features
+        # (which may also have dropped some dimensions as a side effect)
         missing = {k:v for k,v in self._virtual_dims.items() if k not in data}
         if missing:
             data = data.expand_dims(dim=missing)
@@ -363,24 +374,6 @@ class Datafile(BaseAbstract):
             str(k): T if not np.issubdtype(T := data[k].dtype, np.datetime64)
             else 'datetime64[m]' for k in list(data)+list(data.coords)
         }
-
-        # Create a mask for valid data elements, to pre-compute when caching
-        if 'valid_mask' not in data:
-            is_sparse = lambda f: hasattr(type(data[f].data._meta), 'todense')
-            if not any(map(is_sparse, data)):
-                valid_mask = ~data.to_array('features').isnull()
-
-                # If at least some part of a window needs to be valid, all
-                # features must be simultaneously valid
-                if np.prod(list(self._valid_percent.values())) > 0:
-                    data['valid_mask'] = valid_mask.all('features')
-
-                # If empty windows are allowed, any features can be valid
-                else:
-                    data['valid_mask'] = valid_mask.any('features')
-
-        if 'valid_mask' in self.features:
-            self.features.remove('valid_mask')
 
         # Only rectilinear (separable-coordinate) grids are currently supported
         for name, coord in data.coords.items():
@@ -403,9 +396,8 @@ class Datafile(BaseAbstract):
         original_dims = [c for c in data.coords if c not in self._virtual_dims]
         self.original_dims = (
             sorted(original_dims) if self.sort_dims else original_dims,
-            [f for f in data.features.to_numpy() if f not in ['valid_mask']],
+            list(data.features.to_numpy()),
             dtypes,
-            [f for f in self.features if f not in ['valid_mask']],
         )
 
         # Sanity check - Sample.py assumes features are sorted
@@ -417,6 +409,51 @@ class Datafile(BaseAbstract):
         return data.transpose(*order, ...)
 
 
+    @property
+    def valid_mask(self) -> xr.DataArray:
+        """Return the pixel-wise validity mask for data features.
+
+        A stored mask can be reused only when no additional processing is
+        required and the requested features exactly match those represented by
+        the raw source. Otherwise validity is reconstructed from ``self.data``
+        using ``valid_feature``.
+        """
+        dependencies = ['features', 'valid_feature', 'invalid_value']
+        
+        # Only return a pre-existing mask if no processing work remains
+        if 'valid_mask' in self._raw_data and not self.caching_required:
+            valid = self._raw_data['valid_mask']
+            if valid.attrs:
+                log = get_logger(__name__)
+
+                # All cached attributes must match for mask to be usable
+                for k in dependencies:
+                    old = valid.attrs.get(k, None)
+                    new = getattr(self, k)
+                    if isinstance(old, list):
+                        old = sorted(map(str, old))
+                        new = sorted(map(str, new))
+                    if old != new:
+                        log.info(f'Using new valid_mask, as cached {k}={old}'
+                                 f' is different than current self.{k}={new}')
+                        break
+                else:
+                    return valid.astype(bool)
+
+        # Mask out NaNs and other invalid values
+        valid = self.data.notnull()
+        for value in self.invalid_value:
+            valid &= self.data != value
+
+        # Reduce over the feature dimension via `any` or `all`
+        valid = getattr(valid, self.valid_feature)('features')
+        valid = valid.astype(bool).rename('valid_mask')
+
+        # Retain feature provenance for proper cache invalidation
+        valid.attrs.update({k: getattr(self, k) for k in dependencies})
+        return valid
+
+        
     @cached_property
     def summary(self) -> xr.DataArray:
         """ Return summary statistics for data """
@@ -424,15 +461,14 @@ class Datafile(BaseAbstract):
         self._raw_data  # noqa: B018
         if 'summary' in self.__dict__:
             return self.__dict__['summary']
-        data = self.data.drop_sel(features='valid_mask', errors='ignore')
-        data = data.to_dataset('features')
+        data = self.data.to_dataset('features')
 
         # Splitting large chunks seems to sometimes result in KeyError in dask
         with dask.config.set(**{'array.slicing.split_large_chunks': False}):
 
             # Include in the summary stats any coordinates requested as features
             for coord in data.coords:
-                if (coord in self.features) and (coord != 'datetime'):
+                if (coord in self._features) and (coord != 'datetime'):
                     coords = {c: data[c] for c in data.coords if c != coord}
                     data[f'{coord}_f'] = data[coord].astype('float32')
                     data[f'{coord}_f'] = data[[f'{coord}_f']] \
@@ -462,7 +498,9 @@ class Datafile(BaseAbstract):
 
                     # Similar to dense summary, but use dask ops directly
                     extra = dd(int, {
-                        'null' : lambda x: values.size - da.sum(da.isfinite(x)),
+                        'null': lambda x: values.size - da.sum(da.isfinite(x)),
+                        'logstd': lambda x: da.where(da.any(x <= 0), np.nan,
+                            da.nanstd(da.log(da.where(x > 0, x, np.nan)))),
                     })
                     stats = ['mean', 'std', 'min', 'max'] + list(extra)
                     coord = xr.Variable('statistics', stats)
@@ -484,7 +522,9 @@ class Datafile(BaseAbstract):
             # Dense summary computation relies mostly on xarray operations
             else:
                 extra = dd(int, {
-                    'null' : lambda: data.isnull().sum(dtype='int64'),
+                    'null'   : lambda: data.isnull().sum(dtype='int64'),
+                    'logstd' : lambda: xr.where(data.min() > 0,
+                        np.log(data.where(data > 0)).std(), np.nan),
                 })
                 stats = ['mean', 'std', 'min', 'max'] + list(extra)
                 coord = xr.Variable('statistics', stats)
@@ -555,18 +595,15 @@ class Datafile(BaseAbstract):
     @property
     def _typed_data(self) -> xr.DataArray:
         """ Data/coords converted to float types """
-        data = self.data.drop_sel(features='valid_mask', errors='ignore')
+        data = self.data
 
-        # Cast int/uint/etc. to float in order to allow NaNs
-        # for key in data.features:
-        if (
-            np.issubdtype(data.dtype, np.number)
-            and not np.issubdtype(data.dtype, np.floating)
-        ):
-            data = data.astype(np.promote_types(data.dtype, np.float16))
+        # Cast int/uint/etc. to smallest float dtype in order to allow NaNs
+        if np.issubdtype(data.dtype, np.number):
+            if not np.issubdtype(data.dtype, np.floating):
+                data = data.astype(np.promote_types(data.dtype, np.float16))
 
-        # Coordinates must have uniform type, so we cast to float32
-        # Note: datetime64 are converted to datetime64[m] (minute resolution)
+        # Coordinates must have uniform type, so we cast to float32. Note that
+        # datetime64 are first converted to datetime64[m] (minute resolution)
         for key in data.coords:
             if key != 'features':
                 f_64 = lambda d: d.astype('datetime64[ns]').astype('float64')
@@ -649,9 +686,17 @@ class Datafile(BaseAbstract):
 
 
     @property
-    def data_features(self) -> list[str]:
+    def features(self) -> list[str]:
         """ Feature names contained in the xarray.Dataset object """
-        return sorted(set(self.data.features.values) - {'valid_mask'})
+        if self._features:
+            return sorted(self._features)
+
+        # Use raw data features if data has not yet been created
+        # Note that if a preprocessor function adds or removes features,
+        #   Datafile.features will be different before/after data creation
+        if 'data' in self.__dict__:
+            return sorted(self.data.features.values)
+        return sorted(set(self._raw_data.data_vars) - {'valid_mask'})
 
 
     @cached_property
@@ -670,7 +715,13 @@ class Datafile(BaseAbstract):
 
 
     @property
-    def virtual(self) -> np.ndarray:
+    def virtual_dims(self) -> list[str]:
+        """ Ordered virtual coordinate dimensions """
+        return list(compress(self.dims, self.is_virtual))
+        
+
+    @property
+    def is_virtual(self) -> np.ndarray:
         """ Array of flags indicating virtual dimensions """
         return np.array([d in self._virtual_dims for d in self.dims])
 
@@ -686,19 +737,47 @@ class Datafile(BaseAbstract):
             [('coords', np.dtype(list(map(ctype, sizes))))]
         )
 
+        
+    @property
+    def caching_required(self) -> bool:
+        """Return whether data requires caching (to apply preprocessing, etc.).
 
-    def sparsity(self, compute=False):# -> da.Array | float:
-        """ Create dask object that computes percentage of invalid data """
+        Notes
+        -----
+        Extent selection, preprocessing functions, and regional masking all
+        change the values or locations represented by the Datafile. Cached
+        summary/validity data from the raw source therefore cannot be reused.
+        """
+        return bool(
+            self.preprocessors or 
+            self.extent or 
+            self.region is not None
+        )
+
+
+    def sparsity(self, compute: bool = False) -> da.Array | Number:
+        """Return the fraction of invalid feature values.
+
+        Parameters
+        ----------
+        compute : bool
+            Compute lazy summary statistics when True. Already materialized
+            summaries are also accepted, without constructing a new graph.
+
+        Returns
+        -------
+        da.Array | Number
+            A lazy scalar, or the materialized invalid fraction. Sparse
+            scalar results are converted without expanding source arrays.
+        """
         null = self.summary.sel(statistics='null')
-        data = self.data
-        if 'valid_mask' in data.features:
-            data = data.drop_sel(features='valid_mask')
-        if 'valid_mask' in null.features:
-            null = null.drop_sel(features='valid_mask')
-        sparsity = null.data.sum() / data.size
-        sparsity = sparsity.compute() if compute else sparsity
-        if isinstance(sparsity, sparse.COO):
-            sparsity = 1. # Completely empty data produces a COO object
+        sparsity = null.data.sum() / self.data.size
+        if compute and isinstance(sparsity, da.Array):
+            sparsity = sparsity.compute()
+        if isinstance(sparsity, sparse.SparseArray):
+            sparsity = sparsity.todense()
+        if isinstance(sparsity, np.ndarray):
+            sparsity = sparsity.item()
         return sparsity
         
 
@@ -823,7 +902,8 @@ class Datafile(BaseAbstract):
             stack_lr = lambda i, vector: np.stack([
                 np.r_[vector[:1], vector],
                 np.r_[vector, vector[-1:]]
-            ], axis=-1) if not self.virtual[i] else np.array([[np.nan, np.nan]])
+            ], axis=-1) if not self.is_virtual[i] else \
+                np.array([[np.nan, np.nan]])
             return list(map(stack_lr, *zip(*enumerate(vectors))))
         return [vec.min() for vec in vectors]
 
@@ -843,6 +923,7 @@ class Datafile(BaseAbstract):
         get_vec = lambda d: np.diff(d) if len(d) > 1 else np.zeros(1)
         vectors = [get_vec(self._typed_data[dim]).round(5) for dim in self.dims]
         return [np.atleast_1d(r).max() for r in vectors]
+
 
     def ensure_dims(self, dims: set[str]) -> None:
         """ Ensure any missing dimensions are added as virtual dimensions """
@@ -874,6 +955,7 @@ class Datafile(BaseAbstract):
             # Force a cache refresh for these values
             for key in ['valid_percent']:
                 self.__dict__.pop(key, None)
+
 
     @property
     def max_valid_blocks(self) -> list[Number]:
@@ -915,7 +997,7 @@ class Datafile(BaseAbstract):
         for i, dim in enumerate(self.dims):
 
             # Virtual dimensions can have any number of blocks
-            if self.virtual[i]:
+            if self.is_virtual[i]:
                 blocks.append(np.inf)
                 continue
 
@@ -923,7 +1005,7 @@ class Datafile(BaseAbstract):
             # number of elements required for a valid window
             size  = self.shape[i]
             total = self.window_total[dim]
-            v_pct = self.valid_percent[dim]
+            v_pct = self.valid_percent[(dim,)]
             # depth = self.window_depth[dim]
 
             if size < (total * v_pct):
@@ -1263,30 +1345,27 @@ class Datafile(BaseAbstract):
             'trim_every'       : trim_every,
         })
 
-        def _rechunk(v):
-            if v.chunks != chunks:
-                v = v.rechunk(chunks)
-            return v[..., None]
-
-        # valid_mask = da.isfinite(self.dask).all(axis=-1, keepdims=True)
-        # valid_mask = self.data.sel(features=['valid_mask']).data.astype(bool)
-        raw = self._raw_data.transpose(*sorted(self._raw_data.coords))
+        dim_order = sorted(self._raw_data.coords)
+        raw = self._raw_data.transpose(*dim_order)
         raw = raw.sel({k: slice(*ext) for k, ext in self.extent.items()
                         if k in raw and k not in self._virtual_dims})
-
-        if 'valid_mask' in raw:
-            valid_mask = _rechunk(raw['valid_mask'].data)
-        else: valid_mask = da.isfinite(self.dask).all(axis=-1, keepdims=True)
 
         # TODO: Gracefully switch to fallback method if this is not cached
         assert(len(self.preprocessors) == 0), 'Need to cache dataset first'
 
+        def _rechunk(v):
+            """ Ensure array is chunked properly and has feature dimension """
+            if v.chunks != chunks:
+                v = v.rechunk(chunks)
+            return v[..., None]
+            
         # Use data from original database to allow direct reading from files
         # (xarray combines features in self.data so that they are inseparable)
         # Note that this ONLY works for cached data, where preprocessors have
         #  already been applied
         feat_names = list(self._typed_data.features.values)
         feat_array = [_rechunk(raw[k].data) for k in feat_names]
+        valid_mask = _rechunk(self.valid_mask.transpose(*dim_order).data)
 
         # Separate data/coords/masks into independent blocks
         block_grids = list(map(blocker, list(map(overlap, feat_array)) + [
@@ -1307,7 +1386,6 @@ class Datafile(BaseAbstract):
             'original_dims' : self.original_dims,
             'window_depth'  : self.window_depth,
             'valid_percent' : self.valid_percent,
-            'invalid_value' : self.invalid_value,
             'allow_repeats' : self.allow_repeats,
             'label'         : self.label,
             'sparsity'      : self.sparsity(optimize),
@@ -1376,12 +1454,17 @@ class Datafile(BaseAbstract):
              [g[i] for g in block_grids[num_feats:]]
         )
 
-        # Returns list of functions to allow lazy creation of the Block objects
-        gen_block = lambda i: (lambda: Block(*sep_feats(i), **block_kwarg | {
-            'coord_vecs' : c_blocks[i],
-        }))
-        lazy_func = gen_block  # lambda i: cache(lambda: gen_block(i))
-        return map(lazy_func, product(*map(range, blocks)))
+        def _gen_block(index: tuple) -> Callable:
+            """ Lazily construct a Block object at the specified index """
+            def create() -> Block:
+                args = sep_feats(index)
+                meta = args[0][0]._meta
+                cls  = SparseBlock if hasattr(type(meta), 'todense') else Block
+                return cls(*args, **block_kwarg | {
+                    'coord_vecs' : c_blocks[index],
+                })
+            return create
+        return map(_gen_block, product(*map(range, blocks)))
 
 
     def reset(self, **kwargs) -> None:
@@ -1466,8 +1549,9 @@ class Datafile(BaseAbstract):
         timer = Stopwatch(message, silent=True)
         timer.__enter__()
 
-        data = self.data.to_dataset('features')
         dest = cache_dir.joinpath(self.cache_name)
+        data = self.data.to_dataset('features')
+        data['valid_mask'] = self.valid_mask
         
         if (
             'datetime' in data.dims and 
@@ -1477,20 +1561,17 @@ class Datafile(BaseAbstract):
             # Pandas > ~3.x appears to break xarray resampling, which can lead
             # to datetime being cast as datetime64[us] by a preprocessor. This
             # dtype change then causes downstream issues when using the cache.
-            raise RuntimeError(f'{data.datetime.dtype=}: expected datetime64[ns]')
+            raise RuntimeError(f'{data.datetime.dtype=}: need datetime64[ns]')
             
         if isinstance(dest, Path):
             dest.parent.mkdir(exist_ok=True, parents=True)
 
         # Erase virtual dimensions
-        for dim in data.coords:
-            if dim in [d for d,v in zip(self.dims, self.virtual) if v]:
-                data = data.isel({dim: 0}, drop=True)
+        for dim in self.virtual_dims:
+            data = data.isel({dim: 0}, drop=True)
 
         # Include summary statistics
         data['summary'] = self.summary
-        if 'valid_mask' in data:
-            data['valid_mask'] = data['valid_mask'].astype(bool)
 
         # Include resolution features if available
         if 'resolution_lat_max' in self._raw_data:
@@ -1511,7 +1592,7 @@ class Datafile(BaseAbstract):
         if (not overwrite) and dest.exists():
             try:
                 cache = backend.open()
-                attrs = ['dims', 'chunksizes']
+                attrs = ['dims', 'chunksizes', 'dtypes']
 
                 # Temporary check for updated attrs format
                 if 'cache_uid' not in cache.attrs:
@@ -1547,13 +1628,18 @@ class Datafile(BaseAbstract):
                 overwrite = True
 
         if overwrite or (not dest.exists()):
+            # Add a unique random identifier for this specific cache
+            rng = np.random.default_rng()
+            val = str(rng.integers(1e8)).encode('utf-8')
+            data.attrs['cache_uid'] = hashlib.sha256(val).hexdigest()
+
             logger = get_logger(__name__)
             logger.info(f'Caching {self.name} to {dest}...')
 
             if dest.exists():
                 logger.info(f'Re-caching reason: {reason}')
             if verbose:
-                logger.info(self.to_string())
+                logger.info(self.to_string(data))
 
         # Reinitialize this Datafile with the new cache
         # Anything handled by the cache (e.g. extent) can be dropped
@@ -1562,6 +1648,7 @@ class Datafile(BaseAbstract):
             'extent'        : {},
             'preprocessors' : [],
             'region'        : None,
+            '_features'     : self._features or self.features,
         })
 
         # Write the data to the destination
@@ -1574,11 +1661,6 @@ class Datafile(BaseAbstract):
 
             with warnings.catch_warnings():
                 warnings.simplefilter('ignore')
-
-                # Add a unique random identifier for this specific cache
-                rng = np.random.default_rng()
-                val = str(rng.integers(1e8)).encode('utf-8')
-                data.attrs['cache_uid'] = hashlib.sha256(val).hexdigest()
 
                 try:
                     # Put coordinates into single chunk
@@ -1614,7 +1696,6 @@ class Datafile(BaseAbstract):
         verbose     : bool = False,
     ):
         """ Cache overlapped Block data in zarr format for faster batching """
-
         self._cache_path = cache_path
         message = f'Cache exists for {self.name} {self.config_hash[:6]}..'
         timer = Stopwatch(message, silent=True)
@@ -1694,7 +1775,14 @@ class Datafile(BaseAbstract):
                             overwrite = True
                             break
                 else:
-                    if not bool(xr.align(data, cache, **{
+                    current_sizes = data['sizes'].compute().values
+                    cached_sizes  = cache['sizes'].values
+                    
+                    if not np.array_equal(current_sizes, cached_sizes):
+                        reason = 'differing unpadded block sizes'
+                        overwrite = True
+    
+                    elif not bool(xr.align(data, cache, **{
                         'join'    : 'exact',
                         'exclude' : 'statistics',
                     })):
@@ -1713,7 +1801,7 @@ class Datafile(BaseAbstract):
             if dest.exists():
                 logger.info(f'Re-caching reason: {reason}')
             if verbose:
-                logger.info(self.to_string())
+                logger.info(self.to_string(data))
 
             if dest.exists():
                 if isinstance(dest, Path):
@@ -1801,3 +1889,7 @@ class Datafile(BaseAbstract):
             if not (0 <= percent <= 1):
                 message = f'{key} percent must be in range [0, 1]: {percent}'
                 raise ValueError(message)
+
+        if self.valid_feature not in ['all', 'any']:
+            message = f'{self.valid_feature=} : must be either "all" or "any"'
+            raise ValueError(message)

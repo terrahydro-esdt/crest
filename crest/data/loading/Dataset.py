@@ -141,9 +141,9 @@ class Dataset(BaseSet):
         return summary
 
 
-    def get_feature(self, feature: str, index: int|None = None) -> xr.DataArray:
+    def get_feature(self, feature: str, index: int|None=None) -> xr.DataArray:
         """ Return an xr.DataArray containing the requested feature's data """
-        index = slice(index, (index or (len(self)-1))+1)
+        index = slice(index, (index if index is not None else (len(self)-1))+1)
 
         available = []
         for df in self[index]:
@@ -591,8 +591,12 @@ class Dataset(BaseSet):
         # Get the current number of blocks
         chunks  = self.chunks.ix[:-1]
         current = self.numblocks.ix[:-1]
-        blocks = np.array([next((cur[i] for cur,virt in zip(current,self.virtual) if not virt[i]),1) for i in range(len(current[0]))])
-        assert(all(((current == blocks) | self.virtual).map(all))), current
+        blocks = np.array([
+            next((cur[i] for cur,virt in zip(current, self.is_virtual) 
+                  if not virt[i]), 1) 
+            for i in range(len(current[0]))
+        ])
+        assert(all(((current == blocks) | self.is_virtual).map(all))), current
 
         # Calculate required overlaps for each Datafile
         max_res = np.nanmax(self.max_resolution, axis=0)
@@ -701,7 +705,7 @@ class Dataset(BaseSet):
             # required = lambda d_v, data, size: [
             #    np.inf if v else len(data[d])//size[d] for d,v in d_v]
             # data_obj = self._typed_data, self.window_total
-            # data_dim = map(zip, self.dims, self.virtual)
+            # data_dim = map(zip, self.dims, self.is_virtual)
             # req_blks = map(required, data_dim, *data_obj)
             # max_blks = np.min(list(req_blks), axis=0).astype(int)
             max_blks = np.min(list(self.max_valid_blocks), axis=0).astype(int)
@@ -1152,7 +1156,12 @@ class Dataset(BaseSet):
                             break
 
                     # Add the coordinate as a new shape otherwise
-                    else: shape_features[key].add(dim)
+                    else: # shape_features[key].add(dim)
+                        raise ValueError(f'{dim=} with window_depth={size} '
+                            'has no data feature with a matching window. '
+                            'Datafiles that contain only coordinate features '
+                            'are not supported.'
+                        )
                 else: shape_features[key].add(dim)
 
         def create_datafile(label, source, location, window_depth, features):
@@ -1247,7 +1256,7 @@ class Dataset(BaseSet):
                     return chunks
 
         dimsize = [dict(zip(df.dims, df.shape)) for df in self]
-        virtual = [dict(zip(df.dims, df.virtual)) for df in self]
+        virtual = [dict(zip(df.dims, df.is_virtual)) for df in self]
         virtual = [[vs.get(dim, True) for dim in requested] for vs in virtual]
         lengths = [[ds.get(dim, None) for dim in requested] for ds in dimsize]
         allargs = zip(zip(*lengths), zip(*virtual), requested.items())
