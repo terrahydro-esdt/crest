@@ -227,7 +227,12 @@ class Node(HTG,BaseAbstract):
                         
             # Remove all empty dimensions
             empty = [i for i, shape in enumerate(current)
-                        if isinstance(shape, int) and shape == 1]
+                     if isinstance(shape, int) and shape == 1]
+
+            # Only dims which are not None can be removed
+            for i in list(empty):
+                if len(expected) > i and expected[i] is None:
+                    empty.remove(i)
             matching = keras.ops.squeeze(matching, empty)
 
             # Verify all dimension shapes match the respective spec shape
