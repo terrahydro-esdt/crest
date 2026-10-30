@@ -9,6 +9,7 @@
 soil_moisture
 shapefiles
 interactive_graph.html
+logs
 
 **/*.h5
 **/*.nc

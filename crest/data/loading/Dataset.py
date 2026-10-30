@@ -265,7 +265,7 @@ class Dataset(BaseSet):
         dat_sep = ''.join(['-']*60)
         log_txt = f'\n{log_sep}\nCurrent data:\n{dat_sep}'
         for c in self.container:
-            log_txt += f'\n\n{c.data}'
+            log_txt += f'\n\n{c._raw_data}'
         log_txt += f'\n\n{dat_sep}\n\nPreparing data...\n'
         redirect = redirect_stdout# if cache_path is None else nullcontext
 
@@ -584,8 +584,9 @@ class Dataset(BaseSet):
                     left  = dim_chunks[i-1] if i>0 else 0
                     right = dim_chunks[i+1] if i<(len(dim_chunks)-1) else 0
                     total = left + center + right
-                    if (total * df.valid_percent[dim]) < sum(dim_window):
-                        raise ValueError(err_message)
+                    wsize = sum(dim_window) * df.valid_percent[(dim,)]
+                    if total < wsize:
+                        raise ValueError(f'{err_message}: {total} < {wsize}')
 
         # Get the current number of blocks
         chunks  = self.chunks.ix[:-1]

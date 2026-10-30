@@ -191,7 +191,23 @@ class Transform(BaseAbstract):
         return ( self._map_transform(self.forward_normalize),
                  self._map_transform(self.inverse_normalize) )
 
+    
+    def forward_clip(self, data, minim=-6, maxim=6, **kwargs):
+        """ Clip data values to a given range; default [-6, 6] """
+        base = keras.ops if self._is_tensor_type(data) else np
+        return base.clip(data, minim, maxim)
 
+    def inverse_clip(self, data, **kwargs):
+        """ Clipping removes information and so inverting is not possible """
+        raise NotImplementedError('Clip transform cannot be inverted')
+
+    @property
+    def clip(self):
+        """ Forward and inverse functions for clipping transform """
+        return ( self._map_transform(self.forward_clip),
+                 self._map_transform(self.inverse_clip) )
+
+        
     # Map data quartiles to a given range; default [-1, 1]
     def forward_iqrnorm(self, data, minim=-1, maxim=1, **kwargs):
         """ Map data values to a given range via IQR; default [-1, 1] """

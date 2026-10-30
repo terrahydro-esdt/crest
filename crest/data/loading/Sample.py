@@ -178,7 +178,7 @@ class Sample:#(BaseAbstract):
 
         def _make_nan(coord_name: str) -> np.ndarray:
             """ Create a NaN or NaT depending on the coordinate """
-            dtype = 'datetime64' if k == 'datetime' else 'float32'
+            dtype = 'datetime64' if coord_name == 'datetime' else 'float32'
             return np.array([np.nan]).astype(dtype)
 
         for feature_index in (features or self.features):
@@ -220,7 +220,7 @@ class Sample:#(BaseAbstract):
                         index = get_index(index[0])
                         if feature in self.dims:
                             coords = self.container[index]['coords']
-                            vals.append(coords.get(feature, make_nan(feature)))
+                            vals.append(coords.get(feature, _make_nan(feature)))
                         else: vals.append(data[feature][index])
                     else: vals.append(next(iter(data[feature_index].values())))
 
