@@ -1741,7 +1741,7 @@ def multiset_full_numba(arrays, array_lens, array_idxs, num_samples, seed, shuff
         tasks_queue[tid][:t_rows, 0] = thread_indices  # Array 0 coordinate row index
         tasks_order[tid][:t_rows, 0] = 0           # Order of arrays composing the task (only contains array 0)
         tasks_size[tid][:t_rows] = 1               # Size of the task (only one array in task starting out)
-        tasks_size_count[tid][1] += 1
+        tasks_size_count[tid][1] += t_rows
         tasks_left = t_rows                       # Only one task remaining to begin with
         
         match_count = 0  # 0 matches found for current zero_index
@@ -2197,7 +2197,7 @@ def multiset_full_numba(arrays, array_lens, array_idxs, num_samples, seed, shuff
             #     # print('first selection')
                 tasks_left += 1
                 n_task2[tid] -= 1
-
+                tasks_size_count[tid][task_size] += 1
                 continue
 
             if (task_size+1) < n_arrays:
