@@ -213,19 +213,37 @@ def test_unmitigated_block_read_segfaults(
 ) -> None:
     """Reading through `_load_sparse_block` alone is expected to segfault.
 
-    This test passes for as long as the installed TileDB contains the race.
-    Once it fails with exit code 0, a TileDB release with the fix has been
+    This test passes for as long as the installed TileDB contains the race,
+    except under certain environment configurations which break the strategy
+    used here to reliably trigger the race condition.
+    Once it fails with exit code 0, a fixed TileDB release has (likely) been
     installed: the `preprocess_tile_merge` workaround in `tiledb_to_xarray`
-    can then be removed, together with this test.
+    can then be removed, together with this test. Verify that the fix has
+    actually been included in the release prior to removal, however.
 
     """
+    # A preloaded allocator can break the forced segfault conditions, causing
+    # this test to fail. Instead, check tiledb version as a first pass.
+    for version, unfixed in [
+        (tdb.__version__, (0, 36, 1)),
+        (tdb.libtiledb.version(), (2, 30, 1)),
+    ]:
+        current = tuple(int(v) for v in version.split('.') if v.isdigit())
+        if current <= unfixed:
+            pytest.xfail(f'Installed TileDB {version=} is confirmed broken')
+
+    # Try causing the segfault if versions > the confirmed unfixed releases
     code = _exitcode(tmp_path, False, monkeypatch)
     assert(code == -signal.SIGSEGV), (
         f'Expected a segfault, but the reader exited with {code=} on TileDB '
-        f'{tdb.libtiledb.version()}. If the code is 0, the installed TileDB '
-        'no longer has the race: remove the preprocess_tile_merge workaround '
-        'from tiledb_to_xarray, and this test. Any other code is a failure '
-        'of the test itself; see the captured output.')
+        f'{tdb.__version__} (libtiledb {tdb.libtiledb.version()}). If the ' 
+        'code is 0, the installed TileDB may no longer have the segfault bug '
+        '(but it should be manually verified that is the case). If the bug is '
+        'fixed, remove this test as well as the preprocess_tile_merge config '
+        'workaround in crest/data/loading/backend/TileDB.py:tiledb_to_xarray. '
+        'Any other exit code is a failure of the test itself and should be '
+        'investigated.'
+    )
 
 
 def test_mitigated_dataset_read_succeeds(
