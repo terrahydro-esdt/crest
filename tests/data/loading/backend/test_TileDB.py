@@ -31,12 +31,10 @@ import multiprocessing as mp
 import tiledb as tdb
 import faulthandler
 import numpy as np
-import resource
 import signal
 import pytest
 import sys
 import os
-
 
 # Thread demotion and freed-memory filling rely on Linux and glibc
 pytestmark = pytest.mark.skipif(sys.platform != 'linux', reason='Linux only')
@@ -129,6 +127,8 @@ def _stress(path: str, mitigated: bool) -> None:
     """
 
     # A crash should leave a Python traceback, but not a core file
+    # resource module is Unix-only
+    import resource
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     faulthandler.enable()
 
