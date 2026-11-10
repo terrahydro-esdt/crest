@@ -1,0 +1,102 @@
+# Hard requirements for running documentation generator (sphinx)
+# WARNING: Keep this up-to-date!
+name: OCETRA_cpu
+channels:
+ - conda-forge
+ - nodefaults
+
+dependencies:
+  - apscheduler
+  - awscli
+  - boto3
+  - bottleneck
+  - cdsapi
+  - cfgrib
+  - cloudpickle
+  - cmake
+#exists in conda but conflicts..
+#  - configobj
+  - configparser
+  - crick
+  - cython
+  - dask=2025.5.0
+  - datapi
+  - dill
+  - donfig
+  - earthaccess
+  - ecmwf-api-client
+  - fastapi
+  - fsspec
+  - geopandas
+  - h5netcdf
+  - hdf5
+  - ipykernel
+  - ipywidgets
+  - libgdal-hdf4 
+  - jsonpath-ng
+  - jsonpickle
+  - make
+  - matplotlib
+  - msgraph-sdk
+  - nbconvert
+  - nbformat
+  - netCDF4
+  - networkx
+  - numpy=2.2.6
+  - opencv
+  - osmnx
+  - pandas
+  - paramiko
+  - pip
+  - polars
+  - prettytable
+  - pyarrow
+#exists in conda but conflicts..
+#  - pygeobase
+  - pygeogrids
+  - pykdtree
+  - pyresample
+  - pytest
+  - python~=3.12.13
+  - python-daemon
+  - pyvis
+  - rasterio
+  - s3fs
+  - s3path
+  - scikit-learn
+  - seaborn
+  - setuptools
+  - simple_slurm
+  - sparse
+  - sysrsync
+  - tqdm
+  - xarray
+  - yapf
+  - zarr=2.18.7
+  
+  # for docs
+  - docutils
+  - flit
+  - furo
+  - myst-nb
+  - nbsphinx
+  - nbsphinx-link
+  - pandoc
+  - pydata-sphinx-theme
+  - sphinx
+  - sphinx-autodoc-typehints
+  - sphinx_rtd_theme
+  - sphinxcontrib-mermaid
+
+  - pip:
+  #for ingest
+      - configobj
+      - ismn 
+      - more_itertools 
+      - pygeobase
+      - pynetcf 
+      - repurpose 
+      - tiledb
+      - jax~=0.5.2
+      - tensorflow~=2.18.0
+
