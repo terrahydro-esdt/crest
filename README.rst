@@ -2,8 +2,8 @@
    :target: https://terrahydro-esdt.github.io/crest/
    :alt: Documentation Status
 
-.. |doi| image:: https://zenodo.org/badge/DOI/10.5281/zenodo.21939177.svg
-   :target: https://doi.org/10.5281/zenodo.21939177
+.. |doi| image:: https://zenodo.org/badge/DOI/10.5281/zenodo.21939176.svg
+   :target: https://doi.org/10.5281/zenodo.21939176
    :alt: DOI
 
 .. |license| image:: https://img.shields.io/badge/License-Apache%202.0-blue.svg
@@ -127,7 +127,7 @@ If you use CREST in your research, please cite:
      author  = {Pelissier, Craig and {CREST Development Team}},
      year    = {2026},
      url     = {https://github.com/terrahydro-esdt/crest},
-     doi     = {10.5281/zenodo.21939177},
+     doi     = {10.5281/zenodo.21939176},
      version = {0.1.0}
    }
 

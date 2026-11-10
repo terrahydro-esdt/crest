@@ -23,7 +23,7 @@ doctest:
   allow_failure: false
 
 # Versions, changelog and (on a tag) the tag name must agree before a release
-# reaches GitHub. See "Cutting a release" in DEV_PROD_WORKFLOW.md.
+# reaches GitHub. See "Cutting a release" in docs/DEV_PROD_WORKFLOW.md.
 release-check:
   script:
     - python scripts/release.py check ${CI_COMMIT_TAG:+--tag "$CI_COMMIT_TAG"}
