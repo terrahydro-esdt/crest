@@ -59,8 +59,8 @@ def _load_sparse_block(
     count = 0
     while True:
         try:
-            with _TILEDB_LOCKS[(uri, tuple(index))]:
-                array = data.subarray(tuple(map(slice, *zip(*index))))
+            # with _TILEDB_LOCKS[(uri, tuple(index))]:
+            array = data.subarray(tuple(map(slice, *zip(*index))))
             break
 
         # Retry on error like '[TileDB::S3] Error: Failed to read S3 object'
@@ -121,6 +121,16 @@ def tiledb_to_xarray(path: Path | str, **kwargs) -> xr.Dataset:
         # 'sm.mem.tile_upper_memory_limit' : 25 * 1024**3,
         # 'vfs.max_batch_size' :  2 * 1024**3,
         # 'vfs.s3.max_parallel_ops' : 5,
+
+        # TileDB causes random segfaults due to query race condition
+        # This parameter disables the code path which has the race
+        #   condition. However, it is labeled as experimental and
+        #   isn't a good long-term solution. Once the actual fix
+        #   has been merged into a package release by TileDB, the
+        #   library should be updated and this parameter disabled.
+        # See: https://github.com/TileDB-Inc/TileDB/pull/5723
+        # Note that this means tiledb>0.36.1 and libtiledb>2.30.1
+        'sm.query.sparse_global_order.preprocess_tile_merge' : 0,
     } | kwargs)
 
     coords = {}
