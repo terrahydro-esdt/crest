@@ -1,5 +1,10 @@
 from .classproperty    import classproperty
 from .chunk_dict       import chunk_dict
+from .crest_logger     import (
+    logger_setup,
+    install_global_exception_logger,
+    LogLevel,
+)
 from .dask_overlap     import dask_overlap
 from .ensure_with      import ensure_with
 from .find_neighbors   import find_neighbors
@@ -7,6 +12,13 @@ from .induce_bins      import induce_bins
 from .interactive      import interactive
 from .json_safe        import json_safe
 from .limit_calls      import limit_calls
+from .logging_service  import (
+    LoggingService,
+    get_logger,
+    log_context,
+    log_function_call,
+    log_execution_time,
+)
 from .Metrics          import Metrics
 from .optimize_blocks  import optimize_blocks
 from .partial_product  import partial_product

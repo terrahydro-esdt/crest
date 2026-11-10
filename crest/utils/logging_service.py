@@ -2,6 +2,13 @@
 This module provides a unified interface for configuring and accessing loggers
 throughout the CREST application. It wraps logger_setup functionality.
 
+By default (`scope="root"`), initializing logging captures any logger in the
+process obtained via the standard `logging.getLogger(__name__)` pattern - not
+just loggers named "crest.*" - so applications embedding CREST do not need to
+follow any CREST-specific naming convention. Pass `scope="crest"` to isolate
+CREST's own logs instead; see `crest.utils.crest_logger.logger_setup` for
+details.
+
 Examples
 --------
 Initialize logging at application startup:
@@ -18,19 +25,21 @@ Then get a logger in any module:
 Can also use context-aware logging:
 
 >>> from crest.utils.logging_service import log_context
->>> with log_context(run_id="exp_001", stage="training"):
-...     logger.info("Training started")  # Will include run_id and stage
+>>> with log_context(run="exp_001", stage="training"):
+...     logger.info("Training started")  # Will include run and stage
 """
 from __future__ import annotations
 
 import inspect
 import logging
+import threading
 from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import wraps
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from .crest_logger import LogLevel, logger_setup
+from .crest_logger import LogLevel, _reset_logging_state, logger_setup
 
 
 class LoggingService:
@@ -70,15 +79,22 @@ class LoggingService:
     @classmethod
     def initialize(
         cls,
-        log_file: str = "crest.log.jsonl",
-        metrics_file: str = "metrics.jsonl",
+        log_file: Optional[str] = "crest.log.jsonl",
+        metrics_file: Optional[str] = "metrics.jsonl",
+        error_file: Optional[str] = "error.jsonl",
         console: bool = True,
         log_level: Optional[str | int | LogLevel] = None,
         console_level: Optional[str | int | LogLevel] = None,
+        scope: Optional[str] = None,
         log_dir: str = "logs",
         format_type: str = "json",
         module_levels: Optional[dict[str, str | int]] = None,
-        clear_handlers: bool = True,
+        clear_handlers: bool | Literal["all"] = True,
+        rotate: bool = False,
+        max_bytes: int = 10 * 1024 * 1024,
+        backup_count: int = 5,
+        rotate_when: Optional[str] = None,
+        run_log: Literal["auto", "ignore"] = "auto",
         force: bool = False,
     ) -> None:
         """
@@ -89,24 +105,54 @@ class LoggingService:
 
         Parameters
         ----------
-        log_file : str, default="crest.log.jsonl"
-            Name of the application log file
-        metrics_file : str, default="metrics.jsonl"
-            Name of the metrics log file
+        log_file : str or None, default="crest.log.jsonl"
+            Name of the application log file; None writes none. The three
+            file names may contain ``{pid}`` and ``{host}`` placeholders (see
+            `crest_logger.logger_setup`)
+        metrics_file : str or None, default="metrics.jsonl"
+            Name of the metrics log file; None drops metrics records
+        error_file : str or None, default="error.jsonl"
+            Name of the errors-only log file; None writes none
         console : bool, default=True
             Enable console output
         log_level : str | int | LogLevel, optional
             Default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         console_level : str | int | LogLevel, optional
             Console log level (can differ from file level)
+        scope : "root" | "crest", optional
+            Where handlers attach - "root" (default) captures any caller's
+            `logging.getLogger(__name__)`; "crest" isolates CREST's logs
+            under the "crest" logger only. See `crest_logger.logger_setup`
+            for full details.
         log_dir : str, default="logs"
             Directory for log files
         format_type : str, default="json"
             Format: "json" or "text"
         module_levels : dict[str, str | int], optional
             Per-module log levels
-        clear_handlers : bool, default=True
-            Clear existing handlers
+        clear_handlers : bool | "all", default=True
+            Which existing handlers to remove before (re)initializing: True
+            removes only handlers CREST installed earlier, leaving the host's,
+            pytest's or other libraries' handlers in place; False removes
+            nothing; "all" removes every handler on the target logger. See
+            `crest_logger.logger_setup` for details.
+        rotate : bool, default=False
+            Enable log file rotation to prevent unbounded file growth
+        max_bytes : int, default=10485760 (10MB)
+            Maximum size of log file before rotation (size-based rotation,
+            used when rotate=True and rotate_when=None)
+        backup_count : int, default=5
+            Number of backup log files to keep when rotating
+        rotate_when : str, optional
+            Time-based rotation interval ('S', 'M', 'H', 'D', 'midnight',
+            'W0'-'W6'); if specified, uses time-based rotation instead of
+            size-based
+        run_log : "auto" | "ignore", default="auto"
+            With "auto", when loadEnv's run log is on the root logger, CREST
+            doesn't write its own application and error log files, since
+            records already reach the run file, and sends metrics to the run
+            file instead of `metrics_file`. "ignore" writes CREST's files anyway.
+            See `crest_logger.logger_setup` for details.
         force : bool, default=False
             Force reinitialization even if already initialized
 
@@ -134,26 +180,40 @@ class LoggingService:
         cls._config = {
             "log_file": log_file,
             "metrics_file": metrics_file,
+            "error_file": error_file,
             "console": console,
             "log_level": log_level,
             "console_level": console_level,
+            "scope": scope,
             "log_dir": log_dir,
             "format_type": format_type,
             "module_levels": module_levels,
             "clear_handlers": clear_handlers,
+            "rotate": rotate,
+            "max_bytes": max_bytes,
+            "backup_count": backup_count,
+            "rotate_when": rotate_when,
+            "run_log": run_log,
         }
 
         # Initialize logging
         logger_setup(
             log_file=log_file,
             metrics_file=metrics_file,
+            error_file=error_file,
             console=console,
             log_level=log_level,
             console_level=console_level,
+            scope=scope,
             log_dir=log_dir,
             format_type=format_type,
             module_levels=module_levels,
             clear_handlers=clear_handlers,
+            rotate=rotate,
+            max_bytes=max_bytes,
+            backup_count=backup_count,
+            rotate_when=rotate_when,
+            run_log=run_log,
         )
 
         cls._initialized = True
@@ -177,7 +237,10 @@ class LoggingService:
         Returns
         -------
         logging.Logger
-            Configured logger instance
+            A logger with exactly the given `name` - this never rewrites
+            or prefixes `name` with "crest." Under the default
+            `scope="root"`, any logger name is captured by CREST's
+            configured handlers regardless.
 
         Examples
         --------
@@ -187,10 +250,6 @@ class LoggingService:
         if not cls._initialized:
             # Auto-initialize with defaults
             cls.initialize()
-
-        # Ensure logger is under crest hierarchy
-        if not name.startswith("crest"):
-            name = f"crest.{name}"
 
         return logging.getLogger(name)
 
@@ -254,17 +313,19 @@ class LoggingService:
         """
         Reset the logging service to uninitialized state.
 
+        Detaches the handlers CREST borrowed (loadEnv's run-file handler on
+        "crest.metrics") without closing them, removes (and closes) the
+        handlers CREST installed, and restores the
+        levels and propagate flags CREST changed - on the root logger,
+        "crest", "crest.metrics" and any `module_levels` loggers. Handlers
+        and settings CREST did not install or change (e.g. pytest's log
+        capture, or a host application's own root handlers) are left alone.
+
         This is primarily useful for testing.
         """
         cls._initialized = False
         cls._config = {}
-
-        # Clear all handlers from crest loggers
-        for logger_name in list(logging.Logger.manager.loggerDict.keys()):
-            if logger_name.startswith("crest"):
-                logger = logging.getLogger(logger_name)
-                logger.handlers.clear()
-                logger.setLevel(logging.NOTSET)
+        _reset_logging_state()
 
 
 def get_logger(name: Optional[str] = None) -> logging.Logger:
@@ -281,7 +342,10 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
     Returns
     -------
     logging.Logger
-        Configured logger instance
+        A logger with exactly `name` (or the detected caller's `__name__`) -
+        never rewritten or prefixed with "crest." Under the default
+        `scope="root"` this is captured by CREST's configured handlers
+        regardless of the name's package.
 
     Examples
     --------
@@ -303,13 +367,59 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
     return LoggingService.get_logger(name)
 
 
+# Fields set by log_context(). A ContextVar, so each thread and each asyncio
+# task has its own; the dict is replaced, never mutated.
+_log_context: ContextVar[dict[str, Any]] = ContextVar("crest_log_context", default={})
+
+# Marks CREST's makeRecord wrapper, so it's installed only once.
+_CONTEXT_WRAPPER_ATTR = "_crest_log_context"
+_install_lock = threading.Lock()
+
+
+def _install_context_stamping() -> None:
+    """Wrap ``logging.Logger.makeRecord`` (once) to add the current log_context fields.
+
+    The fields are set after ``makeRecord`` has applied the call's ``extra``,
+    and only for keys that aren't in it, so ``extra`` wins and passing the same
+    key never raises. Whatever ``makeRecord`` was already (e.g. loadEnv's
+    stamping patch) is called first, so context fields also win over fields it
+    stamps from the environment. In the other order (a patch installed on top
+    of this one that fills only missing fields), the result is the same.
+    """
+    with _install_lock:
+        original = logging.Logger.makeRecord
+        if getattr(original, _CONTEXT_WRAPPER_ATTR, False):
+            return
+
+        @wraps(original)
+        def make_record(self, name, level, fn, lno, msg, args, exc_info,
+                        func=None, extra=None, sinfo=None):
+            record = original(self, name, level, fn, lno, msg, args, exc_info,
+                              func, extra, sinfo)
+            for key, value in _log_context.get().items():
+                if extra is None or key not in extra:
+                    setattr(record, key, value)
+            return record
+
+        setattr(make_record, _CONTEXT_WRAPPER_ATTR, True)
+        logging.Logger.makeRecord = make_record
+
+
 @contextmanager
 def log_context(**kwargs):
     """
     Context manager to add fields to all log messages within the block.
 
-    This is useful for adding structured logging context like run_id, stage,
-    experiment name, etc. to all log messages within a specific code block.
+    This is useful for adding structured logging context like a run or
+    experiment label, stage, etc. to all log messages within a specific code
+    block. Nested contexts merge, and each thread and asyncio task has its own
+    context: records logged by another thread while the block runs don't get
+    these fields. A field passed explicitly with ``extra=`` in a logging call
+    takes precedence over the context's value.
+
+    Use ``run`` for a run or experiment label, not ``run_id``: under loadEnv,
+    ``run_id`` is the process's run ID, and replacing it would take the records
+    out of that run in ``runlog``.
 
     Parameters
     ----------
@@ -322,37 +432,35 @@ def log_context(**kwargs):
 
     Examples
     --------
-    Add run_id and stage to all logs:
+    Add run and stage to all logs:
 
     >>> logger = get_logger(__name__)
-    >>> with log_context(run_id="exp_001", stage="training"):
+    >>> with log_context(run="exp_001", stage="training"):
     ...     logger.info("Starting epoch 1")
-    ...     # Log will include: run_id="exp_001", stage="training"
+    ...     # Log will include: run="exp_001", stage="training"
 
     Nested contexts:
 
-    >>> with log_context(run_id="exp_001"):
+    >>> with log_context(run="exp_001"):
     ...     with log_context(stage="training"):
     ...         logger.info("Training started")
-    ...         # Includes both run_id and stage
+    ...         # Includes both run and stage
     ...     with log_context(stage="evaluation"):
     ...         logger.info("Evaluation started")
-    ...         # run_id from outer context, stage="evaluation"
+    ...         # run from outer context, stage="evaluation"
+
+    A per-call field wins over the context:
+
+    >>> with log_context(stage="training"):
+    ...     logger.info("Fetching weights", extra={"stage": "download"})
+    ...     # stage="download"
     """
-    old_factory = logging.getLogRecordFactory()
-
-    def record_factory(*args, **kw):
-        """ Wraps the previous log record factory to inject the context kwargs onto every record """
-        record = old_factory(*args, **kw)
-        for key, value in kwargs.items():
-            setattr(record, key, value)
-        return record
-
-    logging.setLogRecordFactory(record_factory)
+    _install_context_stamping()
+    token = _log_context.set({**_log_context.get(), **kwargs})
     try:
         yield
     finally:
-        logging.setLogRecordFactory(old_factory)
+        _log_context.reset(token)
 
 
 def log_function_call(logger: Optional[logging.Logger] = None, level: str = "DEBUG"):
