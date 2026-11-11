@@ -59,8 +59,8 @@ def _load_sparse_block(
     count = 0
     while True:
         try:
-            with _TILEDB_LOCKS[(uri, tuple(index))]:
-                array = data.subarray(tuple(map(slice, *zip(*index))))
+            # with _TILEDB_LOCKS[(uri, tuple(index))]:
+            array = data.subarray(tuple(map(slice, *zip(*index))))
             break
 
         # Retry on error like '[TileDB::S3] Error: Failed to read S3 object'
@@ -75,7 +75,8 @@ def _load_sparse_block(
     dtype = array['data'].dtype
     fillv = np.asarray(np.nan if np.issubdtype(dtype, np.floating)
                        else (-1 if np.issubdtype(dtype, np.number)
-                       else ''))
+                       else (False if dtype.kind == 'b' # bool
+                       else '')))
     return sparse.COO(coord, array['data'], shape, fill_value=fillv)
 
 
@@ -120,6 +121,16 @@ def tiledb_to_xarray(path: Path | str, **kwargs) -> xr.Dataset:
         # 'sm.mem.tile_upper_memory_limit' : 25 * 1024**3,
         # 'vfs.max_batch_size' :  2 * 1024**3,
         # 'vfs.s3.max_parallel_ops' : 5,
+
+        # TileDB causes random segfaults due to query race condition
+        # This parameter disables the code path which has the race
+        #   condition. However, it is labeled as experimental and
+        #   isn't a good long-term solution. Once the actual fix
+        #   has been merged into a package release by TileDB, the
+        #   library should be updated and this parameter disabled.
+        # See: https://github.com/TileDB-Inc/TileDB/pull/5723
+        # Note that this means tiledb>0.36.1 and libtiledb>2.30.1
+        'sm.query.sparse_global_order.preprocess_tile_merge' : 0,
     } | kwargs)
 
     coords = {}
@@ -149,7 +160,8 @@ def tiledb_to_xarray(path: Path | str, **kwargs) -> xr.Dataset:
                 dtype = data.attr(0).dtype
                 fillv = np.asarray(np.nan if np.issubdtype(dtype, np.floating)
                                    else (-1 if np.issubdtype(dtype, np.number)
-                                   else ''))
+                                   else (False if dtype.kind == 'b' # bool
+                                   else '')))
 
                 arrays[name] = (dims, da.map_blocks(**{
                     'chunks' : tuple(chunk),#map(chunks, data.domain)),
@@ -180,6 +192,33 @@ class TileDB(BaseBackend):
         """ Write the given xarray Dataset to a TileDB database """
         assert('.tiledb' in str(dest)), f'Not a tiledb path: {dest=}'
 
+        def validate_block(block, feature):
+            """ Sparse values must have correct fill values, or else
+                later assumptions made in Block.py will be violated. """
+            if not isinstance(block, sparse.SparseArray):
+                raise TypeError(f'{feature=} must be sparse: {type(block)=}')
+            fill = block.fill_value
+        
+            # valid_mask must use fill_value=False so that
+            #   explicitly stored elements are True
+            if feature == 'valid_mask':
+                if np.dtype(block.dtype).kind != 'b' or bool(fill):
+                    raise ValueError(
+                        f'{feature=} must have bool dtype and fill_value=False'
+                        f': {block.dtype=} {fill=}')
+
+            # All other features must use fill_value=NaN
+            else:
+                try:
+                    is_nan = bool(np.isnan(fill))
+                except TypeError:
+                    is_nan = False
+            
+                if not is_nan:
+                    raise ValueError(
+                        f'{feature=} must have fill_value=NaN: '
+                        f'{fill=} ({block.dtype=})')
+                
         # Long path names can cause segfaults when writing arrays, which
         # can be (partially) addressed by using a temp folder and renaming
         # temp = dest# Path('tmp.tiledb')
@@ -240,10 +279,7 @@ class TileDB(BaseBackend):
             jobs = []
             handles = []
             from tqdm import tqdm
-            for feature in tqdm(data, file=stream):
-                if feature == 'valid_mask':
-                    continue
-
+            for feature in tqdm(data, file=stream):                
                 values = data[feature]
                 domain = tdb.Domain(*[dims[d] for d in values.dims])
                 schema = tdb.ArraySchema(**{
@@ -263,9 +299,12 @@ class TileDB(BaseBackend):
                 # Summary shouldn't be cached per block (i.e. per stat)
                 if feature == 'summary':
                     continue
-
+        
                 @dask.delayed
-                def _write_block(A, blk_idx, block, chunks):
+                def _write_block(A, blk_idx, block, chunks, feature, validate):
+                    if validate:
+                        validate_block(block, feature)
+                        
                     if block.nnz:
                         if np.issubdtype(block.data.dtype, np.number):
                             valids = np.isfinite(block.data)
@@ -275,13 +314,14 @@ class TileDB(BaseBackend):
                         if valids.any():
                             A[tuple(coords)] = block.data[valids]
 
-                blocks = values.data.blocks
+                blocks = values.data.to_delayed(optimize_graph=False)
                 chunks = values.chunks
                 handle = tdb.open(path, mode='w', config=cfg)
                 handles.append(handle)
-                for blk_idx in product(*map(range, blocks.shape)):
+                for i,blk_idx in enumerate(product(*map(range, blocks.shape))):
                     jobs.append(
-                        _write_block(handle, blk_idx, blocks[blk_idx], chunks)
+                        _write_block(handle, blk_idx, blocks[blk_idx], 
+                                     chunks, feature, validate=(i==0))
                     )
 
         # Caching separately enables using the newly cached data for summary
@@ -295,14 +335,22 @@ class TileDB(BaseBackend):
                 cols = np.tile(np.arange(size[1]), size[0])
                 A[rows, cols] = data
 
+            summary = data['summary'].data
+            if isinstance(summary, da.Array):
+                summary = summary.rechunk(summary.shape)
+                summary = summary.to_delayed(optimize_graph=False).item()
+                
             path = dest.joinpath('summary').as_posix()
             handle = tdb.open(path, mode='w')
             handles.append(handle)
-            jobs.append(_write_summary(handle, data['summary'].data))
+            jobs.append(_write_summary(handle, summary))
 
-        with ProgressBar(out=stream):
-            dask.compute(*jobs)
-        dask.compute(*[h.close() for h in map(dask.delayed, handles)])
+        try:
+            with ProgressBar(out=stream):
+                dask.compute(*jobs)
+        finally:
+            for handle in handles:
+                handle.close()
 
         # Run a metadata consolidation now that all data has been cached
         for mode in ['array_meta', 'fragment_meta']:

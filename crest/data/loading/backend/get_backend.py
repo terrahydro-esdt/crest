@@ -1,6 +1,7 @@
 from __future__ import annotations
 from .TileDB import TileDB
 from .Zarr import Zarr
+from .Xvec import Xvec
 
 
 def get_backend(path):
@@ -25,4 +26,6 @@ def get_backend(path):
         return Zarr(path)
     if ext == 'tiledb':
         return TileDB(path)
+    if ext == 'xvec':
+        return Xvec(path)
     raise ValueError(f'No backend available for loading "{path}": {ext}')

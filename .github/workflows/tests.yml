@@ -6,6 +6,7 @@ on:
   pull_request:
     branches: [main, develop]
   workflow_dispatch:
+  workflow_call:  # release.yml runs these on the tagged commit before publishing
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

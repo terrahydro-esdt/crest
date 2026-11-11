@@ -359,6 +359,7 @@ class GriddedModel:
                         for i, _ in enumerate(batcher.generator(show_timing=sys.stderr.isatty())):
                             if (i % 2000) == 0:
                                 a.zarr_writer.flush()
+                                print(f"flush completed at batch {i}")
 
                 logger.info(
                     'Successfully completed generating and archiving predictions.')
@@ -394,7 +395,8 @@ class GriddedModel:
                     with ProgressBar():
                         data.chunk('auto').to_zarr(post_process_output, mode='w', consolidated=True, align_chunks=True)
 
-                shutil.rmtree(output_path)
+                # shutil.rmtree(output_path)
+                os.rename(output_path, output_path + '.backup')
                 os.rename(post_process_output, output_path)
                 logger.info("Renamed postprocessed output")
 

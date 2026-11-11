@@ -28,6 +28,7 @@ import numbers
 import signal
 import psutil
 import shutil
+import json
 import time
 import sys
 import os
@@ -372,6 +373,7 @@ class Batcher:
         # Store initialization parameter names for pickling
         # Any variable that is not defined by a local-only name (not self.*)
         #   will not be saved, and will not be initialized on worker processes
+        _init_keys = None  # Ensure _init_keys itself is stored as well
         self._init_keys = locals().keys() - {'self', 'prefetcher'}
 
         # Set the numblocks if None was given
@@ -389,7 +391,7 @@ class Batcher:
             self._handle_dataset_list(dataset)
 
         # Collect all keys indicating which Datafiles aren't required
-        gather_zeros = valfilter(lambda v: np.prod(v.values()))
+        gather_zeros = valfilter(lambda v: np.prod(list(v.values())) == 0)
         zero_percent = map(list, map(gather_zeros, self.valid_percents))
         not_required = set(chain(*zero_percent, *self.drop_datafiles))
 
@@ -404,7 +406,7 @@ class Batcher:
                      if isinstance(v,int) else (v in df.label))
                 where = list(filter(match, not_required))
 
-                if where or np.prod(df_vp.values()) == 0:
+                if where or np.prod(list(df_vp.values())) == 0:
                     df.is_required = False
                     self.info(f'Not required: {index=} {label=} {where=}')
                 else:
@@ -894,6 +896,20 @@ class Batcher:
                     ] + status)
                     # print(timer.message)
                     timer.__exit__()
+
+                    # If no batches have been generated and at least one of the
+                    #  workers has died, the queue has very likely become 
+                    #  unusable. When this happens, there's no way to recover
+                    #  batch communication between the main process and workers
+                    if nbatch == 0 and self.workers:
+                        alive = self._processes_alive(verbose=False)
+                        if len(alive) < self.workers:
+                            self.error('Worker(s) have exited unexpectedly, '
+                                       'which appears to have caused process '
+                                       'queues to become corrupted. The '
+                                       'Batcher will now exit, as this is an '
+                                       'unrecoverable error state.')
+                            self.close(origin='_prefetched_batches')
                     timer = start_timer()
                     start_count = batch_count
 
@@ -981,13 +997,14 @@ class Batcher:
                             break
                         except Full:
                             count += 1
-                            while (not self._exit) and queue.full():
+                            if (not self._exit) and queue.full():
                                 time.sleep(WAIT_TIME)
 
                         # Notify when the queue has been full for a long time
                         if (count % int(seconds*10)) == 0:
                             self.info(f'_safe_queue_batches: {queue=} full ' +
                                       f'for at least {seconds} seconds')
+                            self._get_threads_traceback()
                     if self._exit: break
         except Empty:
             raise
@@ -1206,32 +1223,55 @@ class Batcher:
                     self._synchronize_workers()
 
                 if hasattr(self, '_block_queue_lock'):
+                    def _put(item=None, timeout=10):
+                        """ Put an item into the _block_queue and handle
+                            the unexpected case of the queue being full. """
+                        # If no item is given, we're just checking whether the
+                        # queue is empty (since empty() isn't reliable for 
+                        # multiprocessing queues)
+                        if item is None:
+                            item = self._block_queue.get_nowait()
+                        try:
+                            self._block_queue.put(item, timeout)
+                            return True
 
+                        # This shouldn't ever actually be reached, but there
+                        #  seems to be an edge case somewhere that can cause
+                        #  it (and thus a deadlock if no timeout is set)
+                        except Full:
+                            self.warning('Batcher._block_queue is full!')
+
+                    # If we sync workers after every epoch, only the first
+                    #  worker should re-add all block indices to the queue
+                    # If we're not syncing, any worker can re-add them when
+                    #  they get to this point
                     if (not self.epoch_sync) or (self.pidx == 0):
                         time.sleep(0.25)
+
                         with self._block_queue_lock:
-                            try:
-                                idx = self._block_queue.get_nowait()
-                                self._block_queue.put(idx)
+                            # Test whether any blocks are currently queued
+                            try: _put()
+
+                            # If it's empty, then re-add all block indices
                             except Empty:
                                 block_ixs = np.arange(len(blocks)).astype(int)
                                 if self.shuffle:
                                     self.random.shuffle(block_ixs)
                                 self.info('Starting block re-queue of '+
                                           f'{len(block_ixs)} blocks...')
+
+                                # If _put fails, then the queue is somehow full
                                 for block_ix in block_ixs:
-                                    self._block_queue.put(block_ix)
+                                    if not _put(block_ix):
+                                        break
                                 self.info('Finished block re-queue')
                     else:
-                        while True:
-                            time.sleep(0.5)
-                            with self._block_queue_lock:
-                                try:
-                                    idx = self._block_queue.get_nowait()
-                                    self._block_queue.put(idx)
-                                    break
-                                except Empty: pass
-                                self.info('Waiting on blocks to be queued...')
+                        self.info('Waiting on blocks to be queued...')
+                        
+                    # If we sync workers after every epoch, workers wait here
+                    #  until the first worker finishes re-filling the queue
+                    if self.epoch_sync:
+                        self._synchronize_workers()  
             else:
                 self.debug('Exiting _generator while loop due to exit flag')
 
@@ -1688,10 +1728,11 @@ class Batcher:
 
             try:
                 # Each element in blocks is the Blockset.find_matches function
+                features = self._feature_selectors if self.fast_path else None
                 samples = compute([find_matches(**{
                     'task_bytes'   : self.task_bytes,
                     'task_samples' : self.block_size,
-                    'features'     : self.features if self.fast_path else None,
+                    'features'     : features,
                     'seed'         : self.seed,
                     'rng'          : self.random,
                     'method'       : self.match_strategy,
@@ -1848,9 +1889,8 @@ class Batcher:
                 with self._remainder_lock:
                     samples, remainder = zip( *map(create_batches,
                         samples, remainder or ([[]] * len(samples))) )
-
-                    if len(remainder[0]):
-                        self._remainder[conf_hash] = remainder
+                    self._remainder[conf_hash] = (
+                        remainder if len(remainder[0]) else [])
                 samples = list(map(self._finalize_batch, zip(*samples)))
 
             else:
@@ -1920,8 +1960,10 @@ class Batcher:
         if (self.features is None) or (len(samples) == 0): return samples[:]
 
         # If an empty list was passed in, all available features are requested
-        if len(self.features) == 0: self.features = samples[0].features
-
+        if len(self.features) == 0: 
+            self.features = samples[0].features
+            self.__dict__.pop('_feature_selectors', None)
+            
         def _extract(sample, features):
             """ Follow the nesting structure given by the features """
             if (
@@ -1930,8 +1972,9 @@ class Batcher:
             ):
                 return type(features)(sample.to_list(features))
             return type(features)(map(partial(_extract, sample), features))
-        return np.frompyfunc(partial(_extract, features=self.features),
-                             nin=1, nout=1)(samples)
+
+        extract = partial(_extract, features=self._feature_selectors)
+        return np.frompyfunc(extract, nin=1, nout=1)(samples)
 
 
     def _finalize_batch(self, batch: np.ndarray) -> np.ndarray | dict | list:
@@ -1972,14 +2015,15 @@ class Batcher:
             batch: dict = {feature: data[:, i].astype(T)
                 for data, dtype in zip(batch, self._dtypes, strict=True)
                 for i, (feature, T) in enumerate(dtype.items())}
-            def _nest(features):
+            def _nest(features, selectors=self._feature_selectors):
                 """ Follow the nesting structure given by the features """
                 if (
                     isinstance(features[0], str)
                     or not hasattr(features[0], '__len__')
                 ):
-                    return {f: batch[f] for f in features}
-                return type(features)(map(_nest, features))
+                    return {feature: batch[selector] for feature, selector in
+                            zip(features, selectors, strict=True)}
+                return type(features)(map(_nest, features, selectors))
             return _nest(self.features) if self.features else batch
 
         def _parse(batch, features):
@@ -1992,7 +2036,47 @@ class Batcher:
             return type(features)(map(_parse, zip(*batch), features))
         return batch if self.features is None else _parse(batch, self.features)
 
+    
+    @cached_property
+    def _feature_selectors(self) -> list | None:
+        """Resolve requested coordinate features to their source Datafiles.
 
+        Returns
+        -------
+        list | None
+            Batcher.features with unqualified coordinate features suffixed by
+            the index of the Datafile which originally requested them.
+
+        """
+        if self.features is None:
+            return None
+
+        datasets = self._datasets
+        dataset = datasets[self.pidx] if len(datasets) > 1 else datasets[0]
+        
+        # StructuredDataset contains Samples directly, not Datafiles
+        if isinstance(dataset, StructuredDataset):
+            return self.features
+        
+        dims = dataset[0]._raw_data.coords
+        
+        def resolve(feature):
+            """ Add a source index to an explicitly requested coordinate """
+            if feature not in dims or '@' in str(feature):
+                return feature
+            for i, requested_features in enumerate(dataset._features):
+                if feature in requested_features:
+                    return f'{feature}@{i}'
+            return feature
+
+        def recurse(features):
+            """ Preserve feature nesting while resolving leaf values """
+            if isinstance(features, str):
+                return resolve(features)
+            return type(features)(map(recurse, features))
+        return recurse(self.features)
+
+        
     def _queue_batches(self,
        process_ix : int,
        shared_attrs : dict,
@@ -2180,8 +2264,10 @@ class Batcher:
             assert(len(unknown) == 0), f'Dims {unknown=}; {options=}'
             numblocks = [numblocks.get(d, 1) for d in options]
 
+        # Some edge case is causing the queue to fill to max and then deadlock
         n_blocks = int(np.prod(np.atleast_1d(numblocks)))
-        self._block_queue = self.get_queue(mp_context, n_blocks+1)
+        self._block_queue = self.get_queue(mp_context, n_blocks*10)
+        # self._block_queue = self.get_queue(mp_context, n_blocks+1)
         self._block_queue_lock = mp.get_context('spawn').Lock()
 
         # If we're not repeating blocks, add indices to the block queue
@@ -2386,7 +2472,7 @@ class Batcher:
         return max(len(self.valid_percents), len(self.drop_datafiles), 1)
 
 
-    def _get_threads_traceback(self, limit=4, names=[], return_log=False):
+    def _get_threads_traceback(self, limit=8, names=[], return_log=False):
         """ Prints the stack trace for active threads """
         log = f'\n{self.process_name} Threads Status'
         bar = '_' * len(log)
@@ -2460,6 +2546,10 @@ class Batcher:
             headrow = inserts.replace('.. ', '')
             divider = re.sub(r'[^|]', '=', headrow)
             header = f'{headrow}\n{divider}\n'
+
+            # Log batcher initialization parameters
+            params = json.dumps(self.__getstate__(), default=str, indent=2)
+            header = f'{self} Initialization:\n{params}\n\n{header}'
 
             # If we're in the main process, delete the prior log_file
             if not mp.current_process().daemon:

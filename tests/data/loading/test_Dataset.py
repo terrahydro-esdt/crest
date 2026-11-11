@@ -234,13 +234,13 @@ class TestDataset:
 
     def test_ensure_dims(self, synthetic):
         """ Test adding virtual dimensions """
-        assert((np.array(synthetic.virtual) == np.array([
+        assert((np.array(synthetic.is_virtual) == np.array([
             [False, False],
             [False, False],
             [ True, False],
             [ True, False],
             [False, False],
-        ])).all()), synthetic.virtual
+        ])).all()), synthetic.is_virtual
 
 
     def test_autochunk_min(self, synthetic):

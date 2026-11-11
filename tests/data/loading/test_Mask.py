@@ -39,7 +39,7 @@ def test_load_by_name(mock_geocode):
 def test_gen_mask(mock_geocode, sample_xarray):
     mock_geocode.return_value = sample_gdf()
     gen = RegionalMaskGenerator(['Region1'])
-    success = gen.gen_mask(sample_xarray)
+    success = gen.gen_mask(sample_xarray, resolution=100)
     assert not success is None
     assert isinstance(gen.mask, np.ndarray)
     assert gen.mask.shape == (100, 100)

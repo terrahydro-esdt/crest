@@ -26,6 +26,7 @@ from dask.utils import ensure_dict
 
 import dask.array as da
 import numpy as np
+import sparse
 import functools
 import itertools
 import ctypes
@@ -295,6 +296,102 @@ def _overlap_chunks(
     return tuple(output_chunks)
 
 
+def _join_sparse_regions(
+    regions: list,
+    shape: tuple,
+    fill_value: Any,
+) -> sparse.COO:
+    """Assemble disjoint sparse regions without a dense logical-grid buffer.
+
+    Parameters
+    ----------
+    regions : list
+        Pairs of sparse arrays and their destination offsets.
+    shape : tuple
+        Shape of the assembled array.
+    fill_value
+        Output fill value, normally taken from the center block.
+
+    Returns
+    -------
+    sparse.COO
+        Assembled sparse data. Regions whose fill differs from the center
+        contribute their explicit area, such as overlap-mask halo strips.
+        The center's implicit area is never expanded.
+    """
+    coordinates = []
+    values = []
+    for region, offset in regions:
+        region = region.asformat('coo')
+        same_fill = bool(np.array_equal(
+            np.asarray(region.fill_value), np.asarray(fill_value),
+            equal_nan=True))
+        if same_fill:
+            coords = region.coords
+            data = region.data
+        else:
+            # A different implicit value must be represented explicitly.
+            # These regions are halo strips or constant boundary padding,
+            # never the center's complete logical grid.
+            coords = np.asarray(np.unravel_index(
+                np.arange(region.size, dtype=np.intp), region.shape))
+            data = np.full(region.size, region.fill_value, region.dtype)
+            stored = np.ravel_multi_index(tuple(region.coords), region.shape)
+            data[stored] = region.data
+        coordinates.append(coords + np.asarray(offset)[:, None])
+        values.append(data)
+    return sparse.COO(np.concatenate(coordinates, axis=1),
+                      np.concatenate(values), **{
+        'shape'          : shape,
+        'fill_value'     : fill_value,
+        'has_duplicates' : False,
+        'prune'          : True,
+    })
+
+
+def _pad_sparse_axis(
+    array: sparse.COO,
+    axis: int,
+    left: int,
+    right: int,
+    boundary: Any,
+) -> sparse.COO:
+    """Pad one sparse axis using constant, nearest, or symmetric boundaries.
+
+    The interior is retained as COO storage. Non-fill constant padding uses
+    explicit halo entries; nearest/reflect copy only the required edge data.
+    """
+    regions = []
+    offset = [0] * array.ndim
+    offset[axis] = left
+    regions.append((array, tuple(offset)))
+    shape = list(array.shape)
+    shape[axis] += left + right
+    for width, side in [(left, -1), (right, 1)]:
+        if not width:
+            continue
+        pad_shape = list(array.shape)
+        pad_shape[axis] = width
+        select = [slice(None)] * array.ndim
+        if _is_boundary(boundary, 'nearest'):
+            select[axis] = slice(0, 1) if side < 0 else slice(-1, None)
+            piece = sparse.broadcast_to(array[tuple(select)], tuple(pad_shape))
+        elif _is_boundary(boundary, 'reflect'):
+            select[axis] = (slice(0, width) if side < 0
+                            else slice(array.shape[axis] - width, None))
+            piece = array[tuple(select)]
+            select[axis] = slice(None, None, -1)
+            piece = piece[tuple(select)]
+        elif isinstance(boundary, str):
+            raise ValueError(f'Unsupported sparse boundary {boundary!r}')
+        else:
+            piece = sparse.full(tuple(pad_shape), boundary, dtype=array.dtype)
+        offset = [0] * array.ndim
+        offset[axis] = 0 if side < 0 else left + array.shape[axis]
+        regions.append((piece, tuple(offset)))
+    return _join_sparse_regions(regions, tuple(shape), array.fill_value)
+
+
 def _assemble_overlap_block(
     blocks,
     offsets,
@@ -304,12 +401,12 @@ def _assemble_overlap_block(
     numblocks,
 ):
     """
-    Assemble one overlapped NumPy block from neighboring source blocks.
+    Assemble one dense or sparse block from neighboring source blocks.
 
     Parameters
     ----------
     blocks
-        Resolved NumPy source blocks.
+        Resolved NumPy or PyData/Sparse source blocks.
     offsets
         Relative block offset for each source block.
     depth
@@ -357,7 +454,8 @@ def _assemble_overlap_block(
         for axis in range(ndim)
     )
 
-    output = np.empty(core_shape, dtype=center.dtype)
+    is_sparse = isinstance(center, sparse.SparseArray)
+    output = [] if is_sparse else np.empty(core_shape, dtype=center.dtype)
 
     # Fill the center, faces, edges, and corners using neighboring blocks
     for offset, piece in pieces.items():
@@ -389,9 +487,15 @@ def _assemble_overlap_block(
                     slice(center_start, center_start + center_size)
                 )
 
-        output[tuple(destination_slices)] = piece[
-            tuple(source_slices)
-        ]
+        value = piece[tuple(source_slices)]
+        if is_sparse:
+            start = tuple(part.start for part in destination_slices)
+            output.append((value, start))
+        else:
+            output[tuple(destination_slices)] = value
+
+    if is_sparse:
+        output = _join_sparse_regions(output, core_shape, center.fill_value)
 
     # Apply global non-periodic boundaries one axis at a time. This matches
     # Dask's boundary-application order
@@ -414,6 +518,10 @@ def _assemble_overlap_block(
         )
 
         if not left_pad and not right_pad:
+            continue
+
+        if is_sparse:
+            output = _pad_sparse_axis(output, axis, left_pad, right_pad, kind)
             continue
 
         pad_width = [(0, 0)] * ndim
