@@ -7,7 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-11
+
+### Summary
+
+Fixes sporadic segfaults in Batcher worker processes reading TileDB data, adds
+sparse blocks and an xvec backend to the data layer, and reworks logging so
+CREST cooperates with the host application's handlers and with loadEnv's run
+logs. Logging behavior changed in several places; see Changed before upgrading.
+
 ### Changed
+
+#### Data and models
+
+- `GriddedModel` prediction post-processing keeps the raw prediction output as
+  `<output>.backup` instead of deleting it, so it needs about twice the disk
+  space. Delete the backup once the post-processed output has been checked.
+- Caching a `Datafile` raises `RuntimeError` when its `datetime` coordinate
+  is a datetime type other than `datetime64[ns]` (for example
+  `datetime64[us]` after resampling with pandas 3), instead of writing a cache
+  that fails later.
+- Caching sparse data to TileDB checks fill values: `valid_mask` must be
+  boolean with fill value `False`, every other feature must have fill value
+  `NaN`; anything else raises `ValueError`. `valid_mask` is now written to
+  the cache too.
+- Without directed sampling, `MultiBatcher` skips a block when its block
+  configuration already has more than `max_queue` batches queued, so batches
+  no longer pile up for common configurations while it waits on rare ones.
+- A Batcher writes its initialization parameters at the top of its log file.
+- `CITATION.cff` and the README cite the Zenodo concept DOI
+  (`10.5281/zenodo.21939176`), which always resolves to the latest release.
+
+#### Logging
 
 - `logger_setup()`/`LoggingService.initialize()` now default to `scope="root"`
   - configured handlers attach to the Python root logger
@@ -49,6 +80,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+#### Data and models
+
+- Batcher worker processes reading TileDB sparse arrays crashed sporadically
+  with a segfault, caused by a race condition in TileDB's sparse global-order
+  reader ([TileDB #5723](https://github.com/TileDB-Inc/TileDB/pull/5723)).
+  CREST now switches off the affected code path
+  (`sm.query.sparse_global_order.preprocess_tile_merge = 0`), and the per-block
+  read lock that only made the crash rarer is gone. A regression test
+  reproduces the crash; it is expected to fail (xfail) on TileDB releases known
+  to have the bug (tiledb-py 0.36.1 / libtiledb 2.30.1 and earlier). Once a
+  fixed TileDB is released, upgrade and remove the workaround.
+- A Batcher could hang forever when a worker process died before any batch
+  was produced, because the queues between processes become unusable. It now
+  logs an error and shuts down.
+- Re-queueing blocks between epochs could deadlock on a full block queue. The
+  queue is larger, a full queue logs a warning instead of blocking, and with
+  `epoch_sync` the other workers wait until the first one has re-filled it.
+- `Datafile` sparsity of an entirely empty sparse block was a 0-d
+  `sparse.COO` object instead of a number, which broke sorting blocks by
+  sparsity. It is now `1.0`.
+- `Datafile` only sorts numeric coordinates, so non-numeric coordinates (such
+  as xvec geometries) no longer break loading.
+- `Dataset`'s check that blocks are large enough for the sample window applied
+  `valid_percent` to the wrong side of the comparison. The error now also
+  shows both sizes.
+- Selecting a dimension coordinate as a sample feature returns that sample's
+  coordinate values, with `NaN` (or `NaT` for `datetime`) where a sample has
+  none.
+- The brute-force coordinate matcher (`multiset_full_numba`) undercounted
+  pending task sizes, which could lead to slower task orderings.
+- `Node` no longer removes a size-1 dimension that its expected input shape
+  leaves unspecified (`None`).
+- Comparison plots written to TensorBoard have the batch dimension
+  `tf.summary.image` expects, use log-scaled axes when the values span three
+  or more orders of magnitude, and come back empty instead of failing when
+  there is nothing to plot.
+
+#### Logging
+
 - `LoggingService.reset()` only ever cleared handlers/level from
   `"crest"`-prefixed loggers, never the root logger, so it silently failed
   to undo initialization once `scope="root"` became the default. It now
@@ -69,6 +139,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   environment.
 
 ### Added
+
+#### Data and models
+
+- `SparseBlock` (`crest.data.loading`): a `Block` for sparse data, such as
+  point observations stored in TileDB. `Datafile` picks it automatically when
+  the data's chunks are `sparse.COO`. Note that support for windows over
+  sparse dimensions is still limited; see the `SparseBlock` docstring for
+  details.
+- `Xvec` backend for xvec-encoded Zarr stores (paths ending in `.xvec`), for
+  data on vector geometries such as polygons. Needs the optional `xvec`
+  package.
+- `clip` transform (`Transform.clip`), limiting values to a range (default
+  `[-6, 6]`). It can't be inverted.
+- `cicd/environment_cpu_windows.yaml`, a conda environment for Windows (CPU).
+- Releases are cut with `scripts/release.py` and published to GitHub (and
+  archived on Zenodo) by a tag-triggered workflow; see
+  `docs/DEV_PROD_WORKFLOW.md`.
+
+#### Logging
 
 - `logger_setup()`/`LoggingService.initialize()` accept a `scope` parameter
   (`"root"` default, `"crest"` opt-in) and a matching `CREST_LOG_SCOPE`
@@ -105,5 +194,6 @@ First release.
   `sphinxcontrib-mermaid`), so `pip install ".[docs]"` alone could not build the
   documentation.
 
-[Unreleased]: https://github.com/terrahydro-esdt/crest/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/terrahydro-esdt/crest/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/terrahydro-esdt/crest/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/terrahydro-esdt/crest/releases/tag/v0.1.0

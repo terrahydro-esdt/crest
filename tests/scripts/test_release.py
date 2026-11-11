@@ -41,6 +41,7 @@ def test_real_files_have_every_version_line():
 
 
 def test_bump_updates_every_file(repo):
+    previous = release.read_versions(repo)["pyproject.toml"]
     release.bump("9.0.0", "2030-01-02", root=repo)
 
     assert set(release.read_versions(repo).values()) == {"9.0.0"}
@@ -50,7 +51,7 @@ def test_bump_updates_every_file(repo):
     assert "[Unreleased]: https://github.com/terrahydro-esdt/crest/" \
         "compare/v9.0.0...HEAD" in changelog
     assert "[9.0.0]: https://github.com/terrahydro-esdt/crest/" \
-        "compare/v0.1.0...v9.0.0" in changelog
+        f"compare/v{previous}...v9.0.0" in changelog
     assert release.check(repo, tag="v9.0.0") == []
 
 
