@@ -19,11 +19,11 @@ jobs:
       run:
         shell: bash -l {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # See: https://github.com/conda-incubator/setup-miniconda#caching-packages
       - name: Cache conda packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         env:
           CACHE_NUMBER: 0
         with:
@@ -31,7 +31,7 @@ jobs:
           key: ${{ runner.os }}-conda-${{ env.CACHE_NUMBER }}-${{ hashFiles('cicd/environment_cpu_x86_64.yaml') }}
 
       - name: Set up conda environment
-        uses: conda-incubator/setup-miniconda@v3
+        uses: conda-incubator/setup-miniconda@v4
         with:
           environment-file: cicd/environment_cpu_x86_64.yaml
           activate-environment: OCETRA_cpu
@@ -52,10 +52,10 @@ jobs:
       run:
         shell: bash -l {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Cache conda packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         env:
           CACHE_NUMBER: 0
         with:
@@ -63,7 +63,7 @@ jobs:
           key: ${{ runner.os }}-conda-${{ env.CACHE_NUMBER }}-${{ hashFiles('cicd/environment_cpu_x86_64.yaml') }}
 
       - name: Set up conda environment
-        uses: conda-incubator/setup-miniconda@v3
+        uses: conda-incubator/setup-miniconda@v4
         with:
           environment-file: cicd/environment_cpu_x86_64.yaml
           activate-environment: OCETRA_cpu

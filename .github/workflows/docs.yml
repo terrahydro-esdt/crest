@@ -23,10 +23,10 @@ jobs:
       run:
         shell: bash -l {0}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Cache conda packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         env:
           CACHE_NUMBER: 0
         with:
@@ -34,7 +34,7 @@ jobs:
           key: ${{ runner.os }}-conda-${{ env.CACHE_NUMBER }}-${{ hashFiles('cicd/environment_cpu_x86_64.yaml') }}
 
       - name: Set up conda environment
-        uses: conda-incubator/setup-miniconda@v3
+        uses: conda-incubator/setup-miniconda@v4
         with:
           environment-file: cicd/environment_cpu_x86_64.yaml
           activate-environment: OCETRA_cpu
@@ -50,11 +50,14 @@ jobs:
         run: sphinx-build -b html docs public
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: public
 
+  # develop only builds, so a broken docs build shows up before a release; the
+  # published site always matches main.
   deploy:
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     environment:
@@ -63,4 +66,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
