@@ -129,7 +129,7 @@ If you use CREST in your research, please cite:
      year    = {2026},
      url     = {https://github.com/terrahydro-esdt/crest},
      doi     = {10.5281/zenodo.21939176},
-     version = {0.2.0}
+     version = {0.2.1}
    }
 
 See `CITATION.cff <CITATION.cff>`_ for complete citation information.
