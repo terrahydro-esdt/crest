@@ -41,13 +41,14 @@ always_use_bars_union = True
 #    "sphinx.ext.viewcode",
 
 templates_path = ["_templates"]
-# DEV_PROD_WORKFLOW.md and DOC_GUIDE.md are for developers, read in the repository,
-# not on the published site
+# adr/, DEV_PROD_WORKFLOW.md and DOC_GUIDE.md are for developers, read in the
+# repository, not on the published site
 exclude_patterns = [
     "_build",
     "Thumbs.db",
     ".DS_Store",
     "**.ipynb_checkpoints",
+    "adr",
     "DEV_PROD_WORKFLOW.md",
     "DOC_GUIDE.md",
 ]

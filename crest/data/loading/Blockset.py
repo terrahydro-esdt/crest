@@ -71,12 +71,11 @@ class Blockset(BaseSet):
         return f'Blockset[{"".join(str(b.block_index) for b in self)}]'
 
 
-    @cached_property
-    def benchmark(self):
-        """ Return a Stopwatch function for benchmarking """
-        return lambda label, logger=self.logger.debug, **kwargs: Stopwatch(**({
+    def benchmark(self, label, logger=None, **kwargs):
+        """ Return a Stopwatch for benchmarking """
+        return Stopwatch(**({
             'message' : f'\t\t{self}.{label}',
-            'logger'  : logger, # Don't log when time < 0.05 seconds
+            'logger'  : self.logger.debug if logger is None else logger,
             # 'silent'  : {'time': 0.05} if self.timing else True,
         } | kwargs))
 
