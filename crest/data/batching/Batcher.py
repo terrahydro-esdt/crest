@@ -34,6 +34,7 @@ import sys
 import os
 import re
 
+from crest.base import BaseSet
 from crest.utils import Stopwatch, TimedHandler, S3Path, ensure_with
 from .ThreadedFunction import ThreadedFunction
 from ..loading import Dataset, StructuredDataset, SampleSet
@@ -463,12 +464,11 @@ class Batcher:
         self._log('error', *args, **kwargs)
 
 
-    @cached_property
-    def benchmark(self):
-        """ Return a Stopwatch function for benchmarking """
-        return lambda label, logger=self.debug, **kwargs: Stopwatch(**({
+    def benchmark(self, label, logger=None, **kwargs):
+        """ Return a Stopwatch for benchmarking """
+        return Stopwatch(**({
             'message' : f'Batcher.{label}',
-            'logger'  : logger,
+            'logger'  : self.debug if logger is None else logger,
             # 'silent'  : {'time': 0.05}, # Don't log when time < 0.05 seconds
         } | kwargs))
 
@@ -540,7 +540,8 @@ class Batcher:
         # exceptions are ignored (as there are no guarantees anything still
         # exists outside of this class, e.g. at interpreter exit)
         handler = (suppress if origin == '__del__' else nullcontext)()
-        with handler: self.debug(f'Called close from: {origin} ({timeout=})')
+        with handler: 
+            self.debug(f'Close {self.process_name} from {origin} ({timeout=})')
 
         # Signal threads/workers to exit
         with handler:
@@ -625,7 +626,8 @@ class Batcher:
     @property
     def process_name(self) -> str:
         """ Return a label for the current process """
-        return f'Process {getattr(self,"_pidx","Main")} (pid={os.getpid()})'
+        pidx = getattr(self, '_pidx', 'Main')
+        return f'Process {pidx} (pid={os.getpid()} {id(self)=})'
 
 
     @property
@@ -1120,7 +1122,7 @@ class Batcher:
 
         """
         try:
-            # self.info(f'{self.process_name} Batcher generator starting')
+            self.debug(f'{self.process_name} _generator starting')
             process = psutil.Process()
             start_t = time.time()
             dataset = (self._datasets[self.pidx]
@@ -1806,6 +1808,43 @@ class Batcher:
             message = f'Compute/extract {len(samples):,} samples'
             with self.benchmark(f'_batcher {message}', self.debug):
                 samples = samples.compute()
+                if samples is None:
+                    return [], []
+                    
+                # Dask may return a BaseSet containing the individual
+                # source arrays instead of preserving the SampleSet
+                # wrapper and its fast-path metadata.
+                if self.fast_path and not isinstance(samples, SampleSet):
+                    if not isinstance(samples, BaseSet):
+                        raise TypeError(
+                            f'Unexpected fast-path result: {type(samples)}')
+
+                    dtypes = self._fast_path_dtypes
+                    arrays = samples.container
+
+                    # Verify that the source arrays and their feature
+                    # metadata agree before generating any batches.
+                    if len(arrays) != len(dtypes):
+                        raise ValueError(
+                            f'Expected {len(dtypes)} source arrays, '
+                            f'got {len(arrays)}')
+
+                    for index, (array, columns) in enumerate(
+                        zip(arrays, dtypes, strict=True)
+                    ):
+                        if not isinstance(array, np.ndarray) or (
+                            array.ndim < 2 or array.shape[1] != len(columns)
+                        ):
+                            raise ValueError(
+                                f'Invalid fast-path source {index}: '
+                                f'{getattr(array, "shape", None)}, '
+                                f'{list(columns)}')
+
+                    # Restore metadata on the computed BaseSet.
+                    # Bypass BaseSet.__setattr__, which can distribute
+                    # assignments across its contained objects.
+                    object.__setattr__(samples, 'make_objs', False)
+                    object.__setattr__(samples, 'ele_dtype', dtypes)
 
                 if getattr(samples, 'make_objs', True):
                     samples = self._extract_features(samples)
@@ -2035,6 +2074,56 @@ class Batcher:
                 return dict(zip(features, map(np.array, zip(*batch))))
             return type(features)(map(_parse, zip(*batch), features))
         return batch if self.features is None else _parse(batch, self.features)
+
+    
+    @cached_property
+    def _fast_path_dtypes(self) -> tuple[dict, ...]:
+        """Recover the per-source feature metadata for fast-path batches."""
+    
+        def flatten(values):
+            for value in values:
+                if isinstance(value, str):
+                    yield value
+                else:
+                    yield from flatten(value)
+    
+        if not self._feature_selectors:
+            raise ValueError('fast_path requires explicit features')
+    
+        requested = list(flatten(self._feature_selectors))
+        datasets  = self._datasets
+        dataset   = datasets[self.pidx] if len(datasets) > 1 else datasets[0]
+        result    = []
+    
+        for index, datafile in enumerate(dataset):
+            # Ensure original_dims has been initialized
+            _ = datafile.data
+    
+            dims, features, dtypes = datafile.original_dims
+            labels = {}
+    
+            for key in requested:
+                if '__' in key:
+                    source, name = key.split('__', 1)
+                    if source.replace('$', '/') != datafile.key_label:
+                        continue
+                else:
+                    name, separator, source_index = key.partition('@')
+                    if separator and int(source_index) != index:
+                        continue
+    
+                if name in dtypes:
+                    labels[name] = key
+    
+            # Match Block.extract(): data features first, coordinates second
+            ordered = [*features, *(d for d in dims if d != 'features')]
+    
+            result.append({
+                labels[name]: dtypes[name]
+                for name in ordered if name in labels
+            })
+    
+        return tuple(result)
 
     
     @cached_property

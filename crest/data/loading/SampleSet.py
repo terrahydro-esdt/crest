@@ -102,7 +102,7 @@ class SampleSet(BaseSet):
         return self.n_samples
 
 
-    def __getitem__(self, idx) -> Sample | np.ndarray:
+    def __getitem__(self, idx) -> Sample | np.ndarray | None:
         """Performs the lazy cartesian product over data windows.
 
         Notes
@@ -133,7 +133,8 @@ class SampleSet(BaseSet):
             return results
 
         # Otherwise just return the single retrieved Sample object
-        return samples[0]
+        if len(samples):
+            return samples[0]
 
 
     def _matches(self, idx):
