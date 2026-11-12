@@ -124,7 +124,8 @@ If you use CREST in your research, please cite:
 
    @software{crest2026,
      title   = {CREST: Coupled Reusable Earth System Tensor Framework},
-     author  = {Pelissier, Craig and {CREST Development Team}},
+     author  = {Cruz, Carlos and Pelissier, Craig and Raghunandan, Deepthi and
+                Saeedimoghaddam, Mahmoud and Sinno, Scott and Smith, Brandon},
      year    = {2026},
      url     = {https://github.com/terrahydro-esdt/crest},
      doi     = {10.5281/zenodo.21939176},
@@ -141,5 +142,6 @@ CREST is licensed under the Apache License 2.0. See `LICENSE <LICENSE>`_ for det
 Acknowledgments
 ---------------
 
-.. TODO: Add full funding agency, institution, and collaborating organization names before public release
 This project is supported by NASA.
+
+Thanks to Henry Bae for his contributions during his internship.
