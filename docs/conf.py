@@ -41,7 +41,7 @@ always_use_bars_union = True
 #    "sphinx.ext.viewcode",
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "**.ipynb_checkpoints"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "**.ipynb_checkpoints", "adr"]
 
 # The suffix of source filenames.
 source_suffix = [".rst", ".md", ".nblink"]
