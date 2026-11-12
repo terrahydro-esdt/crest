@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-12
+
+### Summary
+
+Lists the CREST authors by name in the citation metadata, fixes two Batcher
+problems with empty sample sets and `fast_path`, and fills gaps in the
+documentation.
+
+### Added
+
+- The logger and CIFAR-10 example notebooks are in the documentation's
+  examples.
+
+### Changed
+
+- `CITATION.cff`, the README's BibTeX entry and the package metadata list the
+  CREST authors by name, with ORCIDs where available, instead of "CREST
+  Development Team". Zenodo takes its author list from `CITATION.cff`, so it
+  applies from this release on.
+
+### Fixed
+
+- Indexing a `SampleSet` with no matching samples returns `None` instead of
+  failing, and the Batcher skips such empty sample sets.
+- With `fast_path`, the Batcher failed when dask returned the computed samples
+  as a plain `BaseSet` instead of a `SampleSet`. It now restores the feature
+  metadata and checks that the source arrays match the requested features.
+- The NaN-masking loss wrapper accepts Keras' `sample_weight` argument.
+- The API reference was missing `SparseBlock` and the `Xvec` backend.
+
 ## [0.2.0] - 2026-11-11
 
 ### Summary
@@ -194,6 +224,7 @@ First release.
   `sphinxcontrib-mermaid`), so `pip install ".[docs]"` alone could not build the
   documentation.
 
-[Unreleased]: https://github.com/terrahydro-esdt/crest/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/terrahydro-esdt/crest/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/terrahydro-esdt/crest/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/terrahydro-esdt/crest/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/terrahydro-esdt/crest/releases/tag/v0.1.0

@@ -579,13 +579,16 @@ def loss_wrapper(
 
     """
 
-    def calculate_loss(y_true, y_pred):
+    def calculate_loss(y_true, y_pred, sample_weight=None):
         """ Mask NaNs and apply normalization before calculating loss """
 
         def gather_and_log(key, **kwargs):
             """ Extract, log, and return feature values and valid indicator """
             labels, values = map(list, zip(*kwargs.items()))
 
+            if sample_weight is not None:
+                values += [sample_weight]
+                
             for i, val in enumerate(values):
                 if isinstance(val, dict):
                     values[i] = val[feature]

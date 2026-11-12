@@ -3,10 +3,28 @@ message: "If you use CREST in your research, please cite it as below."
 title: "CREST: Coupled Reusable Earth System Tensor Framework"
 abstract: "The CREST framework provides a graph-based modeling framework built on top of tensor-based software along with engines to support the development of community-based AI-enabled Earth Information Systems."
 authors:
+  - family-names: "Cruz"
+    given-names: "Carlos"
+    affiliation: "SSAI Inc and NASA GSFC"
+    orcid: "https://orcid.org/0009-0006-8073-5307"
   - family-names: "Pelissier"
     given-names: "Craig"
-    affiliation: "SSAI Inc and NASA GSFC "
-  - name: "CREST Development Team"
+    affiliation: "SSAI Inc and NASA GSFC"
+    orcid: "https://orcid.org/0000-0003-0466-3517"
+  - family-names: "Raghunandan"
+    given-names: "Deepthi"
+    affiliation: "SSAI Inc and NASA GSFC"
+    orcid: "https://orcid.org/0000-0002-8372-544X"
+  - family-names: "Saeedimoghaddam"
+    given-names: "Mahmoud"
+    affiliation: "SSAI Inc and NASA GSFC"
+  - family-names: "Sinno"
+    given-names: "Scott"
+    affiliation: "SSAI Inc and NASA GSFC"
+  - family-names: "Smith"
+    given-names: "Brandon"
+    affiliation: "SSAI Inc and NASA GSFC"
+    orcid: "https://orcid.org/0000-0001-6526-6158"
 doi: 10.5281/zenodo.21939176
 type: software
 repository-code: "https://github.com/terrahydro-esdt/crest"
@@ -19,5 +37,5 @@ keywords:
   - "climate science"
   - "artificial intelligence"
 license: Apache-2.0
-version: 0.2.0
-date-released: "2026-11-11"
+version: 0.2.1
+date-released: "2026-11-12"

@@ -14,5 +14,6 @@ Submodules
 
    crest.data.loading.backend.BaseBackend
    crest.data.loading.backend.TileDB
+   crest.data.loading.backend.Xvec
    crest.data.loading.backend.Zarr
    crest.data.loading.backend.get_backend
