@@ -55,4 +55,6 @@ Examples:
    data_loader_demo
    metrics_demo
    archiver_demo
+   logger_demo
    mnist_demo
+   cifar10_demo

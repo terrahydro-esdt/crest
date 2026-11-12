@@ -329,6 +329,13 @@ git merge --no-ff my_feature
 # Testing:
 # --------
 
+# Regenerate the API pages after adding, moving or removing a module (run from the
+# repository root). This rewrites every page in docs/api except the hand-written
+# index.rst, but doesn't delete the page of a module that no longer exists: remove
+# that by hand. Modules and packages whose names start with "_" are left out; list
+# any other module to leave out at the end of the command.
+sphinx-apidoc -f -e -M -d 2 --no-toc -o docs/api crest crest/utils/matchup/find_neighbors_OOP.py
+
 # Build docs locally (see your changes)
 cd docs/ && make html && open _build/html/index.html
 

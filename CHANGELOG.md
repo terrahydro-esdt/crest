@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The logger and CIFAR-10 example notebooks are in the documentation's
+  examples.
+
+### Fixed
+
+- The API reference was missing `SparseBlock` and the `Xvec` backend.
+
 ## [0.2.0] - 2026-11-11
 
 ### Summary
