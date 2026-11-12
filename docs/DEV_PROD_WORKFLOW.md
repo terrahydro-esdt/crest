@@ -44,7 +44,7 @@ the next pull sync. It is not a place to work!
    - **An approval from someone other than the author.**
    > Note: `main` and `develop` are both protected on GitLab — `develop` has to be,
      for the push mirror to update it on GitHub (see "One-time setup" below).
-4. Merge strategy: squash feature MRs into `develop`  (one clean commit per MR). The    
+4. Merge strategy: squash feature MRs into `develop`  (one clean commit per MR). The
    `develop` → `main` MR is the exception — see below.
 5. Clean up your local branch afterward, same as always:
    ```
@@ -90,8 +90,18 @@ then needs).
 **On GitLab** (needs Maintainer on `astg/terrahydro/development/crest`):
 
 1. Settings → Repository → **Protected branches**: protect `develop` as well as `main`
-   (allowed to push: no one; allowed to merge: Developers + Maintainers). Only
-   protected refs are mirrored — see step 3.
+   (allowed to merge and allowed to push: Maintainers). Only protected refs are
+   mirrored — see step 3.
+
+   Then Settings → Repository → **Branch rules**, and in each branch's rule set
+   **Squash commits when merging**:
+   - `develop`: **Encourage**. The box is ticked by default, so feature MRs are
+     squashed, but it can be unticked for the merge in "If a mirror update fails".
+   - `main`: **Do not allow**. The `develop` → `main` MR must never be squashed.
+
+   A branch rule overrides the project's own setting (Settings → Merge requests). If
+   the "Squash commits" box on an MR is ticked and greyed out, look at the branch rule
+   first.
 2. Settings → Repository → **Protected tags**: protect `v*` (allowed to create:
    Maintainers). Release tags then can't be moved or deleted, and they count as
    protected refs for the mirror.
@@ -109,14 +119,19 @@ then needs).
 **On GitHub** (needs admin on `terrahydro-esdt/crest`):
 
 5. Settings → **Deploy keys** → Add deploy key: title `gitlab-push-mirror`, paste the
-   key from step 4, tick **Allow write access**.
+   key from step 4, tick **Allow write access**. If the page says deploy keys are
+   disabled by `terrahydro-esdt`, an organization owner has to allow them in the
+   organization's settings first (CREST's repo needed this). Check with
+   `gh api orgs/terrahydro-esdt --jq .deploy_keys_enabled_for_repositories`.
 6. Settings → Rules → **Rulesets** → New branch ruleset, named `main and develop`:
    - Enforcement: Active
    - Bypass list: **Deploy keys** (always allow)
    - Target branches: `main`, `develop`
    - Rules: restrict deletions; block force pushes; require a pull request (1
      approval, dismiss stale approvals, require conversation resolution); require
-     status checks `test` and `doctest`, up to date with the base branch.
+     status checks `test` and `doctest`, up to date with the base branch. The two
+     checks may not be offered in the search box until they have run on the repo; add
+     them with **Add manually** and leave their source as "Any source".
 7. Settings → **Branches**: delete the classic protection rules for `main` and
    `develop`. Classic rules and rulesets both apply and the classic ones have no
    bypass list, so leaving them would keep blocking the mirror.
@@ -141,6 +156,9 @@ git fetch github
 git switch -c chore/merge-github-history origin/develop
 git merge -s ours github/main github/develop    # records GitHub's commits, changes nothing
 ```
+
+Untick **Squash commits** on that MR: a squashed merge drops the GitHub commits it
+exists to record, and the mirror stays stuck.
 
 (This is how `v0.2.0` reconciled the PRs merged on GitHub after `v0.1.0`.)
 
@@ -185,8 +203,10 @@ Added / Changed / Fixed / Removed). That section becomes the release notes.
    Commit, push, and open an MR into `develop`. The `release-check` CI job runs on
    `release/*` branches. Pick X.Y.Z by [semantic versioning](https://semver.org/);
    before 1.0, new features or behavior changes bump Y, fixes only bump Z.
-2. **Freeze `develop`** from the moment the release MR is merged until the tag exists —
-   anything merged in between goes into this release.
+2. **Freeze `develop`** from the moment the release MR is merged until the `develop` →
+   `main` MR is merged. Anything merged in between would go into this release without
+   being in its changelog. Once `main` has the release, `develop` is open again; the tag
+   is made from `main`, not `develop`.
 3. **`develop` → `main` MR**, merged with a merge commit (see above). This is the
    release decision.
 4. **Tag `main`** on GitLab: Code → Tags → New tag, name `vX.Y.Z`, create from `main`,
@@ -258,7 +278,7 @@ Types:
   `chore/update-doi`, `chore/readme-review`, `chore/doc-cleanup`,
   `chore/sync-doi-to-develop`, `chore/establish-main-ancestry`.
 - **`docs/`** — optional, if you want something more specific than `chore/` for
-  documentation-only changes. 
+  documentation-only changes.
 
 Whichever type, delete the branch once its MR/PR merges — see "Clean up your local
 branch afterward" above.
