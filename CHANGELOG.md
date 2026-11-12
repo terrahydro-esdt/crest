@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The API reference was missing `SparseBlock` and the `Xvec` backend, and the
+  logging guide, release workflow and documentation guide weren't linked from
+  any page of the documentation.
+
 ## [0.2.0] - 2026-11-11
 
 ### Summary

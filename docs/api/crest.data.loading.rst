@@ -27,4 +27,5 @@ Submodules
    crest.data.loading.RegionalMaskGenerator
    crest.data.loading.Sample
    crest.data.loading.SampleSet
+   crest.data.loading.SparseBlock
    crest.data.loading.StructuredDataset
