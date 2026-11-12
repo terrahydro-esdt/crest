@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The logger and CIFAR-10 example notebooks are in the documentation's
   examples.
 
+### Changed
+
+- `CITATION.cff`, the README's BibTeX entry and the package metadata list the
+  CREST authors by name, with ORCIDs where available, instead of "CREST
+  Development Team". Zenodo takes its author list from `CITATION.cff`, so it
+  applies from this release on.
+
 ### Fixed
 
 - The API reference was missing `SparseBlock` and the `Xvec` backend.

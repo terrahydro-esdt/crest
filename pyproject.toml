@@ -10,7 +10,12 @@ readme = "README.rst"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 authors = [
-  {name = "CREST Development Team"},
+  {name = "Carlos Cruz"},
+  {name = "Craig Pelissier"},
+  {name = "Deepthi Raghunandan"},
+  {name = "Mahmoud Saeedimoghaddam"},
+  {name = "Scott Sinno"},
+  {name = "Brandon Smith"},
 ]
 keywords = [
   "earth system modeling",
